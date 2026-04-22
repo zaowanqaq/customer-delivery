@@ -22,13 +22,16 @@ Start command: uvicorn api.main:app --port 8080 --reload
 Or: python -m api.main
 """
 import asyncio
+import json
 import os
 import subprocess
+from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from .routers import crawler_router, data_router, websocket_router
 
@@ -40,6 +43,79 @@ app = FastAPI(
 
 # Get webui static files directory
 WEBUI_DIR = os.path.join(os.path.dirname(__file__), "webui")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OPS_CONFIG_PATH = PROJECT_ROOT / "config" / "ops_config.json"
+
+OPS_CONFIG_DEFAULT = {
+    "platform": "xhs",
+    "login_type": "qrcode",
+    "crawler_type": "search",
+    "keywords": "AI运营",
+    "start_page": 1,
+    "max_notes_count": 20,
+    "enable_comments": True,
+    "enable_sub_comments": False,
+    "save_option": "csv",
+    "cookies": "",
+    "headless": False,
+    "xhs_sort_by": "综合",
+    "xhs_note_type": "不限",
+    "xhs_publish_time": "不限",
+    "xhs_search_scope": "不限",
+    "xhs_location": "不限",
+    "rule_base_token": "",
+    "rule_table_id": "",
+    "rule_name": "",
+    "sync_base_token": "",
+    "sync_notes_table_id": "",
+    "sync_comments_table_id": "",
+    "sync_limit": 0,
+}
+
+
+class OpsConfigPayload(BaseModel):
+    platform: str = "xhs"
+    login_type: str = "qrcode"
+    crawler_type: str = "search"
+    keywords: str = ""
+    start_page: int = 1
+    max_notes_count: int = 20
+    enable_comments: bool = True
+    enable_sub_comments: bool = False
+    save_option: str = "csv"
+    cookies: str = ""
+    headless: bool = False
+    xhs_sort_by: str = "综合"
+    xhs_note_type: str = "不限"
+    xhs_publish_time: str = "不限"
+    xhs_search_scope: str = "不限"
+    xhs_location: str = "不限"
+    rule_base_token: str = ""
+    rule_table_id: str = ""
+    rule_name: str = ""
+    sync_base_token: str = ""
+    sync_notes_table_id: str = ""
+    sync_comments_table_id: str = ""
+    sync_limit: int = 0
+
+
+def _load_ops_config() -> dict:
+    config = dict(OPS_CONFIG_DEFAULT)
+    if OPS_CONFIG_PATH.exists():
+        try:
+            with open(OPS_CONFIG_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                config.update(loaded)
+        except Exception:
+            pass
+    return config
+
+
+def _save_ops_config(config_data: dict) -> None:
+    OPS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OPS_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, ensure_ascii=False, indent=2)
 
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
@@ -73,6 +149,15 @@ async def serve_frontend():
         "docs": "/docs",
         "note": "WebUI not found, please build it first: cd webui && npm run build"
     }
+
+
+@app.get("/ops-config")
+async def serve_ops_config():
+    """Return independent ops config page."""
+    page_path = os.path.join(WEBUI_DIR, "ops_config.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return {"message": "ops_config.html not found", "path": page_path}
 
 
 @app.get("/api/health")
@@ -167,7 +252,36 @@ async def get_config_options():
             {"value": "db", "label": "MySQL Database"},
             {"value": "mongodb", "label": "MongoDB Database"},
         ],
+        "xhs_search_filters": {
+            "sort_by": ["综合", "最新", "最多点赞", "最多评论", "最多收藏"],
+            "note_type": ["不限", "视频", "图文"],
+            "publish_time": ["不限", "一天内", "一周内", "半年内"],
+            "search_scope": ["不限", "已看过", "未看过", "已关注"],
+            "location": ["不限", "同城", "附近"],
+            "reserved_note": "search_scope/location are reserved in current API mode",
+        },
     }
+
+
+@app.get("/api/ops-config")
+async def get_ops_config():
+    """Get saved ops config for independent ops page."""
+    return {"ok": True, "config": _load_ops_config()}
+
+
+@app.post("/api/ops-config")
+async def save_ops_config(payload: OpsConfigPayload):
+    """Save ops config for independent ops page."""
+    config_data = payload.model_dump()
+    # Keep start_page >= 1 for stability.
+    if config_data["start_page"] < 1:
+        config_data["start_page"] = 1
+    if config_data["max_notes_count"] < 1:
+        config_data["max_notes_count"] = 1
+    if config_data["sync_limit"] < 0:
+        config_data["sync_limit"] = 0
+    _save_ops_config(config_data)
+    return {"ok": True, "config": config_data}
 
 
 # Mount static resources - must be placed after all routes

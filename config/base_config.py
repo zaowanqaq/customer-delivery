@@ -47,7 +47,7 @@ SAVE_LOGIN_STATE = True
 # Whether to enable CDP mode - use the user's existing Chrome/Edge browser to crawl, providing better anti-detection capabilities
 # Once enabled, the user's Chrome/Edge browser will be automatically detected and started, and controlled through the CDP protocol.
 # This method uses the real browser environment, including the user's extensions, cookies and settings, greatly reducing the risk of detection.
-ENABLE_CDP_MODE = False
+ENABLE_CDP_MODE = True
 
 # CDP debug port, used to communicate with the browser
 # If the port is occupied, the system will automatically try the next available port
@@ -68,7 +68,7 @@ BROWSER_LAUNCH_TIMEOUT = 60
 
 # Whether to automatically close the browser when the program ends
 # Set to False to keep the browser running for easy debugging
-AUTO_CLOSE_BROWSER = True
+AUTO_CLOSE_BROWSER = False
 
 # Data saving type option configuration, supports: csv, db, json, jsonl, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
 SAVE_DATA_OPTION = "jsonl"  # csv or db or json or jsonl or sqlite or excel or postgres

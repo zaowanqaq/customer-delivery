@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>运营配置页</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, Arial, sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
+    .wrap { max-width: 920px; margin: 24px auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); }
+    h1 { margin: 0 0 16px; font-size: 22px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .row { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 13px; color: #374151; font-weight: 600; }
+    input, select, textarea { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 14px; }
+    textarea { min-height: 80px; resize: vertical; }
+    .full { grid-column: 1 / -1; }
+    .btns { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; font-size: 14px; cursor: pointer; }
+    .primary { background: #2563eb; color: #fff; }
+    .danger { background: #dc2626; color: #fff; }
+    .ghost { background: #e5e7eb; color: #111827; }
+    .status { margin-top: 14px; background: #0b1020; color: #d1fae5; border-radius: 8px; padding: 12px; font-size: 12px; white-space: pre-wrap; min-height: 80px; }
+    .tip { margin-top: 10px; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>小红书运营配置页</h1>
+    <div class="grid">
+      <div class="row">
+        <label>关键词（逗号分隔）</label>
+        <input id="keywords" placeholder="AI运营,内容营销">
+      </div>
+      <div class="row">
+        <label>起始页</label>
+        <input id="start_page" type="number" min="1" value="1">
+      </div>
+      <div class="row">
+        <label>最大笔记数</label>
+        <input id="max_notes_count" type="number" min="1" value="20">
+      </div>
+      <div class="row">
+        <label>登录方式</label>
+        <select id="login_type">
+          <option value="qrcode">qrcode</option>
+          <option value="cookie">cookie</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>保存格式</label>
+        <select id="save_option">
+          <option value="csv">csv</option>
+          <option value="jsonl">jsonl</option>
+          <option value="json">json</option>
+          <option value="excel">excel</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>排序</label>
+        <select id="xhs_sort_by">
+          <option>综合</option>
+          <option>最新</option>
+          <option>最多点赞</option>
+          <option>最多评论</option>
+          <option>最多收藏</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>笔记类型</label>
+        <select id="xhs_note_type">
+          <option>不限</option>
+          <option>视频</option>
+          <option>图文</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>发布时间</label>
+        <select id="xhs_publish_time">
+          <option>不限</option>
+          <option>一天内</option>
+          <option>一周内</option>
+          <option>半年内</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>搜索范围（预留）</label>
+        <select id="xhs_search_scope">
+          <option>不限</option>
+          <option>已看过</option>
+          <option>未看过</option>
+          <option>已关注</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>位置距离（预留）</label>
+        <select id="xhs_location">
+          <option>不限</option>
+          <option>同城</option>
+          <option>附近</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>无头模式</label>
+        <select id="headless">
+          <option value="false">false</option>
+          <option value="true">true</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>规则表 Base Token</label>
+        <input id="rule_base_token" placeholder="Dg...">
+      </div>
+      <div class="row">
+        <label>规则表 Table ID</label>
+        <input id="rule_table_id" placeholder="tbl...">
+      </div>
+      <div class="row full">
+        <label>指定规则名称（可空，空则取首条启用规则）</label>
+        <input id="rule_name" placeholder="小学数学-近7天-图文-最新">
+      </div>
+      <div class="row full">
+        <label>Cookies（仅 cookie 登录时需要）</label>
+        <textarea id="cookies" placeholder="粘贴 Cookie 字符串"></textarea>
+      </div>
+      <div class="row">
+        <label>同步 Base Token</label>
+        <input id="sync_base_token" placeholder="N9...">
+      </div>
+      <div class="row">
+        <label>同步 notes 表 ID</label>
+        <input id="sync_notes_table_id" placeholder="tbl...">
+      </div>
+      <div class="row">
+        <label>同步 comments 表 ID</label>
+        <input id="sync_comments_table_id" placeholder="tbl...">
+      </div>
+      <div class="row">
+        <label>同步数量上限（0=全部）</label>
+        <input id="sync_limit" type="number" min="0" value="0">
+      </div>
+      <div class="row">
+        <label>抓取评论</label>
+        <select id="enable_comments">
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>抓取二级评论</label>
+        <select id="enable_sub_comments">
+          <option value="false">false</option>
+          <option value="true">true</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="btns">
+      <button class="ghost" onclick="loadConfig()">刷新配置</button>
+      <button class="primary" onclick="saveConfig()">保存配置</button>
+      <button class="primary" onclick="startCrawler()">启动任务</button>
+      <button class="primary" onclick="startCrawlerFromRule()">按规则表启动</button>
+      <button class="primary" onclick="syncNotesToBase()">同步笔记到多维表</button>
+      <button class="danger" onclick="stopCrawler()">停止任务</button>
+    </div>
+    <div class="tip">说明：搜索范围和位置距离当前为预留字段，已保存和透传，但抓取侧暂未生效。</div>
+    <pre id="status" class="status"></pre>
+  </div>
+
+  <script>
+    const fields = [
+      "keywords", "start_page", "max_notes_count", "login_type", "save_option",
+      "xhs_sort_by", "xhs_note_type", "xhs_publish_time", "xhs_search_scope", "xhs_location",
+      "headless", "cookies", "enable_comments", "enable_sub_comments",
+      "rule_base_token", "rule_table_id", "rule_name",
+      "sync_base_token", "sync_notes_table_id", "sync_comments_table_id", "sync_limit"
+    ];
+
+    const statusEl = document.getElementById("status");
+    const log = (text) => {
+      const now = new Date().toLocaleTimeString();
+      statusEl.textContent = `[${now}] ${text}\n` + statusEl.textContent;
+    };
+
+    function getFormData() {
+      return {
+        platform: "xhs",
+        crawler_type: "search",
+        login_type: document.getElementById("login_type").value,
+        keywords: document.getElementById("keywords").value.trim(),
+        start_page: Number(document.getElementById("start_page").value || 1),
+        max_notes_count: Number(document.getElementById("max_notes_count").value || 20),
+        enable_comments: document.getElementById("enable_comments").value === "true",
+        enable_sub_comments: document.getElementById("enable_sub_comments").value === "true",
+        save_option: document.getElementById("save_option").value,
+        cookies: document.getElementById("cookies").value.trim(),
+        headless: document.getElementById("headless").value === "true",
+        xhs_sort_by: document.getElementById("xhs_sort_by").value,
+        xhs_note_type: document.getElementById("xhs_note_type").value,
+        xhs_publish_time: document.getElementById("xhs_publish_time").value,
+        xhs_search_scope: document.getElementById("xhs_search_scope").value,
+        xhs_location: document.getElementById("xhs_location").value,
+        rule_base_token: document.getElementById("rule_base_token").value.trim(),
+        rule_table_id: document.getElementById("rule_table_id").value.trim(),
+        rule_name: document.getElementById("rule_name").value.trim(),
+        sync_base_token: document.getElementById("sync_base_token").value.trim(),
+        sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
+        sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
+        sync_limit: Number(document.getElementById("sync_limit").value || 0)
+      };
+    }
+
+    function fillForm(config) {
+      fields.forEach((k) => {
+        const el = document.getElementById(k);
+        if (!el || !(k in config)) return;
+        if (typeof config[k] === "boolean") {
+          el.value = String(config[k]);
+        } else {
+          el.value = config[k] ?? "";
+        }
+      });
+    }
+
+    async function loadConfig() {
+      const res = await fetch("/api/ops-config");
+      const data = await res.json();
+      if (data.ok) {
+        fillForm(data.config);
+        log("配置已加载");
+      } else {
+        log("配置加载失败");
+      }
+    }
+
+    async function saveConfig() {
+      const payload = getFormData();
+      const res = await fetch("/api/ops-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.ok) {
+        log("配置保存成功");
+      } else {
+        log("配置保存失败: " + JSON.stringify(data));
+      }
+    }
+
+    async function startCrawler() {
+      const payload = getFormData();
+      await saveConfig();
+      const res = await fetch("/api/crawler/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      log("启动结果: " + JSON.stringify(data));
+    }
+
+    async function stopCrawler() {
+      const res = await fetch("/api/crawler/stop", { method: "POST" });
+      const data = await res.json();
+      log("停止结果: " + JSON.stringify(data));
+    }
+
+    async function syncNotesToBase() {
+      const payload = getFormData();
+      if (!payload.sync_base_token || !payload.sync_notes_table_id) {
+        log("请先填写同步 Base Token 和 notes 表 ID");
+        return;
+      }
+      await saveConfig();
+      const body = {
+        base_token: payload.sync_base_token,
+        table_id: payload.sync_notes_table_id,
+        data_type: "notes",
+        source_keyword: payload.keywords.split(",")[0].trim(),
+        limit: payload.sync_limit
+      };
+      const res = await fetch("/api/crawler/sync-local-to-base", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      log("同步结果: " + JSON.stringify(data));
+    }
+
+    async function startCrawlerFromRule() {
+      const payload = getFormData();
+      await saveConfig();
+      const body = {
+        base_token: payload.rule_base_token,
+        table_id: payload.rule_table_id,
+        rule_name: payload.rule_name,
+        platform: payload.platform,
+        login_type: payload.login_type,
+        crawler_type: payload.crawler_type,
+        save_option: payload.save_option,
+        start_page: payload.start_page,
+        max_notes_count: payload.max_notes_count,
+        enable_comments: payload.enable_comments,
+        enable_sub_comments: payload.enable_sub_comments,
+        cookies: payload.cookies,
+        headless: payload.headless
+      };
+      const res = await fetch("/api/crawler/start-from-rule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      log("按规则表启动结果: " + JSON.stringify(data));
+    }
+
+    loadConfig().catch((e) => log("初始化失败: " + e.message));
+  </script>
+</body>
+</html>

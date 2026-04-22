@@ -20,6 +20,7 @@ import asyncio
 import subprocess
 import signal
 import os
+import shutil
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -204,7 +205,14 @@ class CrawlerManager:
 
     def _build_command(self, config: CrawlerStartRequest) -> list:
         """Build main.py command line arguments"""
-        cmd = ["uv", "run", "python", "main.py"]
+        uv_bin = shutil.which("uv")
+        venv_python = self._project_root / ".venv" / "Scripts" / "python.exe"
+        if uv_bin:
+            cmd = [uv_bin, "run", "python", "main.py"]
+        elif venv_python.exists():
+            cmd = [str(venv_python), "main.py"]
+        else:
+            cmd = ["python", "main.py"]
 
         cmd.extend(["--platform", config.platform.value])
         cmd.extend(["--lt", config.login_type.value])
@@ -214,6 +222,12 @@ class CrawlerManager:
         # Pass different arguments based on crawler type
         if config.crawler_type.value == "search" and config.keywords:
             cmd.extend(["--keywords", config.keywords])
+            if config.platform.value == "xhs":
+                cmd.extend(["--xhs_sort_by", config.xhs_sort_by])
+                cmd.extend(["--xhs_note_type", config.xhs_note_type])
+                cmd.extend(["--xhs_publish_time", config.xhs_publish_time])
+                cmd.extend(["--xhs_search_scope", config.xhs_search_scope])
+                cmd.extend(["--xhs_location", config.xhs_location])
         elif config.crawler_type.value == "detail" and config.specified_ids:
             cmd.extend(["--specified_id", config.specified_ids])
         elif config.crawler_type.value == "creator" and config.creator_ids:
@@ -221,6 +235,8 @@ class CrawlerManager:
 
         if config.start_page != 1:
             cmd.extend(["--start", str(config.start_page)])
+        if config.max_notes_count and config.max_notes_count > 0:
+            cmd.extend(["--max_notes_count", str(config.max_notes_count)])
 
         cmd.extend(["--get_comment", "true" if config.enable_comments else "false"])
         cmd.extend(["--get_sub_comment", "true" if config.enable_sub_comments else "false"])

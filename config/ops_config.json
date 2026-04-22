@@ -1,0 +1,20 @@
+{
+  "platform": "xhs",
+  "login_type": "qrcode",
+  "crawler_type": "search",
+  "keywords": "小学数学",
+  "start_page": 1,
+  "enable_comments": true,
+  "enable_sub_comments": false,
+  "save_option": "csv",
+  "cookies": "",
+  "headless": false,
+  "xhs_sort_by": "最新",
+  "xhs_note_type": "图文",
+  "xhs_publish_time": "一周内",
+  "xhs_search_scope": "不限",
+  "xhs_location": "不限",
+  "rule_base_token": "",
+  "rule_table_id": "",
+  "rule_name": ""
+}

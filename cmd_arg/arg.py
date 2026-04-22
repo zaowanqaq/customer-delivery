@@ -174,6 +174,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Basic Configuration",
             ),
         ] = config.START_PAGE,
+        max_notes_count: Annotated[
+            int,
+            typer.Option(
+                "--max_notes_count",
+                help="Maximum number of notes to crawl",
+                rich_help_panel="Basic Configuration",
+            ),
+        ] = config.CRAWLER_MAX_NOTES_COUNT,
         keywords: Annotated[
             str,
             typer.Option(
@@ -182,6 +190,46 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Basic Configuration",
             ),
         ] = config.KEYWORDS,
+        xhs_sort_by: Annotated[
+            str,
+            typer.Option(
+                "--xhs_sort_by",
+                help="XHS search sort: 综合 | 最新 | 最多点赞 | 最多评论 | 最多收藏",
+                rich_help_panel="XHS Search Filter",
+            ),
+        ] = getattr(config, "XHS_SEARCH_SORT_BY", "综合"),
+        xhs_note_type: Annotated[
+            str,
+            typer.Option(
+                "--xhs_note_type",
+                help="XHS note type: 不限 | 视频 | 图文",
+                rich_help_panel="XHS Search Filter",
+            ),
+        ] = getattr(config, "XHS_SEARCH_NOTE_TYPE", "不限"),
+        xhs_publish_time: Annotated[
+            str,
+            typer.Option(
+                "--xhs_publish_time",
+                help="XHS publish time: 不限 | 一天内 | 一周内 | 半年内",
+                rich_help_panel="XHS Search Filter",
+            ),
+        ] = getattr(config, "XHS_SEARCH_PUBLISH_TIME", "不限"),
+        xhs_search_scope: Annotated[
+            str,
+            typer.Option(
+                "--xhs_search_scope",
+                help="XHS search scope: 不限 | 已看过 | 未看过 | 已关注 (reserved in current API mode)",
+                rich_help_panel="XHS Search Filter",
+            ),
+        ] = getattr(config, "XHS_SEARCH_SCOPE", "不限"),
+        xhs_location: Annotated[
+            str,
+            typer.Option(
+                "--xhs_location",
+                help="XHS location distance: 不限 | 同城 | 附近 (reserved in current API mode)",
+                rich_help_panel="XHS Search Filter",
+            ),
+        ] = getattr(config, "XHS_SEARCH_LOCATION", "不限"),
         get_comment: Annotated[
             str,
             typer.Option(
@@ -318,7 +366,13 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.LOGIN_TYPE = lt.value
         config.CRAWLER_TYPE = crawler_type.value
         config.START_PAGE = start
+        config.CRAWLER_MAX_NOTES_COUNT = max_notes_count
         config.KEYWORDS = keywords
+        config.XHS_SEARCH_SORT_BY = xhs_sort_by
+        config.XHS_SEARCH_NOTE_TYPE = xhs_note_type
+        config.XHS_SEARCH_PUBLISH_TIME = xhs_publish_time
+        config.XHS_SEARCH_SCOPE = xhs_search_scope
+        config.XHS_SEARCH_LOCATION = xhs_location
         config.ENABLE_GET_COMMENTS = enable_comment
         config.ENABLE_GET_SUB_COMMENTS = enable_sub_comment
         config.HEADLESS = enable_headless
@@ -362,7 +416,13 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             lt=config.LOGIN_TYPE,
             type=config.CRAWLER_TYPE,
             start=config.START_PAGE,
+            max_notes_count=config.CRAWLER_MAX_NOTES_COUNT,
             keywords=config.KEYWORDS,
+            xhs_sort_by=getattr(config, "XHS_SEARCH_SORT_BY", "综合"),
+            xhs_note_type=getattr(config, "XHS_SEARCH_NOTE_TYPE", "不限"),
+            xhs_publish_time=getattr(config, "XHS_SEARCH_PUBLISH_TIME", "不限"),
+            xhs_search_scope=getattr(config, "XHS_SEARCH_SCOPE", "不限"),
+            xhs_location=getattr(config, "XHS_SEARCH_LOCATION", "不限"),
             get_comment=config.ENABLE_GET_COMMENTS,
             get_sub_comment=config.ENABLE_GET_SUB_COMMENTS,
             headless=config.HEADLESS,

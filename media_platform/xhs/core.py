@@ -21,6 +21,7 @@ import asyncio
 import os
 import random
 from asyncio import Task
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from playwright.async_api import (
@@ -43,7 +44,7 @@ from var import crawler_type_var, source_keyword_var
 
 from .client import XiaoHongShuClient
 from .exception import DataFetchError, NoteNotFoundError
-from .field import SearchSortType
+from .field import SearchNoteType, SearchSortType
 from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
 from .login import XiaoHongShuLogin
 
@@ -60,6 +61,62 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+
+    def _resolve_search_sort(self) -> SearchSortType:
+        """Resolve xhs sort strategy from config (mcp-compatible labels first)."""
+        sort_by = getattr(config, "XHS_SEARCH_SORT_BY", "综合")
+        sort_map = {
+            "综合": SearchSortType.GENERAL,
+            "最新": SearchSortType.LATEST,
+            # XHS API mode has no dedicated "most commented/most collected" enum.
+            "最多点赞": SearchSortType.MOST_POPULAR,
+            "最多评论": SearchSortType.MOST_POPULAR,
+            "最多收藏": SearchSortType.MOST_POPULAR,
+        }
+        if sort_by in sort_map:
+            return sort_map[sort_by]
+        if getattr(config, "SORT_TYPE", ""):
+            return SearchSortType(config.SORT_TYPE)
+        return SearchSortType.GENERAL
+
+    def _resolve_search_note_type(self) -> SearchNoteType:
+        """Resolve xhs note type from config labels."""
+        note_type = getattr(config, "XHS_SEARCH_NOTE_TYPE", "不限")
+        note_type_map = {
+            "不限": SearchNoteType.ALL,
+            "视频": SearchNoteType.VIDEO,
+            "图文": SearchNoteType.IMAGE,
+        }
+        return note_type_map.get(note_type, SearchNoteType.ALL)
+
+    def _match_publish_time_filter(self, note_detail: Dict) -> bool:
+        """Apply publish-time filter: 不限 | 一天内 | 一周内 | 半年内."""
+        publish_time_filter = getattr(config, "XHS_SEARCH_PUBLISH_TIME", "不限")
+        if publish_time_filter in ("", "不限"):
+            return True
+
+        window_seconds_map = {
+            "一天内": 24 * 3600,
+            "一周内": 7 * 24 * 3600,
+            "半年内": 180 * 24 * 3600,
+        }
+        window_seconds = window_seconds_map.get(publish_time_filter)
+        if not window_seconds:
+            return True
+
+        note_time = note_detail.get("time")
+        if not note_time:
+            return True
+
+        try:
+            note_ts = int(note_time)
+            # normalize ms timestamp to seconds
+            if note_ts > 10**12:
+                note_ts = note_ts // 1000
+            now_ts = int(datetime.now().timestamp())
+            return (now_ts - note_ts) <= window_seconds
+        except Exception:
+            return True
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -125,16 +182,23 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
-        xhs_limit_count = 20  # Xiaohongshu limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
+        if getattr(config, "XHS_SEARCH_SCOPE", "不限") != "不限":
+            utils.logger.warning("[XiaoHongShuCrawler.search] XHS_SEARCH_SCOPE is reserved in current API mode and will be ignored")
+        if getattr(config, "XHS_SEARCH_LOCATION", "不限") != "不限":
+            utils.logger.warning("[XiaoHongShuCrawler.search] XHS_SEARCH_LOCATION is reserved in current API mode and will be ignored")
+        xhs_limit_count = 20  # Xiaohongshu API page size
+        max_notes_count = max(1, int(getattr(config, "CRAWLER_MAX_NOTES_COUNT", 20)))
         start_page = config.START_PAGE
+        resolved_sort = self._resolve_search_sort()
+        resolved_note_type = self._resolve_search_note_type()
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
             page = 1
             search_id = get_search_id()
-            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            max_pages = (max_notes_count + xhs_limit_count - 1) // xhs_limit_count
+            kept_notes = 0
+            while (page - start_page) < max_pages:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
                     page += 1
@@ -148,7 +212,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         keyword=keyword,
                         search_id=search_id,
                         page=page,
-                        sort=(SearchSortType(config.SORT_TYPE) if config.SORT_TYPE != "" else SearchSortType.GENERAL),
+                        sort=resolved_sort,
+                        note_type=resolved_note_type,
                     )
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Search notes response: {notes_res}")
                     if not notes_res or not notes_res.get("has_more", False):
@@ -164,15 +229,27 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         ) for post_item in notes_res.get("items", {}) if post_item.get("model_type") not in ("rec_query", "hot_query")
                     ]
                     note_details = await asyncio.gather(*task_list)
+                    filtered_out = 0
                     for note_detail in note_details:
                         if note_detail:
+                            if not self._match_publish_time_filter(note_detail):
+                                filtered_out += 1
+                                continue
+                            if kept_notes >= max_notes_count:
+                                break
                             await xhs_store.update_xhs_note(note_detail)
                             await self.get_notice_media(note_detail)
                             note_ids.append(note_detail.get("note_id"))
                             xsec_tokens.append(note_detail.get("xsec_token"))
+                            kept_notes += 1
+                    if filtered_out > 0:
+                        utils.logger.info(f"[XiaoHongShuCrawler.search] Filtered out {filtered_out} notes by publish_time")
                     page += 1
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Note details: {note_details}")
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
+                    if kept_notes >= max_notes_count:
+                        utils.logger.info(f"[XiaoHongShuCrawler.search] Reached max_notes_count={max_notes_count}, stop current keyword")
+                        break
 
                     # Sleep after each page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)

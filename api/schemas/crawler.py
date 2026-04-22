@@ -66,11 +66,45 @@ class CrawlerStartRequest(BaseModel):
     specified_ids: str = ""  # Post/video ID list for detail mode, comma-separated
     creator_ids: str = ""  # Creator ID list for creator mode, comma-separated
     start_page: int = 1
+    max_notes_count: int = 20
     enable_comments: bool = True
     enable_sub_comments: bool = False
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
+    # XHS search filters (inspired by xiaohongshu-mcp search_feeds)
+    xhs_sort_by: str = "综合"  # 综合 | 最新 | 最多点赞 | 最多评论 | 最多收藏
+    xhs_note_type: str = "不限"  # 不限 | 视频 | 图文
+    xhs_publish_time: str = "不限"  # 不限 | 一天内 | 一周内 | 半年内
+    xhs_search_scope: str = "不限"  # reserved in current API mode
+    xhs_location: str = "不限"  # reserved in current API mode
+
+
+class RuleTableStartRequest(BaseModel):
+    """Start crawler by reading one enabled rule from Lark Base rule table."""
+    base_token: str
+    table_id: str
+    rule_name: str = ""  # Optional exact rule name match
+    platform: PlatformEnum = PlatformEnum.XHS
+    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    crawler_type: CrawlerTypeEnum = CrawlerTypeEnum.SEARCH
+    save_option: SaveDataOptionEnum = SaveDataOptionEnum.CSV
+    start_page: int = 1
+    max_notes_count: int = 20
+    enable_comments: bool = True
+    enable_sub_comments: bool = False
+    cookies: str = ""
+    headless: bool = False
+
+
+class LocalToBaseSyncRequest(BaseModel):
+    """Sync local xhs data file to Feishu Base table."""
+    base_token: str
+    table_id: str
+    data_type: Literal["notes", "comments"] = "notes"
+    source_keyword: str = ""
+    limit: int = 0
+    file_path: str = ""
 
 
 class CrawlerStatusResponse(BaseModel):
