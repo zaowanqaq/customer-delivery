@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
-#
-# This file is part of MediaCrawler project.
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/tools/async_file_writer.py
-# GitHub: https://github.com/NanmiCoder
-# Licensed under NON-COMMERCIAL LEARNING LICENSE 1.1
-#
-# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：
-# 1. 不得用于任何商业用途。
-# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。
-# 3. 不得进行大规模爬取或对平台造成运营干扰。
-# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。
-# 5. 不得用于任何非法或不当的用途。
-#
-# 详细许可条款请参阅项目根目录下的LICENSE文件。
-# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
-
 import asyncio
 import csv
 import json
 import os
 import pathlib
+from datetime import datetime
 from typing import Dict, List
 import aiofiles
 import config
@@ -43,15 +27,43 @@ class AsyncFileWriter:
         file_name = f"{self.crawler_type}_{item_type}_{utils.get_current_date()}.{file_type}"
         return f"{base_path}/{file_name}"
 
+    def _get_fallback_file_path(self, target_file_path: str) -> str:
+        """
+        Build a fallback file path when the primary file is locked by another process
+        (e.g., opened in Excel).
+        """
+        src = pathlib.Path(target_file_path)
+        ts = datetime.now().strftime("%H%M%S")
+        return str(src.with_name(f"{src.stem}_fallback_{ts}{src.suffix}"))
+
     async def write_to_csv(self, item: Dict, item_type: str):
         file_path = self._get_file_path('csv', item_type)
         async with self.lock:
-            file_exists = os.path.exists(file_path)
-            async with aiofiles.open(file_path, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=item.keys())
-                if not file_exists or await f.tell() == 0:
-                    await writer.writeheader()
-                await writer.writerow(item)
+            target_paths = [file_path]
+            fallback_path = ""
+            for idx, target_path in enumerate(target_paths):
+                try:
+                    file_exists = os.path.exists(target_path)
+                    async with aiofiles.open(target_path, 'a', newline='', encoding='utf-8-sig') as f:
+                        writer = csv.DictWriter(f, fieldnames=item.keys())
+                        if not file_exists or await f.tell() == 0:
+                            await writer.writeheader()
+                        await writer.writerow(item)
+                    if idx > 0:
+                        utils.logger.warning(
+                            f"[AsyncFileWriter.write_to_csv] Primary CSV locked, data appended to fallback file: {target_path}"
+                        )
+                    return
+                except PermissionError as e:
+                    if idx == 0:
+                        fallback_path = self._get_fallback_file_path(target_path)
+                        target_paths.append(fallback_path)
+                        utils.logger.warning(
+                            f"[AsyncFileWriter.write_to_csv] CSV file is locked or no permission: {target_path}. "
+                            f"Will retry with fallback file: {fallback_path}. error={e}"
+                        )
+                        continue
+                    raise
 
     async def write_to_jsonl(self, item: Dict, item_type: str):
         file_path = self._get_file_path('jsonl', item_type)

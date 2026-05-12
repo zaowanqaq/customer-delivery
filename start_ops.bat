@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "PY=.venv\Scripts\python.exe"
-set "PORT=8080"
+set "PORT=8081"
 set "URL=http://127.0.0.1:%PORT%/ops-config"
 
 echo [MediaCrawler] Working directory: %CD%

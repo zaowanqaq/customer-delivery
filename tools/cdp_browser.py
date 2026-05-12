@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
 # Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/tools/cdp_browser.py
@@ -108,11 +107,17 @@ class CDPBrowserManager:
             # 1. Detect browser path
             browser_path = await self._get_browser_path()
 
-            # 2. Get available port
-            self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
-
-            # 3. Launch browser
-            await self._launch_browser(browser_path, headless)
+            # 2. Prefer reusing an existing CDP browser on configured port.
+            configured_port = config.CDP_DEBUG_PORT
+            if await self._test_cdp_connection(configured_port):
+                self.debug_port = configured_port
+                utils.logger.info(
+                    f"[CDPBrowserManager] Reusing existing CDP browser on port {self.debug_port}"
+                )
+            else:
+                # No running CDP browser; launch a new one.
+                self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+                await self._launch_browser(browser_path, headless)
 
             # 4. Register cleanup handlers (ensure cleanup on abnormal exit)
             self._register_cleanup_handlers()
@@ -358,6 +363,12 @@ class CDPBrowserManager:
             force: Whether to force cleanup browser process (ignoring AUTO_CLOSE_BROWSER config)
         """
         try:
+            # Keep Chrome fully online after crawl unless explicitly forced.
+            keep_browser_online = (not force) and (not config.AUTO_CLOSE_BROWSER)
+            if keep_browser_online:
+                utils.logger.info("[CDPBrowserManager] Keeping browser online (AUTO_CLOSE_BROWSER=False)")
+                return
+
             # Close browser context
             if self.browser_context:
                 try:

@@ -10,7 +10,6 @@
 [![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/MediaCrawler?style=social)](https://github.com/NanmiCoder/MediaCrawler/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/MediaCrawler)](https://github.com/NanmiCoder/MediaCrawler/issues)
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/MediaCrawler)](https://github.com/NanmiCoder/MediaCrawler/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/MediaCrawler)](https://github.com/NanmiCoder/MediaCrawler/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-blue)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Current-green)](README_en.md)
 [![Español](https://img.shields.io/badge/🇪🇸_Español-Available-green)](README_es.md)
@@ -249,8 +248,6 @@ TikHub.io provides 900+ highly stable data interfaces, covering 14+ mainstream d
 Become a sponsor and showcase your product here, getting massive exposure daily!
 
 **Contact Information**:
-- WeChat: `relakkes`
-- Email: `relakkes@gmail.com`
 ---
 
 ### 📚 Other
@@ -289,19 +286,12 @@ This project is strictly prohibited from being used for any illegal purposes or 
 ## 4. Disclaimer
 The developer has made every effort to ensure the legitimacy and security of this project, but assumes no responsibility for any form of direct or indirect losses that may arise from users' use of this project. Including but not limited to any data loss, equipment damage, legal litigation, etc. caused by using this project.
 
-## 5. Intellectual Property Statement
-The intellectual property rights of this project belong to the developer. This project is protected by copyright law and international copyright treaties as well as other intellectual property laws and treaties. Users may download and use this project under the premise of complying with this statement and relevant laws and regulations.
-
-## 6. Final Interpretation Rights
+## 5. Final Interpretation Rights
 The developer has the final interpretation rights regarding this project. The developer reserves the right to change or update this disclaimer at any time without further notice.
 </div>
 
 
 ## 🙏 Acknowledgments
-
-### JetBrains Open Source License Support
-
-Thanks to JetBrains for providing free open source license support for this project!
 
 <a href="https://www.jetbrains.com/?from=MediaCrawler">
     <img src="https://www.jetbrains.com/company/brand/img/jetbrains_logo.png" width="100" alt="JetBrains" />

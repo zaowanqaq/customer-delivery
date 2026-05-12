@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
 # Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/media_platform/xhs/client.py
@@ -19,7 +18,7 @@
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -265,9 +264,54 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
 
         """
-        cookie_str, cookie_dict = utils.convert_cookies(await browser_context.cookies())
+        cookie_str, cookie_dict = utils.convert_cookies(await browser_context.cookies(), domain_filter="xiaohongshu.com")
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
+
+    async def preflight_check(self, keyword: str = "测试") -> Dict[str, Any]:
+        """
+        Pre-crawl preflight check: pong + keyword dry-run.
+        Returns a dict with check results:
+            {
+                "pong_ok": bool,
+                "search_ok": bool,
+                "error": Optional[str],
+                "cookie_keys": List[str],  # present cookie names for debugging
+            }
+        """
+        result: Dict[str, Any] = {
+            "pong_ok": False,
+            "search_ok": False,
+            "error": None,
+            "cookie_keys": list(self.cookie_dict.keys()) if self.cookie_dict else [],
+        }
+
+        # Step 1: pong check
+        result["pong_ok"] = await self.pong()
+        if not result["pong_ok"]:
+            result["error"] = "pong failed: API login state invalid"
+            return result
+
+        # Step 2: keyword dry-run (single page, page_size=1)
+        try:
+            from .help import get_search_id
+            uri = "/api/sns/web/v1/search/notes"
+            data = {
+                "keyword": keyword,
+                "page": 1,
+                "page_size": 1,
+                "search_id": get_search_id(),
+                "sort": "general",
+                "note_type": 0,
+            }
+            await self.post(uri, data)
+            result["search_ok"] = True
+        except DataFetchError as e:
+            result["error"] = f"search dry-run failed: {e}"
+        except Exception as e:
+            result["error"] = f"search dry-run exception: {e}"
+
+        return result
 
     async def get_note_by_keyword(
         self,

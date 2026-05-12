@@ -3,222 +3,706 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>运营配置页</title>
+  <title>小红书运营配置（V1）</title>
   <style>
     body { font-family: -apple-system, Segoe UI, Arial, sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
-    .wrap { max-width: 920px; margin: 24px auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.06); }
-    h1 { margin: 0 0 16px; font-size: 22px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .wrap { max-width: 980px; margin: 24px auto; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.06); }
+    h1 { margin: 0; font-size: 22px; }
+    .sub { margin-top: 8px; color: #6b7280; font-size: 13px; }
+    .card { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; }
+    .card h2 { margin: 0 0 8px; font-size: 16px; }
+    .hint { margin: 0 0 10px; color: #6b7280; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
     .row { display: flex; flex-direction: column; gap: 6px; }
+    .full { grid-column: 1 / -1; }
     label { font-size: 13px; color: #374151; font-weight: 600; }
     input, select, textarea { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 14px; }
-    textarea { min-height: 80px; resize: vertical; }
-    .full { grid-column: 1 / -1; }
-    .btns { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    textarea { min-height: 84px; resize: vertical; }
+    .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
     button { border: 0; border-radius: 8px; padding: 10px 14px; font-size: 14px; cursor: pointer; }
     .primary { background: #2563eb; color: #fff; }
     .danger { background: #dc2626; color: #fff; }
     .ghost { background: #e5e7eb; color: #111827; }
-    .status { margin-top: 14px; background: #0b1020; color: #d1fae5; border-radius: 8px; padding: 12px; font-size: 12px; white-space: pre-wrap; min-height: 80px; }
-    .tip { margin-top: 10px; font-size: 12px; color: #6b7280; }
+    .status { margin-top: 14px; background: #0b1020; color: #d1fae5; border-radius: 8px; padding: 12px; font-size: 12px; white-space: pre-wrap; min-height: 110px; }
+    .v1-hidden { display: none; }
+    .meta-panel { background: #f9fafb; border: 1px dashed #d1d5db; border-radius: 8px; padding: 10px; }
+    .meta-row { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #e5e7eb; padding: 7px 0; }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-key { color: #374151; font-weight: 600; font-size: 13px; }
+    .meta-val { color: #111827; font-size: 13px; text-align: right; word-break: break-all; }
+    .meta-val a { color: #2563eb; text-decoration: none; }
+    .meta-val a:hover { text-decoration: underline; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .monitor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+    .monitor-item { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; }
+    .monitor-key { font-size: 12px; color: #6b7280; }
+    .monitor-val { margin-top: 4px; font-size: 13px; color: #111827; }
+    .monitor-log { margin-top: 10px; background: #0b1020; color: #d1fae5; border-radius: 8px; padding: 10px; min-height: 140px; max-height: 260px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>小红书运营配置页</h1>
-    <div class="grid">
-      <div class="row">
-        <label>关键词（逗号分隔）</label>
-        <input id="keywords" placeholder="AI运营,内容营销">
-      </div>
-      <div class="row">
-        <label>起始页</label>
-        <input id="start_page" type="number" min="1" value="1">
-      </div>
-      <div class="row">
-        <label>最大笔记数</label>
-        <input id="max_notes_count" type="number" min="1" value="20">
-      </div>
-      <div class="row">
-        <label>登录方式</label>
-        <select id="login_type">
-          <option value="qrcode">qrcode</option>
-          <option value="cookie">cookie</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>保存格式</label>
-        <select id="save_option">
-          <option value="csv">csv</option>
-          <option value="jsonl">jsonl</option>
-          <option value="json">json</option>
-          <option value="excel">excel</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>排序</label>
-        <select id="xhs_sort_by">
-          <option>综合</option>
-          <option>最新</option>
-          <option>最多点赞</option>
-          <option>最多评论</option>
-          <option>最多收藏</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>笔记类型</label>
-        <select id="xhs_note_type">
-          <option>不限</option>
-          <option>视频</option>
-          <option>图文</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>发布时间</label>
-        <select id="xhs_publish_time">
-          <option>不限</option>
-          <option>一天内</option>
-          <option>一周内</option>
-          <option>半年内</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>搜索范围（预留）</label>
-        <select id="xhs_search_scope">
-          <option>不限</option>
-          <option>已看过</option>
-          <option>未看过</option>
-          <option>已关注</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>位置距离（预留）</label>
-        <select id="xhs_location">
-          <option>不限</option>
-          <option>同城</option>
-          <option>附近</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>无头模式</label>
-        <select id="headless">
-          <option value="false">false</option>
-          <option value="true">true</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>规则表 Base Token</label>
-        <input id="rule_base_token" placeholder="Dg...">
-      </div>
-      <div class="row">
-        <label>规则表 Table ID</label>
-        <input id="rule_table_id" placeholder="tbl...">
-      </div>
-      <div class="row full">
-        <label>指定规则名称（可空，空则取首条启用规则）</label>
-        <input id="rule_name" placeholder="小学数学-近7天-图文-最新">
-      </div>
-      <div class="row full">
-        <label>Cookies（仅 cookie 登录时需要）</label>
-        <textarea id="cookies" placeholder="粘贴 Cookie 字符串"></textarea>
-      </div>
-      <div class="row">
-        <label>同步 Base Token</label>
-        <input id="sync_base_token" placeholder="N9...">
-      </div>
-      <div class="row">
-        <label>同步 notes 表 ID</label>
-        <input id="sync_notes_table_id" placeholder="tbl...">
-      </div>
-      <div class="row">
-        <label>同步 comments 表 ID</label>
-        <input id="sync_comments_table_id" placeholder="tbl...">
-      </div>
-      <div class="row">
-        <label>同步数量上限（0=全部）</label>
-        <input id="sync_limit" type="number" min="0" value="0">
-      </div>
-      <div class="row">
-        <label>抓取评论</label>
-        <select id="enable_comments">
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </select>
-      </div>
-      <div class="row">
-        <label>抓取二级评论</label>
-        <select id="enable_sub_comments">
-          <option value="false">false</option>
-          <option value="true">true</option>
-        </select>
-      </div>
-    </div>
+    <h1>小红书运营配置（V1）</h1>
+    <div class="sub">按流程操作：1初始化项目 -> 2样本账号抓取 -> 3爆款抓取 -> 4同步多维表 -> 5合作监控</div>
 
-    <div class="btns">
-      <button class="ghost" onclick="loadConfig()">刷新配置</button>
-      <button class="primary" onclick="saveConfig()">保存配置</button>
-      <button class="primary" onclick="startCrawler()">启动任务</button>
-      <button class="primary" onclick="startCrawlerFromRule()">按规则表启动</button>
-      <button class="primary" onclick="syncNotesToBase()">同步笔记到多维表</button>
-      <button class="danger" onclick="stopCrawler()">停止任务</button>
-    </div>
-    <div class="tip">说明：搜索范围和位置距离当前为预留字段，已保存和透传，但抓取侧暂未生效。</div>
+    <section class="card">
+      <h2>项目切换器</h2>
+      <p class="hint">用于已有项目 1/2/3 快速切换配置，不需要每次重新建表。</p>
+      <div class="grid">
+        <div class="row">
+          <label>已保存项目</label>
+          <select id="project_selector"></select>
+        </div>
+        <div class="row">
+          <label>项目槽位名（如 项目1/项目2）</label>
+          <input id="project_slot_name" placeholder="项目1">
+        </div>
+      </div>
+      <div class="btns">
+        <button class="ghost" onclick="applySelectedProject()">切换到所选项目</button>
+        <button class="ghost" onclick="saveCurrentProjectProfile()">保存当前为项目槽位</button>
+        <button class="danger" onclick="deleteSelectedProject()">删除所选项目配置</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>步骤1：初始化项目</h2>
+      <p class="hint">只填项目名，系统自动新建 Base 并创建项目主表、账号筛选表、爆款监控表、合作监控表。</p>
+      <div class="grid">
+        <div class="row">
+          <label>所属项目名（必填）</label>
+          <input id="project_name" placeholder="北京车展2026">
+        </div>
+      </div>
+      <input id="folder_token" class="v1-hidden" placeholder="fld...">
+      <input id="scenario_base_token" class="v1-hidden" placeholder="N9...">
+      <input id="sync_base_token" class="v1-hidden" placeholder="N9...">
+      <input id="account_filter_table_name" class="v1-hidden" value="账号筛选表">
+      <input id="viral_monitor_table_name" class="v1-hidden" value="爆款监控表">
+      <input id="collaboration_monitor_table_name" class="v1-hidden" value="合作笔记监控表">
+      <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="sync_comments_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
+      <div class="btns">
+        <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键初始化项目（新建Base+建表）</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>项目映射（可视化）</h2>
+      <p class="hint">这里直接展示当前项目会写入哪一个 Base/表，避免只看 token/table_id。</p>
+      <div id="project_binding_view" class="meta-panel">
+        <div class="meta-row">
+          <span class="meta-key">状态</span>
+          <span class="meta-val">请先初始化项目或切换到已有项目</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>公共抓取配置（步骤2/3/5共用）</h2>
+      <p class="hint">所有抓取任务共用同一套登录和评论参数。</p>
+      <div class="grid">
+        <div class="row">
+          <label>登录方式</label>
+          <select id="login_type">
+            <option value="qrcode">qrcode</option>
+            <option value="cookie">cookie</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>保存格式</label>
+          <select id="save_option">
+            <option value="jsonl">jsonl</option>
+            <option value="csv">csv</option>
+            <option value="json">json</option>
+            <option value="excel">excel</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>无头模式</label>
+          <select id="headless">
+            <option value="false">false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>抓取评论</label>
+          <select id="enable_comments">
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>抓取二级评论</label>
+          <select id="enable_sub_comments">
+            <option value="false">false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>每篇评论抓取上限</label>
+          <input id="max_comments_count_singlenotes" type="number" min="1" value="10">
+        </div>
+        <div class="row full">
+          <label>Cookies（仅 cookie 登录时填写）</label>
+          <textarea id="cookies" placeholder="粘贴 Cookie 字符串"></textarea>
+        </div>
+      </div>
+      <div class="btns">
+        <button class="ghost" onclick="loadConfig()">刷新配置</button>
+        <button class="ghost" onclick="saveConfig()">保存配置</button>
+        <button class="danger" onclick="stopCrawler()">停止当前抓取</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>步骤2：样本账号抓取（3-5账号）</h2>
+      <p class="hint">输入样本账号主页链接或账号ID，每个账号默认抓 20 篇。</p>
+      <div class="grid">
+        <div class="row full">
+          <label>样本账号列表（逗号或换行）</label>
+          <textarea id="sample_creator_ids" placeholder="https://www.xiaohongshu.com/user/profile/xxx"></textarea>
+        </div>
+        <div class="row">
+          <label>每个账号抓取篇数</label>
+          <input id="notes_per_creator" type="number" min="1" value="20">
+        </div>
+      </div>
+      <div class="btns">
+        <button class="primary" onclick="startSampleCreators()">启动样本账号抓取</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>步骤3：爆款抓取（关键词）</h2>
+      <p class="hint">用于项目关键词爆款检索，抓取后在步骤4写入多维表。</p>
+      <div class="grid">
+        <div class="row">
+          <label>搜索关键词（单个）</label>
+          <input id="keywords" placeholder="北京车展">
+        </div>
+        <div class="row">
+          <label>最大笔记数</label>
+          <input id="max_notes_count" type="number" min="1" value="20">
+        </div>
+        <div class="row">
+          <label>起始页</label>
+          <input id="start_page" type="number" min="1" value="1">
+        </div>
+        <div class="row">
+          <label>排序</label>
+          <select id="xhs_sort_by">
+            <option>综合</option>
+            <option>最新</option>
+            <option>最多点赞</option>
+            <option>最多评论</option>
+            <option>最多收藏</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>笔记类型</label>
+          <select id="xhs_note_type">
+            <option>不限</option>
+            <option>视频</option>
+            <option>图文</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>发布时间</label>
+          <select id="xhs_publish_time">
+            <option>不限</option>
+            <option>一天内</option>
+            <option>一周内</option>
+            <option>半年内</option>
+          </select>
+        </div>
+      </div>
+      <input id="xhs_search_scope" class="v1-hidden" value="不限">
+      <input id="xhs_location" class="v1-hidden" value="不限">
+      <div class="btns">
+        <button class="primary" onclick="startCrawler()">启动爆款抓取</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>抓取进度监控</h2>
+      <p class="hint">支持手动刷新与自动轮询（默认2秒），用于查看运行状态与最新日志。</p>
+      <div class="monitor-grid">
+        <div class="monitor-item">
+          <div class="monitor-key">运行状态</div>
+          <div id="monitor_status" class="monitor-val">未获取</div>
+        </div>
+        <div class="monitor-item">
+          <div class="monitor-key">任务类型</div>
+          <div id="monitor_type" class="monitor-val">-</div>
+        </div>
+        <div class="monitor-item">
+          <div class="monitor-key">开始时间</div>
+          <div id="monitor_started_at" class="monitor-val">-</div>
+        </div>
+        <div class="monitor-item">
+          <div class="monitor-key">已运行时长</div>
+          <div id="monitor_uptime" class="monitor-val">-</div>
+        </div>
+        <div class="monitor-item">
+          <div class="monitor-key">已扫描页数</div>
+          <div id="monitor_scanned_pages" class="monitor-val">-</div>
+        </div>
+        <div class="monitor-item">
+          <div class="monitor-key">已保留笔记数</div>
+          <div id="monitor_kept_notes" class="monitor-val">-</div>
+        </div>
+      </div>
+      <div class="btns">
+        <button class="ghost" onclick="refreshProgressMonitor()">手动刷新进度</button>
+        <button class="primary" id="btn_start_monitor" onclick="startProgressMonitor()">开启自动监控</button>
+        <button class="danger" id="btn_stop_monitor" onclick="stopProgressMonitor()" disabled>停止自动监控</button>
+      </div>
+      <div id="monitor_logs" class="monitor-log">暂无日志</div>
+    </section>
+
+    <section class="card">
+      <h2>步骤4：同步到多维表</h2>
+      <p class="hint">先本地抓取，再写入飞书；会自动写入“项目名/所属项目”。不同步骤会写入不同目标表。</p>
+      <p class="hint" id="sync_target_hint">当前写入目标：未解析（请先初始化项目）。</p>
+      <div class="grid">
+        <div class="row full">
+          <label>本地文件路径（可选，不填=自动用最新抓取文件）</label>
+          <input id="sync_file_path" placeholder="D:\\trae international\\MediaCrawler\\data\\xhs\\jsonl\\search_contents_xxx.jsonl 或 .xlsx">
+        </div>
+        <div class="row">
+          <label>同步数量上限（0=全部）</label>
+          <input id="sync_limit" type="number" min="0" value="0">
+        </div>
+      </div>
+      <div class="btns">
+        <button class="primary" onclick="syncSampleToAccountFilter()">同步步骤2结果 -> 账号筛选表</button>
+        <button class="ghost" onclick="syncViralToMonitor()">同步步骤3结果 -> 爆款监控表</button>
+        <button class="ghost" onclick="syncCommentsToBase()">同步 comments（可选）</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>步骤5：合作博主监控（4/8/24h）</h2>
+      <p class="hint">按你提供的博主名单持续监控，不再只靠关键词。</p>
+      <div class="grid">
+        <div class="row full">
+          <label>合作博主账号名单（逗号或换行）</label>
+          <textarea id="collab_creator_ids" placeholder="https://www.xiaohongshu.com/user/profile/xxx"></textarea>
+        </div>
+        <div class="row">
+          <label>每轮每个账号抓取篇数</label>
+          <input id="collab_notes_per_creator" type="number" min="1" value="20">
+        </div>
+        <div class="row">
+          <label>监控频率</label>
+          <select id="collab_interval_hours">
+            <option value="4">4小时</option>
+            <option value="8">8小时</option>
+            <option value="24">24小时</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>每次同步上限</label>
+          <input id="collab_sync_limit" type="number" min="1" value="20">
+        </div>
+      </div>
+      <input id="collab_project_name" class="v1-hidden" value="">
+      <input id="collab_source_keyword" class="v1-hidden" value="">
+      <div class="btns">
+        <button class="primary" onclick="startCollabMonitor()">启动合作监控</button>
+        <button class="ghost" onclick="queryCollabStatus()">查询监控状态</button>
+        <button class="danger" onclick="stopLatestCollabJob()">停止最新监控任务</button>
+      </div>
+    </section>
+
     <pre id="status" class="status"></pre>
   </div>
 
   <script>
+    let projectProfiles = {};
+    let currentProjectKey = "";
+    const baseTableCache = {};
+    let progressTimer = null;
+
     const fields = [
-      "keywords", "start_page", "max_notes_count", "login_type", "save_option",
-      "xhs_sort_by", "xhs_note_type", "xhs_publish_time", "xhs_search_scope", "xhs_location",
-      "headless", "cookies", "enable_comments", "enable_sub_comments",
-      "rule_base_token", "rule_table_id", "rule_name",
-      "sync_base_token", "sync_notes_table_id", "sync_comments_table_id", "sync_limit"
+      "project_name", "folder_token", "scenario_base_token", "sync_base_token",
+      "account_filter_table_name", "viral_monitor_table_name", "collaboration_monitor_table_name",
+      "account_filter_table_id", "sync_notes_table_id", "sync_comments_table_id", "collab_table_id",
+      "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "cookies",
+      "max_comments_count_singlenotes",
+      "sample_creator_ids", "notes_per_creator",
+      "keywords", "start_page", "max_notes_count", "xhs_sort_by", "xhs_note_type", "xhs_publish_time",
+      "xhs_search_scope", "xhs_location", "sync_limit", "sync_file_path",
+      "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_notes_per_creator",
+      "collab_interval_hours", "collab_sync_limit",
+      "current_project_key", "project_profiles"
     ];
 
+    let latestCollabJobId = "";
     const statusEl = document.getElementById("status");
     const log = (text) => {
       const now = new Date().toLocaleTimeString();
       statusEl.textContent = `[${now}] ${text}\n` + statusEl.textContent;
     };
 
+    function escapeHtml(raw) {
+      return String(raw ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function formatDurationFrom(startedAt) {
+      if (!startedAt) return "-";
+      const startMs = Date.parse(startedAt);
+      if (Number.isNaN(startMs)) return "-";
+      const sec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    function updateProgressButtons(running) {
+      const startBtn = document.getElementById("btn_start_monitor");
+      const stopBtn = document.getElementById("btn_stop_monitor");
+      if (startBtn) startBtn.disabled = !!running;
+      if (stopBtn) stopBtn.disabled = !running;
+    }
+
+    function parseSearchProgress(logs) {
+      const progress = {
+        scannedPages: "-",
+        keptNotes: "-"
+      };
+      if (!Array.isArray(logs) || !logs.length) return progress;
+
+      for (let i = logs.length - 1; i >= 0; i -= 1) {
+        const msg = String((logs[i] && logs[i].message) || "");
+        if (!msg.includes("[XiaoHongShuCrawler.search] Progress")) continue;
+        const pageMatch = msg.match(/scanned_pages=(\d+)/);
+        const keptMatch = msg.match(/kept_notes=(\d+)/);
+        progress.scannedPages = pageMatch ? pageMatch[1] : "-";
+        progress.keptNotes = keptMatch ? keptMatch[1] : "-";
+        return progress;
+      }
+
+      // Fallback for old logs before Progress line exists.
+      const pageNums = [];
+      for (const item of logs) {
+        const msg = String((item && item.message) || "");
+        const m = msg.match(/\[XiaoHongShuCrawler\.search\].*page:\s*(\d+)/);
+        if (m) pageNums.push(Number(m[1]));
+      }
+      if (pageNums.length) progress.scannedPages = String(Math.max(...pageNums));
+      return progress;
+    }
+
+    async function refreshProgressMonitor() {
+      const statusEl = document.getElementById("monitor_status");
+      const typeEl = document.getElementById("monitor_type");
+      const startEl = document.getElementById("monitor_started_at");
+      const uptimeEl = document.getElementById("monitor_uptime");
+      const scannedPagesEl = document.getElementById("monitor_scanned_pages");
+      const keptNotesEl = document.getElementById("monitor_kept_notes");
+      const logsEl = document.getElementById("monitor_logs");
+      if (!statusEl || !typeEl || !startEl || !uptimeEl || !logsEl || !scannedPagesEl || !keptNotesEl) return;
+
+      try {
+        const [statusRes, logsRes] = await Promise.all([
+          fetch("/api/crawler/status"),
+          fetch("/api/crawler/logs?limit=60")
+        ]);
+        const statusData = await statusRes.json();
+        const logsData = await logsRes.json();
+        const logs = Array.isArray(logsData.logs) ? logsData.logs : [];
+
+        const status = statusData.status || "unknown";
+        statusEl.textContent = status;
+        typeEl.textContent = [statusData.platform || "-", statusData.crawler_type || "-"].join(" / ");
+        startEl.textContent = statusData.started_at || "-";
+        uptimeEl.textContent = status === "running" ? formatDurationFrom(statusData.started_at) : "-";
+
+        const progress = parseSearchProgress(logs);
+        scannedPagesEl.textContent = progress.scannedPages;
+        keptNotesEl.textContent = progress.keptNotes;
+
+        if (!logs.length) {
+          logsEl.textContent = "暂无日志";
+          scannedPagesEl.textContent = "-";
+          keptNotesEl.textContent = "-";
+          return;
+        }
+        const recent = logs.slice(-25);
+        logsEl.textContent = recent.map((x) => `[${x.timestamp}] [${x.level}] ${x.message}`).join("\n");
+        logsEl.scrollTop = logsEl.scrollHeight;
+      } catch (e) {
+        logsEl.textContent = `监控刷新失败: ${e.message || e}`;
+      }
+    }
+
+    function startProgressMonitor() {
+      if (progressTimer) return;
+      updateProgressButtons(true);
+      refreshProgressMonitor().catch((e) => log("进度刷新失败: " + e.message));
+      progressTimer = setInterval(() => {
+        refreshProgressMonitor().catch((e) => log("进度刷新失败: " + e.message));
+      }, 2000);
+      log("已开启自动进度监控（2秒刷新）");
+    }
+
+    function stopProgressMonitor() {
+      if (!progressTimer) return;
+      clearInterval(progressTimer);
+      progressTimer = null;
+      updateProgressButtons(false);
+      log("已停止自动进度监控");
+    }
+
+    function baseUrl(baseToken) {
+      if (!baseToken) return "";
+      return `https://my.feishu.cn/base/${encodeURIComponent(baseToken)}`;
+    }
+
+    function tableUrl(baseToken, tableId) {
+      if (!baseToken || !tableId) return "";
+      return `${baseUrl(baseToken)}?table=${encodeURIComponent(tableId)}`;
+    }
+
+    async function fetchBaseTables(baseToken) {
+      const token = (baseToken || "").trim();
+      if (!token) return [];
+      if (baseTableCache[token]) return baseTableCache[token];
+      const res = await fetch(`/api/crawler/base-tables?base_token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if (!res.ok || data.status !== "ok") {
+        throw new Error(data.detail || JSON.stringify(data));
+      }
+      const tables = Array.isArray(data.tables) ? data.tables : [];
+      baseTableCache[token] = tables;
+      return tables;
+    }
+
+    function findTableMeta(tables, tableId) {
+      if (!tableId) return null;
+      const id = String(tableId).trim();
+      return (tables || []).find((t) => String(t.id || "").trim() === id) || null;
+    }
+
+    function findTableMetaByName(tables, tableName) {
+      const name = String(tableName || "").trim();
+      if (!name) return null;
+      return (tables || []).find((t) => String(t.name || "").trim() === name) || null;
+    }
+
+    function renderTableValue(baseToken, tableId, fallbackName = "") {
+      if (!tableId) return `<span>未配置</span>`;
+      const href = tableUrl(baseToken, tableId);
+      const label = fallbackName ? `${fallbackName} (${tableId})` : tableId;
+      if (!href) return `<span class="mono">${escapeHtml(label)}</span>`;
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`;
+    }
+
+    async function refreshProjectBindings() {
+      const payload = getFormData();
+      const baseToken = payload.sync_base_token;
+      const view = document.getElementById("project_binding_view");
+      const syncTargetHint = document.getElementById("sync_target_hint");
+      if (!view || !syncTargetHint) return;
+
+      if (!baseToken) {
+        view.innerHTML = `
+          <div class="meta-row"><span class="meta-key">状态</span><span class="meta-val">请先初始化项目或切换到已有项目</span></div>
+          <div class="meta-row"><span class="meta-key">当前项目</span><span class="meta-val">${escapeHtml(payload.project_name || "未填写")}</span></div>
+        `;
+        syncTargetHint.textContent = "当前写入目标：未解析（请先初始化项目）。";
+        return;
+      }
+
+      let tables = [];
+      let tableError = "";
+      try {
+        tables = await fetchBaseTables(baseToken);
+      } catch (e) {
+        tableError = e.message || String(e);
+      }
+
+      let accountTableId = payload.account_filter_table_id || "";
+      if (!accountTableId) {
+        const matched = findTableMetaByName(tables, payload.account_filter_table_name || "账号筛选表");
+        if (matched && matched.id) {
+          accountTableId = String(matched.id);
+          const accountIdInput = document.getElementById("account_filter_table_id");
+          if (accountIdInput) accountIdInput.value = accountTableId;
+        }
+      }
+      const accountMeta = findTableMeta(tables, accountTableId);
+      const notesMeta = findTableMeta(tables, payload.sync_notes_table_id);
+      const commentsMeta = findTableMeta(tables, payload.sync_comments_table_id);
+      const collabMeta = findTableMeta(tables, payload.collab_table_id);
+      const baseHref = baseUrl(baseToken);
+
+      view.innerHTML = `
+        <div class="meta-row"><span class="meta-key">当前项目</span><span class="meta-val">${escapeHtml(payload.project_name || "未填写")}</span></div>
+        <div class="meta-row"><span class="meta-key">Base</span><span class="meta-val"><a href="${escapeHtml(baseHref)}" target="_blank" rel="noreferrer">打开 Base</a> <span class="mono">${escapeHtml(baseToken)}</span></span></div>
+        <div class="meta-row"><span class="meta-key">步骤2样本账号 -> 账号筛选表</span><span class="meta-val">${renderTableValue(baseToken, accountTableId, accountMeta && accountMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 爆款监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_notes_table_id, notesMeta && notesMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">comments 同步目标（可选）</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">合作监控目标</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
+      `;
+
+      if (tableError) {
+        view.innerHTML += `<div class="meta-row"><span class="meta-key">表信息</span><span class="meta-val">解析失败：${escapeHtml(tableError)}</span></div>`;
+      }
+
+      const accountLabel = accountMeta && accountMeta.name ? accountMeta.name : (accountTableId || "未配置");
+      const noteLabel = notesMeta && notesMeta.name ? notesMeta.name : (payload.sync_notes_table_id || "未配置");
+      const commentLabel = commentsMeta && commentsMeta.name ? commentsMeta.name : (payload.sync_comments_table_id || "未配置");
+      syncTargetHint.textContent = `当前写入目标：步骤2 -> ${accountLabel}；步骤3 -> ${noteLabel}；comments -> ${commentLabel}`;
+    }
+
+    function getProjectProfileSnapshot(payload) {
+      return {
+        project_name: payload.project_name,
+        sync_base_token: payload.sync_base_token,
+        account_filter_table_id: payload.account_filter_table_id,
+        sync_notes_table_id: payload.sync_notes_table_id,
+        sync_comments_table_id: payload.sync_comments_table_id,
+        collab_table_id: payload.collab_table_id,
+        keywords: payload.keywords,
+        xhs_sort_by: payload.xhs_sort_by,
+        xhs_note_type: payload.xhs_note_type,
+        xhs_publish_time: payload.xhs_publish_time,
+        max_notes_count: payload.max_notes_count,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        sample_creator_ids: payload.sample_creator_ids,
+        notes_per_creator: payload.notes_per_creator,
+        collab_creator_ids: payload.collab_creator_ids,
+        collab_notes_per_creator: payload.collab_notes_per_creator,
+        collab_interval_hours: payload.collab_interval_hours,
+        collab_sync_limit: payload.collab_sync_limit
+      };
+    }
+
+    function applyProjectProfile(profile) {
+      if (!profile) return;
+      const fieldsToApply = Object.keys(profile);
+      fieldsToApply.forEach((k) => {
+        const el = document.getElementById(k);
+        if (!el) return;
+        el.value = profile[k] ?? "";
+      });
+      refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
+    }
+
+    function refreshProjectSelector() {
+      const sel = document.getElementById("project_selector");
+      if (!sel) return;
+      sel.innerHTML = "";
+      const keys = Object.keys(projectProfiles || {});
+      if (!keys.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "（暂无已保存项目）";
+        sel.appendChild(opt);
+        return;
+      }
+      keys.forEach((k) => {
+        const profile = projectProfiles[k] || {};
+        const profileProjectName = (profile.project_name || "").trim();
+        const profileKeyword = (profile.keywords || "").trim();
+        const opt = document.createElement("option");
+        opt.value = k;
+        const labelParts = [k];
+        if (profileProjectName) labelParts.push(`项目:${profileProjectName}`);
+        if (profileKeyword) labelParts.push(`关键词:${profileKeyword}`);
+        opt.textContent = labelParts.join(" | ");
+        if (k === currentProjectKey) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function fillForm(config) {
+      projectProfiles = (config && typeof config.project_profiles === "object" && config.project_profiles) ? config.project_profiles : {};
+      currentProjectKey = (config && config.current_project_key) ? String(config.current_project_key) : "";
+      fields.forEach((k) => {
+        const el = document.getElementById(k);
+        if (!el || !(k in config)) return;
+        if (typeof config[k] === "boolean") el.value = String(config[k]);
+        else el.value = config[k] ?? "";
+      });
+      if (currentProjectKey && projectProfiles[currentProjectKey]) {
+        applyProjectProfile(projectProfiles[currentProjectKey]);
+      }
+      refreshProjectSelector();
+      refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
+    }
+
     function getFormData() {
       return {
         platform: "xhs",
         crawler_type: "search",
+        project_name: document.getElementById("project_name").value.trim(),
+        folder_token: document.getElementById("folder_token").value.trim(),
+        scenario_base_token: document.getElementById("scenario_base_token").value.trim(),
+        sync_base_token: document.getElementById("sync_base_token").value.trim(),
+        account_filter_table_name: document.getElementById("account_filter_table_name").value.trim(),
+        viral_monitor_table_name: document.getElementById("viral_monitor_table_name").value.trim(),
+        collaboration_monitor_table_name: document.getElementById("collaboration_monitor_table_name").value.trim(),
+        account_filter_table_id: document.getElementById("account_filter_table_id").value.trim(),
+        sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
+        sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
+        collab_table_id: document.getElementById("collab_table_id").value.trim(),
         login_type: document.getElementById("login_type").value,
+        save_option: document.getElementById("save_option").value,
+        headless: document.getElementById("headless").value === "true",
+        enable_comments: document.getElementById("enable_comments").value === "true",
+        enable_sub_comments: document.getElementById("enable_sub_comments").value === "true",
+        max_comments_count_singlenotes: Number(document.getElementById("max_comments_count_singlenotes").value || 10),
+        cookies: document.getElementById("cookies").value.trim(),
+        sample_creator_ids: document.getElementById("sample_creator_ids").value.trim(),
+        notes_per_creator: Number(document.getElementById("notes_per_creator").value || 20),
         keywords: document.getElementById("keywords").value.trim(),
         start_page: Number(document.getElementById("start_page").value || 1),
         max_notes_count: Number(document.getElementById("max_notes_count").value || 20),
-        enable_comments: document.getElementById("enable_comments").value === "true",
-        enable_sub_comments: document.getElementById("enable_sub_comments").value === "true",
-        save_option: document.getElementById("save_option").value,
-        cookies: document.getElementById("cookies").value.trim(),
-        headless: document.getElementById("headless").value === "true",
         xhs_sort_by: document.getElementById("xhs_sort_by").value,
         xhs_note_type: document.getElementById("xhs_note_type").value,
         xhs_publish_time: document.getElementById("xhs_publish_time").value,
         xhs_search_scope: document.getElementById("xhs_search_scope").value,
         xhs_location: document.getElementById("xhs_location").value,
-        rule_base_token: document.getElementById("rule_base_token").value.trim(),
-        rule_table_id: document.getElementById("rule_table_id").value.trim(),
-        rule_name: document.getElementById("rule_name").value.trim(),
-        sync_base_token: document.getElementById("sync_base_token").value.trim(),
-        sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
-        sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
-        sync_limit: Number(document.getElementById("sync_limit").value || 0)
+        sync_limit: Number(document.getElementById("sync_limit").value || 0),
+        sync_file_path: document.getElementById("sync_file_path").value.trim(),
+        collab_project_name: document.getElementById("collab_project_name").value.trim(),
+        collab_source_keyword: document.getElementById("collab_source_keyword").value.trim(),
+        collab_creator_ids: document.getElementById("collab_creator_ids").value.trim(),
+        collab_notes_per_creator: Number(document.getElementById("collab_notes_per_creator").value || 20),
+        collab_interval_hours: Number(document.getElementById("collab_interval_hours").value || 4),
+        collab_sync_limit: Number(document.getElementById("collab_sync_limit").value || 20),
+        current_project_key: currentProjectKey,
+        project_profiles: projectProfiles,
+        rule_base_token: "",
+        rule_table_id: "",
+        rule_name: ""
       };
     }
 
-    function fillForm(config) {
-      fields.forEach((k) => {
-        const el = document.getElementById(k);
-        if (!el || !(k in config)) return;
-        if (typeof config[k] === "boolean") {
-          el.value = String(config[k]);
-        } else {
-          el.value = config[k] ?? "";
-        }
-      });
+    function ensureReady() {
+      const payload = getFormData();
+      if (!payload.project_name) {
+        log("请先填写【所属项目名】");
+        return false;
+      }
+      if (!payload.sync_base_token) {
+        log("请先执行步骤1，自动生成并回填 Base 信息");
+        return false;
+      }
+      return true;
     }
 
     async function loadConfig() {
@@ -227,9 +711,7 @@
       if (data.ok) {
         fillForm(data.config);
         log("配置已加载");
-      } else {
-        log("配置加载失败");
-      }
+      } else log("配置加载失败");
     }
 
     async function saveConfig() {
@@ -240,82 +722,298 @@
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (data.ok) {
-        log("配置保存成功");
-      } else {
-        log("配置保存失败: " + JSON.stringify(data));
+      if (data.ok) log("配置保存成功");
+      else log("配置保存失败: " + JSON.stringify(data));
+    }
+
+    async function saveCurrentProjectProfile() {
+      const payload = getFormData();
+      const key = document.getElementById("project_slot_name").value.trim() || payload.project_name.trim();
+      if (!key) {
+        log("请先填写项目槽位名或项目名");
+        return;
+      }
+      projectProfiles[key] = getProjectProfileSnapshot(payload);
+      currentProjectKey = key;
+      refreshProjectSelector();
+      await saveConfig();
+      await refreshProjectBindings();
+      log(`项目配置已保存到槽位：${key}`);
+    }
+
+    async function applySelectedProject() {
+      const sel = document.getElementById("project_selector");
+      const key = sel ? sel.value : "";
+      if (!key || !projectProfiles[key]) {
+        log("请选择一个已保存项目");
+        return;
+      }
+      currentProjectKey = key;
+      document.getElementById("project_slot_name").value = key;
+      applyProjectProfile(projectProfiles[key]);
+      await saveConfig();
+      await refreshProjectBindings();
+      log(`已切换到项目：${key}`);
+    }
+
+    async function deleteSelectedProject() {
+      const sel = document.getElementById("project_selector");
+      const key = sel ? sel.value : "";
+      if (!key || !projectProfiles[key]) {
+        log("请选择一个可删除项目");
+        return;
+      }
+      delete projectProfiles[key];
+      if (currentProjectKey === key) currentProjectKey = "";
+      refreshProjectSelector();
+      await saveConfig();
+      await refreshProjectBindings();
+      log(`已删除项目槽位：${key}`);
+    }
+
+    async function bootstrapProject() {
+      const payload = getFormData();
+      if (!payload.project_name) {
+        log("请先填写【所属项目名】");
+        return;
+      }
+      const btn = document.getElementById("btn_bootstrap_project");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "初始化中，请稍候...";
+      }
+      try {
+        const body = {
+          project_name: payload.project_name,
+          folder_token: payload.folder_token,
+          root_table_name: "项目主表",
+          account_filter_table_name: payload.account_filter_table_name,
+          viral_monitor_table_name: payload.viral_monitor_table_name,
+          collaboration_monitor_table_name: payload.collaboration_monitor_table_name
+        };
+        const res = await fetch("/api/crawler/bootstrap-project", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+          log("项目初始化失败: " + JSON.stringify(data));
+          return;
+        }
+        document.getElementById("scenario_base_token").value = data.base_token || "";
+        document.getElementById("sync_base_token").value = data.base_token || "";
+        const tables = Array.isArray(data.tables) ? data.tables : [];
+        for (const item of tables) {
+          const tableName = item.table_name || "";
+          const tableId = item.table_id || "";
+          if (!tableId) continue;
+          if (tableName.includes("账号筛选")) document.getElementById("account_filter_table_id").value = tableId;
+          if (tableName.includes("爆款")) document.getElementById("sync_notes_table_id").value = tableId;
+          if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
+        }
+        const snapshot = getProjectProfileSnapshot(getFormData());
+        const defaultKey = payload.project_name;
+        projectProfiles[defaultKey] = snapshot;
+        currentProjectKey = defaultKey;
+        document.getElementById("project_slot_name").value = defaultKey;
+        refreshProjectSelector();
+        await saveConfig();
+        await refreshProjectBindings();
+        log("项目初始化成功，已自动回填关键ID");
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "一键初始化项目（新建Base+建表）";
+        }
       }
     }
 
-    async function startCrawler() {
+    async function startSampleCreators() {
+      if (!ensureReady()) return;
       const payload = getFormData();
+      if (!payload.sample_creator_ids) {
+        log("请先填写样本账号列表");
+        return;
+      }
       await saveConfig();
+      const body = {
+        platform: "xhs",
+        login_type: payload.login_type,
+        creator_ids: payload.sample_creator_ids,
+        notes_per_creator: payload.notes_per_creator,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        enable_comments: payload.enable_comments,
+        enable_sub_comments: payload.enable_sub_comments,
+        save_option: payload.save_option,
+        cookies: payload.cookies,
+        headless: payload.headless
+      };
+      const res = await fetch("/api/crawler/start-sample-creators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      log("样本账号抓取启动结果: " + JSON.stringify(await res.json()));
+    }
+
+    async function startCrawler() {
+      if (!ensureReady()) return;
+      const payload = getFormData();
+      if (!payload.keywords) {
+        log("请先填写关键词");
+        return;
+      }
+      await saveConfig();
+      const body = {
+        platform: "xhs",
+        crawler_type: "search",
+        login_type: payload.login_type,
+        keywords: payload.keywords,
+        start_page: payload.start_page,
+        max_notes_count: payload.max_notes_count,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        enable_comments: payload.enable_comments,
+        enable_sub_comments: payload.enable_sub_comments,
+        save_option: payload.save_option,
+        cookies: payload.cookies,
+        headless: payload.headless,
+        xhs_sort_by: payload.xhs_sort_by,
+        xhs_note_type: payload.xhs_note_type,
+        xhs_publish_time: payload.xhs_publish_time,
+        xhs_search_scope: payload.xhs_search_scope,
+        xhs_location: payload.xhs_location
+      };
       const res = await fetch("/api/crawler/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(body)
       });
-      const data = await res.json();
-      log("启动结果: " + JSON.stringify(data));
+      log("爆款抓取启动结果: " + JSON.stringify(await res.json()));
+      startProgressMonitor();
     }
 
-    async function stopCrawler() {
-      const res = await fetch("/api/crawler/stop", { method: "POST" });
-      const data = await res.json();
-      log("停止结果: " + JSON.stringify(data));
-    }
-
-    async function syncNotesToBase() {
+    async function syncToBaseByScene(scene) {
+      if (!ensureReady()) return;
       const payload = getFormData();
-      if (!payload.sync_base_token || !payload.sync_notes_table_id) {
-        log("请先填写同步 Base Token 和 notes 表 ID");
+      const isComments = scene === "comments";
+      const dataType = isComments ? "comments" : "notes";
+      const tableId = scene === "sample"
+        ? payload.account_filter_table_id
+        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+      const crawlerTypeHint = scene === "sample" ? "creator" : "search";
+      const sourceKeyword = scene === "sample" ? "" : payload.keywords;
+      const sceneLabel = scene === "sample"
+        ? "步骤2样本账号"
+        : (scene === "viral" ? "步骤3爆款结果" : "comments");
+      if (!tableId) {
+        const name = scene === "sample" ? "账号筛选表" : (isComments ? "comments 表" : "爆款监控表");
+        log(`请先完成步骤1，回填 ${name} 的表ID`);
         return;
       }
       await saveConfig();
       const body = {
         base_token: payload.sync_base_token,
-        table_id: payload.sync_notes_table_id,
-        data_type: "notes",
-        source_keyword: payload.keywords.split(",")[0].trim(),
-        limit: payload.sync_limit
+        table_id: tableId,
+        data_type: dataType,
+        crawler_type_hint: crawlerTypeHint,
+        source_keyword: sourceKeyword,
+        project_name: payload.project_name,
+        limit: payload.sync_limit,
+        file_path: payload.sync_file_path
       };
       const res = await fetch("/api/crawler/sync-local-to-base", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      const data = await res.json();
-      log("同步结果: " + JSON.stringify(data));
+      log(`${sceneLabel} 同步结果: ` + JSON.stringify(await res.json()));
     }
 
-    async function startCrawlerFromRule() {
+    async function syncSampleToAccountFilter() { await syncToBaseByScene("sample"); }
+    async function syncViralToMonitor() { await syncToBaseByScene("viral"); }
+    async function syncCommentsToBase() { await syncToBaseByScene("comments"); }
+
+    async function startCollabMonitor() {
+      if (!ensureReady()) return;
       const payload = getFormData();
+      if (!payload.collab_table_id) {
+        log("请先完成步骤1，回填合作监控表ID");
+        return;
+      }
+      if (!payload.collab_creator_ids) {
+        log("请先填写合作博主账号名单");
+        return;
+      }
       await saveConfig();
       const body = {
-        base_token: payload.rule_base_token,
-        table_id: payload.rule_table_id,
-        rule_name: payload.rule_name,
-        platform: payload.platform,
+        base_token: payload.sync_base_token,
+        table_id: payload.collab_table_id,
+        interval_hours: payload.collab_interval_hours,
+        project_name: payload.project_name,
+        source_keyword: payload.collab_source_keyword || payload.keywords,
+        creator_ids: payload.collab_creator_ids,
+        notes_per_creator: payload.collab_notes_per_creator,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         login_type: payload.login_type,
-        crawler_type: payload.crawler_type,
         save_option: payload.save_option,
-        start_page: payload.start_page,
-        max_notes_count: payload.max_notes_count,
         enable_comments: payload.enable_comments,
         enable_sub_comments: payload.enable_sub_comments,
         cookies: payload.cookies,
-        headless: payload.headless
+        headless: payload.headless,
+        sync_limit: payload.collab_sync_limit
       };
-      const res = await fetch("/api/crawler/start-from-rule", {
+      const res = await fetch("/api/crawler/collaboration-monitor/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      log("按规则表启动结果: " + JSON.stringify(data));
+      latestCollabJobId = data.job_id || latestCollabJobId;
+      log("合作监控启动结果: " + JSON.stringify(data));
     }
 
+    async function queryCollabStatus() {
+      const res = await fetch("/api/crawler/collaboration-monitor/status");
+      const data = await res.json();
+      const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      if (jobs.length) latestCollabJobId = jobs[jobs.length - 1].job_id || latestCollabJobId;
+      log("合作监控状态: " + JSON.stringify(data));
+    }
+
+    async function stopLatestCollabJob() {
+      if (!latestCollabJobId) {
+        await queryCollabStatus();
+      }
+      if (!latestCollabJobId) {
+        log("没有可停止的合作监控任务");
+        return;
+      }
+      const res = await fetch("/api/crawler/collaboration-monitor/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: latestCollabJobId })
+      });
+      log("合作监控停止结果: " + JSON.stringify(await res.json()));
+    }
+
+    async function stopCrawler() {
+      const res = await fetch("/api/crawler/stop", { method: "POST" });
+      log("停止抓取结果: " + JSON.stringify(await res.json()));
+      await refreshProgressMonitor();
+    }
+
+    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "sync_comments_table_id", "collab_table_id", "keywords"]
+      .forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("change", () => {
+          refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
+        });
+      });
+
     loadConfig().catch((e) => log("初始化失败: " + e.message));
+    refreshProgressMonitor().catch((e) => log("进度初始化失败: " + e.message));
   </script>
 </body>
 </html>

@@ -59,7 +59,6 @@ export default withMermaid(defineConfig({
                     {text: 'MediaCrawlerPro订阅', link: '/mediacrawlerpro订阅'},
                     {
                         text: 'MediaCrawler源码剖析课',
-                        link: 'https://relakkes.feishu.cn/wiki/JUgBwdhIeiSbAwkFCLkciHdAnhh'
                     },
                 ]
             },

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
 # Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/media_platform/xhs/core.py
@@ -153,7 +152,25 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
             # Create a client to interact with the Xiaohongshu website.
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
-            if not await self.xhs_client.pong():
+            login_ok = await self.xhs_client.pong()
+
+            if not login_ok:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler.start] API pong failed — page may be logged in but cookies are stale. "
+                    "Refreshing page to force cookie renewal..."
+                )
+                # Force page reload to let the server refresh cookies (especially web_session)
+                await self.context_page.reload(wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(3)
+
+                # Re-extract cookies after reload and retry pong
+                await self.xhs_client.update_cookies(browser_context=self.browser_context)
+                login_ok = await self.xhs_client.pong()
+
+            if not login_ok:
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler.start] API pong still failed after reload. Entering login flow..."
+                )
                 login_obj = XiaoHongShuLogin(
                     login_type=config.LOGIN_TYPE,
                     login_phone="",  # input your phone number
@@ -162,7 +179,40 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     cookie_str=config.COOKIES,
                 )
                 await login_obj.begin()
+
+                # After login, reload page to ensure server sets fresh cookies
+                await self.context_page.reload(wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(3)
                 await self.xhs_client.update_cookies(browser_context=self.browser_context)
+
+                # Final verification: if pong still fails, abort with clear error
+                if not await self.xhs_client.pong():
+                    utils.logger.error(
+                        "[XiaoHongShuCrawler.start] LOGIN STATE INCONSISTENCY: "
+                        "Page appears logged in but API auth still fails. "
+                        "Possible causes: web_session expired server-side, IP banned, or CAPTCHA required. "
+                        "Please manually refresh the browser page and re-login."
+                    )
+                    raise DataFetchError(
+                        "登录态不一致：页面显示已登录但接口鉴权失败。请手动刷新浏览器并重新登录。"
+                    )
+
+            # Preflight check: pong + keyword dry-run before starting the actual crawl
+            preflight_keyword = config.KEYWORDS.split(",")[0].strip() if config.KEYWORDS else "测试"
+            preflight = await self.xhs_client.preflight_check(keyword=preflight_keyword)
+            utils.logger.info(
+                f"[XiaoHongShuCrawler.start] Preflight result: pong_ok={preflight['pong_ok']}, "
+                f"search_ok={preflight['search_ok']}, cookie_keys={preflight['cookie_keys']}"
+            )
+            if not preflight["pong_ok"] or not preflight["search_ok"]:
+                utils.logger.error(
+                    f"[XiaoHongShuCrawler.start] PREFLIGHT FAILED: {preflight['error']}. "
+                    f"Aborting crawl to avoid wasted requests."
+                )
+                raise DataFetchError(
+                    f"预检失败，任务中止: {preflight['error']}"
+                )
+            utils.logger.info("[XiaoHongShuCrawler.start] Preflight PASSED — login state confirmed, starting crawl.")
 
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
@@ -196,29 +246,35 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
             page = 1
             search_id = get_search_id()
-            max_pages = (max_notes_count + xhs_limit_count - 1) // xhs_limit_count
             kept_notes = 0
-            while (page - start_page) < max_pages:
+            while kept_notes < max_notes_count:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
                     page += 1
                     continue
 
                 try:
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] search Xiaohongshu keyword: {keyword}, page: {page}")
+                    current_page = page
+                    utils.logger.info(f"[XiaoHongShuCrawler.search] search Xiaohongshu keyword: {keyword}, page: {current_page}")
                     note_ids: List[str] = []
                     xsec_tokens: List[str] = []
                     notes_res = await self.xhs_client.get_note_by_keyword(
                         keyword=keyword,
                         search_id=search_id,
-                        page=page,
+                        page=current_page,
                         sort=resolved_sort,
                         note_type=resolved_note_type,
                     )
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Search notes response: {notes_res}")
-                    if not notes_res or not notes_res.get("has_more", False):
-                        utils.logger.info("[XiaoHongShuCrawler.search] No more content!")
+                    if not notes_res:
+                        utils.logger.info("[XiaoHongShuCrawler.search] Empty search response, stop current keyword")
                         break
+                    items = notes_res.get("items", [])
+                    if not items:
+                        utils.logger.info("[XiaoHongShuCrawler.search] Search response has no items, stop current keyword")
+                        break
+
+                    has_more = bool(notes_res.get("has_more", False))
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                     task_list = [
                         self.get_note_detail_async_task(
@@ -226,7 +282,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
-                        ) for post_item in notes_res.get("items", {}) if post_item.get("model_type") not in ("rec_query", "hot_query")
+                        ) for post_item in items if post_item.get("model_type") not in ("rec_query", "hot_query")
                     ]
                     note_details = await asyncio.gather(*task_list)
                     filtered_out = 0
@@ -245,10 +301,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     if filtered_out > 0:
                         utils.logger.info(f"[XiaoHongShuCrawler.search] Filtered out {filtered_out} notes by publish_time")
                     page += 1
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.search] Progress keyword={keyword} scanned_pages={current_page} "
+                        f"kept_notes={kept_notes} page_kept={len(note_ids)} page_filtered={filtered_out} has_more={has_more}"
+                    )
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Note details: {note_details}")
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
                     if kept_notes >= max_notes_count:
                         utils.logger.info(f"[XiaoHongShuCrawler.search] Reached max_notes_count={max_notes_count}, stop current keyword")
+                        break
+                    if not has_more:
+                        utils.logger.info("[XiaoHongShuCrawler.search] No more content from API, stop current keyword")
                         break
 
                     # Sleep after each page navigation
@@ -433,7 +496,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def create_xhs_client(self, httpx_proxy: Optional[str]) -> XiaoHongShuClient:
         """Create Xiaohongshu client"""
         utils.logger.info("[XiaoHongShuCrawler.create_xhs_client] Begin create Xiaohongshu API client ...")
-        cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies())
+        cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies(), domain_filter="xiaohongshu.com")
         xhs_client_obj = XiaoHongShuClient(
             proxy=httpx_proxy,
             headers={
@@ -469,24 +532,32 @@ class XiaoHongShuCrawler(AbstractCrawler):
     ) -> BrowserContext:
         """Launch browser and create browser context"""
         utils.logger.info("[XiaoHongShuCrawler.launch_browser] Begin create browser context ...")
+        launch_kwargs: Dict = {
+            "accept_downloads": True,
+            "headless": headless,
+            "proxy": playwright_proxy,  # type: ignore
+            "viewport": {"width": 1920, "height": 1080},
+            "user_agent": user_agent,
+        }
+        # Force system Chrome instead of Playwright bundled Chromium.
+        if getattr(config, "CUSTOM_BROWSER_PATH", ""):
+            launch_kwargs["executable_path"] = config.CUSTOM_BROWSER_PATH
+        else:
+            launch_kwargs["channel"] = "chrome"
+
         if config.SAVE_LOGIN_STATE:
             # feat issue #14
             # we will save login state to avoid login every time
             user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
-            browser_context = await chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                accept_downloads=True,
-                headless=headless,
-                proxy=playwright_proxy,  # type: ignore
-                viewport={
-                    "width": 1920,
-                    "height": 1080
-                },
-                user_agent=user_agent,
-            )
+            browser_context = await chromium.launch_persistent_context(user_data_dir=user_data_dir, **launch_kwargs)
             return browser_context
         else:
-            browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
+            launch_browser_kwargs: Dict = {"headless": headless, "proxy": playwright_proxy}  # type: ignore
+            if getattr(config, "CUSTOM_BROWSER_PATH", ""):
+                launch_browser_kwargs["executable_path"] = config.CUSTOM_BROWSER_PATH
+            else:
+                launch_browser_kwargs["channel"] = "chrome"
+            browser = await chromium.launch(**launch_browser_kwargs)
             browser_context = await browser.new_context(viewport={"width": 1920, "height": 1080}, user_agent=user_agent)
             return browser_context
 
@@ -514,10 +585,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
             return browser_context
 
         except Exception as e:
-            utils.logger.error(f"[XiaoHongShuCrawler] CDP mode launch failed, falling back to standard mode: {e}")
-            # Fall back to standard mode
-            chromium = playwright.chromium
-            return await self.launch_browser(chromium, playwright_proxy, user_agent, headless)
+            # Do NOT fall back to Playwright standard mode.
+            # Fallback will create a different browser/session and often triggers re-login.
+            utils.logger.error(f"[XiaoHongShuCrawler] CDP mode launch failed (no fallback): {e}")
+            raise RuntimeError(
+                f"CDP 模式启动失败，已阻止回退到标准模式以避免切换浏览器会话。请重试或检查本机 Chrome/CDP 状态。原始错误: {e}"
+            )
 
     async def close(self):
         """Close browser context"""

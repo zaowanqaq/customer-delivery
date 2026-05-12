@@ -1,26 +1,10 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
-#
-# This file is part of MediaCrawler project.
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/api/services/crawler_manager.py
-# GitHub: https://github.com/NanmiCoder
-# Licensed under NON-COMMERCIAL LEARNING LICENSE 1.1
-#
-# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：
-# 1. 不得用于任何商业用途。
-# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。
-# 3. 不得进行大规模爬取或对平台造成运营干扰。
-# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。
-# 5. 不得用于任何非法或不当的用途。
-#
-# 详细许可条款请参阅项目根目录下的LICENSE文件。
-# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
-
 import asyncio
 import subprocess
 import signal
 import os
 import shutil
+import re
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -91,6 +75,31 @@ class CrawlerManager:
             return "debug"
         return "info"
 
+    def _mask_command_for_log(self, cmd: List[str]) -> str:
+        """Mask sensitive args (e.g. cookies) before writing logs."""
+        masked = list(cmd)
+        for i, part in enumerate(masked):
+            if part == "--cookies" and i + 1 < len(masked):
+                raw = masked[i + 1] or ""
+                masked[i + 1] = f"<masked:{len(raw)} chars>"
+        return " ".join(masked)
+
+    def _normalize_cookie_string(self, raw: str) -> str:
+        """Normalize cookie text pasted from browser/devtools."""
+        if not raw:
+            return ""
+        text = raw.strip()
+        # Remove leading "cookie" label from copied request headers.
+        text = re.sub(r"^\s*cookie\s*:\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"^\s*cookie\s+", "", text, flags=re.IGNORECASE)
+        # Flatten line breaks/tabs into spaces.
+        text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        # Normalize separator spaces: "a=1 ; b=2" -> "a=1; b=2"
+        text = re.sub(r"\s*;\s*", "; ", text)
+        # Collapse duplicate whitespace.
+        text = re.sub(r"\s{2,}", " ", text).strip()
+        return text
+
     async def start(self, config: CrawlerStartRequest) -> bool:
         """Start crawler process"""
         async with self._lock:
@@ -115,7 +124,7 @@ class CrawlerManager:
             cmd = self._build_command(config)
 
             # Log start information
-            entry = self._create_log_entry(f"Starting crawler: {' '.join(cmd)}", "info")
+            entry = self._create_log_entry(f"Starting crawler: {self._mask_command_for_log(cmd)}", "info")
             await self._push_log(entry)
 
             try:
@@ -237,12 +246,15 @@ class CrawlerManager:
             cmd.extend(["--start", str(config.start_page)])
         if config.max_notes_count and config.max_notes_count > 0:
             cmd.extend(["--max_notes_count", str(config.max_notes_count)])
+        if config.max_comments_count_singlenotes and config.max_comments_count_singlenotes > 0:
+            cmd.extend(["--max_comments_count_singlenotes", str(config.max_comments_count_singlenotes)])
 
         cmd.extend(["--get_comment", "true" if config.enable_comments else "false"])
         cmd.extend(["--get_sub_comment", "true" if config.enable_sub_comments else "false"])
 
-        if config.cookies:
-            cmd.extend(["--cookies", config.cookies])
+        normalized_cookies = self._normalize_cookie_string(config.cookies or "")
+        if normalized_cookies:
+            cmd.extend(["--cookies", normalized_cookies])
 
         cmd.extend(["--headless", "true" if config.headless else "false"])
 

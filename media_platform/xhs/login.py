@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
 # Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/media_platform/xhs/login.py
@@ -48,19 +47,13 @@ class XiaoHongShuLogin(AbstractLogin):
         self.login_phone = login_phone
         self.cookie_str = cookie_str
 
-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
-    async def check_login_state(self, no_logged_in_session: str) -> bool:
+    async def _check_login_state_once(self, no_logged_in_session: str) -> bool:
         """
-        Verify login status using dual-check: UI elements and Cookies.
+        Single-shot login state check using UI elements and cookies.
         """
-        # 1. Priority check: Check if the "Me" (Profile) node appears in the sidebar
+        # 1. Priority check: profile entry appears in sidebar (locale-agnostic)
         try:
-            # Selector for elements containing "Me" text with a link pointing to the profile
-            # XPath Explanation: Find a span with text "Me" inside an anchor tag (<a>) 
-            # whose href attribute contains "/user/profile/"
-            user_profile_selector = "xpath=//a[contains(@href, '/user/profile/')]//span[text()='我']"
-            
-            # Set a short timeout since this is called within a retry loop
+            user_profile_selector = "xpath=//a[contains(@href, '/user/profile/')]"
             is_visible = await self.context_page.is_visible(user_profile_selector, timeout=500)
             if is_visible:
                 utils.logger.info("[XiaoHongShuLogin.check_login_state] Login status confirmed by UI element ('Me' button).")
@@ -74,7 +67,7 @@ class XiaoHongShuLogin(AbstractLogin):
 
         # 3. Compatibility fallback: Original Cookie-based change detection
         current_cookie = await self.browser_context.cookies()
-        _, cookie_dict = utils.convert_cookies(current_cookie)
+        _, cookie_dict = utils.convert_cookies(current_cookie, domain_filter="xiaohongshu.com")
         current_web_session = cookie_dict.get("web_session")
         
         # If web_session has changed, consider the login successful
@@ -83,6 +76,13 @@ class XiaoHongShuLogin(AbstractLogin):
             return True
 
         return False
+
+    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+    async def check_login_state(self, no_logged_in_session: str) -> bool:
+        """
+        Verify login status using retry based on single-shot checker.
+        """
+        return await self._check_login_state_once(no_logged_in_session)
 
     async def begin(self):
         """Start login xiaohongshu"""
@@ -140,7 +140,7 @@ class XiaoHongShuLogin(AbstractLogin):
                 continue
 
             current_cookie = await self.browser_context.cookies()
-            _, cookie_dict = utils.convert_cookies(current_cookie)
+            _, cookie_dict = utils.convert_cookies(current_cookie, domain_filter="xiaohongshu.com")
             no_logged_in_session = cookie_dict.get("web_session")
 
             await sms_code_input_ele.fill(value=sms_code_value.decode())  # Enter SMS verification code
@@ -167,6 +167,20 @@ class XiaoHongShuLogin(AbstractLogin):
     async def login_by_qrcode(self):
         """login xiaohongshu website and keep webdriver login state"""
         utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] Begin login xiaohongshu by qrcode ...")
+        # get not logged session baseline
+        current_cookie = await self.browser_context.cookies()
+        _, cookie_dict = utils.convert_cookies(current_cookie, domain_filter="xiaohongshu.com")
+        no_logged_in_session = cookie_dict.get("web_session")
+
+        # If already logged in under current browser context, skip qrcode flow.
+        # Note: this only checks page-level state; API-level validity is checked by caller (core.py).
+        if await self._check_login_state_once(no_logged_in_session):
+            utils.logger.info(
+                "[XiaoHongShuLogin.login_by_qrcode] Existing login state detected (page-level), skip qrcode flow. "
+                "If API still fails, caller will handle cookie refresh."
+            )
+            return
+
         # login_selector = "div.login-container > div.left > div.qrcode > img"
         qrcode_img_selector = "xpath=//img[@class='qrcode-img']"
         # find login qrcode
@@ -178,19 +192,20 @@ class XiaoHongShuLogin(AbstractLogin):
             utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] login failed , have not found qrcode please check ....")
             # if this website does not automatically popup login dialog box, we will manual click login button
             await asyncio.sleep(0.5)
-            login_button_ele = self.context_page.locator("xpath=//*[@id='app']/div[1]/div[2]/div[1]/ul/div[1]/button")
-            await login_button_ele.click()
+            try:
+                login_button_ele = self.context_page.locator("xpath=//*[@id='app']/div[1]/div[2]/div[1]/ul/div[1]/button")
+                await login_button_ele.click(timeout=5000)
+            except Exception:
+                utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] Login button not found/clickable, continue with state check ...")
             base64_qrcode_img = await utils.find_login_qrcode(
                 self.context_page,
                 selector=qrcode_img_selector
             )
             if not base64_qrcode_img:
+                if await self._check_login_state_once(no_logged_in_session):
+                    utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] No qrcode found but login state is valid, skip qrcode.")
+                    return
                 sys.exit()
-
-        # get not logged session
-        current_cookie = await self.browser_context.cookies()
-        _, cookie_dict = utils.convert_cookies(current_cookie)
-        no_logged_in_session = cookie_dict.get("web_session")
 
         # show login qrcode
         # fix issue #12

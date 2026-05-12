@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
 #
 # This file is part of MediaCrawler project.
 # Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/main.py
@@ -121,7 +120,7 @@ async def async_cleanup() -> None:
     if crawler:
         if getattr(crawler, "cdp_manager", None):
             try:
-                await crawler.cdp_manager.cleanup(force=True)
+                await crawler.cdp_manager.cleanup(force=config.AUTO_CLOSE_BROWSER)
             except Exception as e:
                 error_msg = str(e).lower()
                 if "closed" not in error_msg and "disconnected" not in error_msg:

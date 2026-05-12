@@ -1,6 +1,5 @@
 // copy from https://github.com/tiam-bloom/zhihuQuestionAnswer/blob/main/zhihuvmp.js thanks to tiam-bloom
 // 仅供学习交流使用，严禁用于商业用途，也不要滥用，否则后果自负
-// modified by relakkes
 
 const crypto = require('crypto'); // 导入加密模块
 
@@ -132,7 +131,6 @@ function get_zse_96(encode_md5) {
     return result
 }
 
-/***********************relakkes modify*******************************************************/
 
 /**
  * 从cookies中提取dc0的值

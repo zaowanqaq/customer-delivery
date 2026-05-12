@@ -1,21 +1,4 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025 relakkes@gmail.com
-#
-# This file is part of MediaCrawler project.
-# Repository: https://github.com/NanmiCoder/MediaCrawler/blob/main/api/main.py
-# GitHub: https://github.com/NanmiCoder
-# Licensed under NON-COMMERCIAL LEARNING LICENSE 1.1
-#
-# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：
-# 1. 不得用于任何商业用途。
-# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。
-# 3. 不得进行大规模爬取或对平台造成运营干扰。
-# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。
-# 5. 不得用于任何非法或不当的用途。
-#
-# 详细许可条款请参阅项目根目录下的LICENSE文件。
-# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
-
 """
 MediaCrawler WebUI API Server
 Start command: uvicorn api.main:app --port 8080 --reload
@@ -26,6 +9,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any, Dict
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +37,7 @@ OPS_CONFIG_DEFAULT = {
     "keywords": "AI运营",
     "start_page": 1,
     "max_notes_count": 20,
+    "max_comments_count_singlenotes": 10,
     "enable_comments": True,
     "enable_sub_comments": False,
     "save_option": "csv",
@@ -67,9 +52,26 @@ OPS_CONFIG_DEFAULT = {
     "rule_table_id": "",
     "rule_name": "",
     "sync_base_token": "",
+    "account_filter_table_id": "",
     "sync_notes_table_id": "",
     "sync_comments_table_id": "",
     "sync_limit": 0,
+    "sample_creator_ids": "",
+    "notes_per_creator": 20,
+    "scenario_base_token": "",
+    "account_filter_table_name": "账号筛选表",
+    "viral_monitor_table_name": "爆款监控表",
+    "collaboration_monitor_table_name": "合作笔记监控表",
+    "collab_project_name": "",
+    "collab_source_keyword": "",
+    "collab_creator_ids": "",
+    "collab_notes_per_creator": 20,
+    "collab_table_id": "",
+    "collab_interval_hours": 4,
+    "collab_sync_limit": 20,
+    "project_name": "",
+    "current_project_key": "",
+    "project_profiles": {},
 }
 
 
@@ -80,6 +82,7 @@ class OpsConfigPayload(BaseModel):
     keywords: str = ""
     start_page: int = 1
     max_notes_count: int = 20
+    max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
     save_option: str = "csv"
@@ -94,9 +97,26 @@ class OpsConfigPayload(BaseModel):
     rule_table_id: str = ""
     rule_name: str = ""
     sync_base_token: str = ""
+    account_filter_table_id: str = ""
     sync_notes_table_id: str = ""
     sync_comments_table_id: str = ""
     sync_limit: int = 0
+    sample_creator_ids: str = ""
+    notes_per_creator: int = 20
+    scenario_base_token: str = ""
+    account_filter_table_name: str = "账号筛选表"
+    viral_monitor_table_name: str = "爆款监控表"
+    collaboration_monitor_table_name: str = "合作笔记监控表"
+    collab_project_name: str = ""
+    collab_source_keyword: str = ""
+    collab_creator_ids: str = ""
+    collab_notes_per_creator: int = 20
+    collab_table_id: str = ""
+    collab_interval_hours: int = 4
+    collab_sync_limit: int = 20
+    project_name: str = ""
+    current_project_key: str = ""
+    project_profiles: Dict[str, Dict[str, Any]] = {}
 
 
 def _load_ops_config() -> dict:
@@ -278,8 +298,20 @@ async def save_ops_config(payload: OpsConfigPayload):
         config_data["start_page"] = 1
     if config_data["max_notes_count"] < 1:
         config_data["max_notes_count"] = 1
+    if config_data["max_comments_count_singlenotes"] < 1:
+        config_data["max_comments_count_singlenotes"] = 1
     if config_data["sync_limit"] < 0:
         config_data["sync_limit"] = 0
+    if config_data["notes_per_creator"] < 1:
+        config_data["notes_per_creator"] = 1
+    if config_data["collab_interval_hours"] not in (4, 8, 24):
+        config_data["collab_interval_hours"] = 4
+    if config_data["collab_sync_limit"] < 1:
+        config_data["collab_sync_limit"] = 1
+    if config_data["collab_notes_per_creator"] < 1:
+        config_data["collab_notes_per_creator"] = 1
+    if not isinstance(config_data.get("project_profiles"), dict):
+        config_data["project_profiles"] = {}
     _save_ops_config(config_data)
     return {"ok": True, "config": config_data}
 
