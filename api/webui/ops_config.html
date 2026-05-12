@@ -59,6 +59,10 @@
     .overview-kicker { margin: 0 0 12px; color: var(--accent); font-size: 12px; font-weight: 800; }
     .overview h2 { margin: 0; max-width: 720px; font-size: 42px; line-height: 1.08; color: var(--ink); }
     .overview-copy { max-width: 760px; margin: 16px 0 0; color: #544c45; font-size: 15px; line-height: 1.8; }
+    .statement-strip { display: grid; grid-template-columns: 1.1fr .9fr .9fr; gap: 14px; margin-top: 22px; }
+    .statement-item { min-height: 102px; border: 1px solid #e5d7cb; border-radius: 8px; padding: 16px; background: #fff8f1; }
+    .statement-item strong { display: block; font-size: 22px; color: var(--accent-strong); }
+    .statement-item span { display: block; margin-top: 8px; color: #695d53; font-size: 12px; line-height: 1.6; }
     .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
     .hero-button { border-radius: 999px; padding: 12px 18px; min-height: 44px; font-weight: 700; border: 1px solid transparent; }
     .hero-button.primary { background: var(--accent); color: #fff; }
@@ -72,6 +76,18 @@
     .workflow-step:nth-child(3) b { background: var(--gold); }
     .workflow-step strong { display: block; font-size: 14px; color: var(--ink); }
     .workflow-step span { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+    .showcase-band { display: grid; grid-template-columns: 1.05fr .95fr; gap: 20px; margin-bottom: 20px; }
+    .showcase-panel { background: #261f1a; color: #f9efe5; border-radius: 8px; padding: 24px; min-height: 226px; position: relative; overflow: hidden; }
+    .showcase-panel::after { content: ""; position: absolute; inset: auto -32px -48px auto; width: 180px; height: 180px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); }
+    .showcase-panel p { margin: 0; color: rgba(249,239,229,.72); font-size: 13px; line-height: 1.7; }
+    .showcase-panel h3 { margin: 12px 0 14px; max-width: 560px; font-size: 28px; line-height: 1.2; color: #fff8f0; }
+    .showcase-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .showcase-metrics div { border: 1px solid rgba(255,255,255,.14); border-radius: 8px; padding: 14px; background: rgba(255,255,255,.05); }
+    .showcase-metrics strong { display: block; font-size: 18px; color: #fff8f0; }
+    .showcase-metrics span { display: block; margin-top: 6px; color: rgba(249,239,229,.7); font-size: 11px; }
+    .quote-panel { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 24px; box-shadow: 0 12px 28px rgba(70, 48, 30, .06); display: flex; flex-direction: column; justify-content: space-between; }
+    .quote-panel blockquote { margin: 0; font-size: 24px; line-height: 1.45; color: var(--ink); font-weight: 700; }
+    .quote-panel small { display: block; margin-top: 20px; color: var(--muted); font-size: 12px; line-height: 1.6; }
     .project-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
     .card { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 24px; box-shadow: 0 12px 28px rgba(70, 48, 30, .06); margin-bottom: 20px; }
     .project-grid .card { margin-bottom: 0; min-height: 100%; }
@@ -118,7 +134,7 @@
     ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
     @media (max-width: 1180px) {
-      .overview, .project-grid { grid-template-columns: 1fr; }
+      .overview, .project-grid, .showcase-band, .statement-strip { grid-template-columns: 1fr; }
       .monitor-grid { grid-template-columns: repeat(2, 1fr); }
     }
     @media (max-width: 920px) {
@@ -197,6 +213,20 @@
                   <span class="cap-item">KOC 投放</span>
                   <span class="cap-item">达人投放</span>
                 </div>
+                <div class="statement-strip">
+                  <div class="statement-item">
+                    <strong>01</strong>
+                    <span>先把项目与内容方向立住，演示时能先讲方法论，再切操作。</span>
+                  </div>
+                  <div class="statement-item">
+                    <strong>31+</strong>
+                    <span>借客户“选号罗盘”的表达，突出筛选不是碰运气。</span>
+                  </div>
+                  <div class="statement-item">
+                    <strong>5 能力</strong>
+                    <span>把营销服务与工具动作放在同一条叙事线上。</span>
+                  </div>
+                </div>
               </div>
               <div class="hero-actions">
                 <button class="hero-button primary" onclick="activateTabById('tab-step3', '爆款内容检索')">进入爆款内容检索</button>
@@ -227,6 +257,30 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </section>
+          <section class="showcase-band">
+            <div class="showcase-panel">
+              <p>CLIENT PRESENTATION MODE</p>
+              <h3>先让客户看到“艾莉芬特怎么做项目”，再看到“系统怎么把项目跑起来”。</h3>
+              <div class="showcase-metrics">
+                <div>
+                  <strong>选号</strong>
+                  <span>达人与样本账号筛选</span>
+                </div>
+                <div>
+                  <strong>爆文</strong>
+                  <span>关键词与内容检索</span>
+                </div>
+                <div>
+                  <strong>监控</strong>
+                  <span>同步、追踪、复盘</span>
+                </div>
+              </div>
+            </div>
+            <div class="quote-panel">
+              <blockquote>不仅是流量的追逐者，更是品牌的造浪者。</blockquote>
+              <small>文案取自客户公司介绍中的品牌表达，用在演示页里比“配置中心”更能建立第一印象。</small>
             </div>
           </section>
           <div class="project-grid">
