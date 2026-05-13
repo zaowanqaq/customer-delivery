@@ -187,6 +187,52 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
     return [f.get("name") for f in fields if isinstance(f, dict) and f.get("name")]
 
 
+def _text_field(name: str) -> Dict[str, Any]:
+    return {"name": name, "type": "text", "style": {"type": "plain"}}
+
+
+def _number_field(name: str) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "type": "number",
+        "style": {
+            "type": "plain",
+            "precision": 0,
+            "percentage": False,
+            "thousands_separator": False,
+        },
+    }
+
+
+def _datetime_field(name: str) -> Dict[str, Any]:
+    return {"name": name, "type": "datetime", "style": {"format": "yyyy/MM/dd"}}
+
+
+def _viral_monitor_fields() -> List[Dict[str, Any]]:
+    return [
+        _text_field("博主名"),
+        _text_field("项目名"),
+        _datetime_field("采集时间"),
+        _number_field("分享数"),
+        _text_field("笔记链接"),
+        _text_field("笔记类型"),
+        _text_field("内容"),
+        _number_field("评论数"),
+        _text_field("封面图"),
+        _text_field("已使用账号记录"),
+        _datetime_field("首发时间"),
+        _text_field("关键词"),
+        _number_field("收藏数"),
+        _number_field("点赞数"),
+        _text_field("标题"),
+        _text_field("博主主页"),
+        _text_field("当日使用标记"),
+        _number_field("博主粉丝数"),
+        _text_field("笔记ID"),
+        _text_field("话题标签"),
+    ]
+
+
 def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     project_root = Path(__file__).resolve().parents[2]
     suffix = "contents" if data_type == "notes" else "comments"
@@ -592,31 +638,10 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
 async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     if not request.base_token:
         raise HTTPException(status_code=400, detail="缺少 base_token")
-    account_filter_fields = [{"name": "项目名", "type": "text"}, {"name": "搜索关键词", "type": "text"}, {"name": "账号", "type": "text"}, {"name": "账号ID", "type": "text"}, {"name": "账号主页", "type": "url"}, {"name": "笔记标题", "type": "text"}, {"name": "笔记链接", "type": "url"}, {"name": "点赞量", "type": "number"}, {"name": "评论量", "type": "number"}, {"name": "收藏量", "type": "number"}, {"name": "语义标签", "type": "text"}, {"name": "推荐理由", "type": "text"}]
-    # Align with 179b-like structure for viral monitoring, while keeping fields writable by sync flow.
-    viral_monitor_fields = [
-        {"name": "项目名", "type": "text"},
-        {"name": "关键词", "type": "text"},
-        {"name": "标题", "type": "text"},
-        {"name": "内容", "type": "text"},
-        {"name": "笔记链接", "type": "url"},
-        {"name": "笔记ID", "type": "text"},
-        {"name": "博主名", "type": "text"},
-        {"name": "博主主页", "type": "url"},
-        {"name": "博主粉丝数", "type": "number"},
-        {"name": "笔记类型", "type": "text"},
-        {"name": "封面图", "type": "text"},
-        {"name": "话题标签", "type": "text"},
-        {"name": "点赞数", "type": "number"},
-        {"name": "评论数", "type": "number"},
-        {"name": "收藏数", "type": "number"},
-        {"name": "分享数", "type": "number"},
-        {"name": "首发时间", "type": "datetime"},
-        {"name": "采集时间", "type": "datetime"},
-        {"name": "当日使用标记", "type": "text"},
-        {"name": "已使用账号记录", "type": "text"},
-    ]
-    collaboration_fields = [{"name": "项目名", "type": "text"}, {"name": "监控周期", "type": "text"}, {"name": "搜索关键词", "type": "text"}, {"name": "笔记标题", "type": "text"}, {"name": "笔记链接", "type": "url"}, {"name": "博主名", "type": "text"}, {"name": "点赞量", "type": "number"}, {"name": "评论量", "type": "number"}, {"name": "收藏量", "type": "number"}, {"name": "分享量", "type": "number"}, {"name": "抓取时间", "type": "datetime"}]
+    account_filter_fields = [_text_field("项目名"), _text_field("搜索关键词"), _text_field("账号"), _text_field("账号ID"), _text_field("账号主页"), _text_field("笔记标题"), _text_field("笔记链接"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _text_field("语义标签"), _text_field("推荐理由")]
+    viral_monitor_fields = _viral_monitor_fields()
+    note_recreation_fields = _viral_monitor_fields()
+    collaboration_fields = [_text_field("项目名"), _text_field("监控周期"), _text_field("搜索关键词"), _text_field("笔记标题"), _text_field("笔记链接"), _text_field("博主名"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _number_field("分享量"), _datetime_field("抓取时间")]
     existing = await _list_base_tables(request.base_token)
     existing_map = {t["name"]: t["id"] for t in existing}
 
@@ -630,6 +655,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     tables = [
         await create_or_reuse(request.account_filter_table_name, account_filter_fields),
         await create_or_reuse(request.viral_monitor_table_name, viral_monitor_fields),
+        await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
         await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
     ]
     return {"status": "ok", "tables": tables}
@@ -657,6 +683,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             base_token=base_token,
             account_filter_table_name=request.account_filter_table_name,
             viral_monitor_table_name=request.viral_monitor_table_name,
+            note_recreation_table_name=request.note_recreation_table_name,
             collaboration_monitor_table_name=request.collaboration_monitor_table_name,
         )
     )

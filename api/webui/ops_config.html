@@ -305,7 +305,7 @@
     </section>
           <section class="card">
       <h2>步骤1：初始化项目</h2>
-      <p class="hint">只填项目名，系统自动新建 Base 并创建项目主表、账号筛选表、爆款监控表、合作监控表。</p>
+      <p class="hint">只填项目名，系统自动新建 Base 并创建项目主表、账号筛选表、爆款监控表、笔记二创表、合作监控表。</p>
       <div class="grid">
         <div class="row">
           <label>所属项目名（必填）</label>
@@ -317,9 +317,11 @@
       <input id="sync_base_token" class="v1-hidden" placeholder="N9...">
       <input id="account_filter_table_name" class="v1-hidden" value="账号筛选表">
       <input id="viral_monitor_table_name" class="v1-hidden" value="爆款监控表">
+      <input id="note_recreation_table_name" class="v1-hidden" value="笔记二创表">
       <input id="collaboration_monitor_table_name" class="v1-hidden" value="合作笔记监控表">
       <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="note_recreation_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
       <div class="btns">
@@ -579,8 +581,8 @@
 
     const fields = [
       "project_name", "folder_token", "scenario_base_token", "sync_base_token",
-      "account_filter_table_name", "viral_monitor_table_name", "collaboration_monitor_table_name",
-      "account_filter_table_id", "sync_notes_table_id", "sync_comments_table_id", "collab_table_id",
+      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "collaboration_monitor_table_name",
+      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "cookies",
       "max_comments_count_singlenotes",
       "sample_creator_ids", "notes_per_creator",
@@ -794,6 +796,7 @@
       }
       const accountMeta = findTableMeta(tables, accountTableId);
       const notesMeta = findTableMeta(tables, payload.sync_notes_table_id);
+      const recreationMeta = findTableMeta(tables, payload.note_recreation_table_id);
       const commentsMeta = findTableMeta(tables, payload.sync_comments_table_id);
       const collabMeta = findTableMeta(tables, payload.collab_table_id);
       const baseHref = baseUrl(baseToken);
@@ -803,6 +806,7 @@
         <div class="meta-row"><span class="meta-key">Base</span><span class="meta-val"><a href="${escapeHtml(baseHref)}" target="_blank" rel="noreferrer">打开 Base</a> <span class="mono">${escapeHtml(baseToken)}</span></span></div>
         <div class="meta-row"><span class="meta-key">步骤2样本账号 -> 账号筛选表</span><span class="meta-val">${renderTableValue(baseToken, accountTableId, accountMeta && accountMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 爆款监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_notes_table_id, notesMeta && notesMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">笔记二创表</span><span class="meta-val">${renderTableValue(baseToken, payload.note_recreation_table_id, recreationMeta && recreationMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">comments 同步目标（可选）</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">合作监控目标</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
       `;
@@ -823,6 +827,7 @@
         sync_base_token: payload.sync_base_token,
         account_filter_table_id: payload.account_filter_table_id,
         sync_notes_table_id: payload.sync_notes_table_id,
+        note_recreation_table_id: payload.note_recreation_table_id,
         sync_comments_table_id: payload.sync_comments_table_id,
         collab_table_id: payload.collab_table_id,
         keywords: payload.keywords,
@@ -904,9 +909,11 @@
         sync_base_token: document.getElementById("sync_base_token").value.trim(),
         account_filter_table_name: document.getElementById("account_filter_table_name").value.trim(),
         viral_monitor_table_name: document.getElementById("viral_monitor_table_name").value.trim(),
+        note_recreation_table_name: document.getElementById("note_recreation_table_name").value.trim(),
         collaboration_monitor_table_name: document.getElementById("collaboration_monitor_table_name").value.trim(),
         account_filter_table_id: document.getElementById("account_filter_table_id").value.trim(),
         sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
+        note_recreation_table_id: document.getElementById("note_recreation_table_id").value.trim(),
         sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
         collab_table_id: document.getElementById("collab_table_id").value.trim(),
         login_type: document.getElementById("login_type").value,
@@ -1039,6 +1046,7 @@
           root_table_name: "项目主表",
           account_filter_table_name: payload.account_filter_table_name,
           viral_monitor_table_name: payload.viral_monitor_table_name,
+          note_recreation_table_name: payload.note_recreation_table_name,
           collaboration_monitor_table_name: payload.collaboration_monitor_table_name
         };
         const res = await fetch("/api/crawler/bootstrap-project", {
@@ -1060,6 +1068,7 @@
           if (!tableId) continue;
           if (tableName.includes("账号筛选")) document.getElementById("account_filter_table_id").value = tableId;
           if (tableName.includes("爆款")) document.getElementById("sync_notes_table_id").value = tableId;
+          if (tableName.includes("二创")) document.getElementById("note_recreation_table_id").value = tableId;
           if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
@@ -1253,7 +1262,7 @@
       await refreshProgressMonitor();
     }
 
-    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "sync_comments_table_id", "collab_table_id", "keywords"]
+    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "keywords"]
       .forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
