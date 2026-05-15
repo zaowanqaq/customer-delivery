@@ -4,12 +4,14 @@ import json
 import asyncio
 import shutil
 import subprocess
+import sys
 import tempfile
 import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 
@@ -23,12 +25,57 @@ from ..schemas import (
     ScenarioBootstrapRequest,
     CollaborationMonitorStartRequest,
     CollaborationMonitorStopRequest,
+    HuitunExportAnchorListRequest,
+    HuitunLoginRequest,
+    HuitunScreenshotRequest,
 )
 from ..services import crawler_manager
 import config
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+async def _run_huitun_automation(args: List[str], timeout_sec: int = 180) -> Dict[str, Any]:
+    project_root = Path(__file__).resolve().parents[2]
+    script_path = project_root / "tools" / "huitun_automation.py"
+    cmd = [sys.executable, str(script_path), *args]
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+            check=False,
+            cwd=str(project_root),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail=f"灰豚自动化超时（{timeout_sec}s）") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"灰豚自动化启动失败: {exc}") from exc
+
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    payload: Dict[str, Any] = {}
+    for line in reversed(lines):
+        try:
+            maybe = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(maybe, dict):
+            payload = maybe
+            break
+    if not payload:
+        payload = {"status": "error", "error": result.stderr or result.stdout or "灰豚自动化没有返回 JSON"}
+    payload["returncode"] = result.returncode
+    if result.stderr:
+        payload["stderr"] = result.stderr[-1200:]
+    if result.returncode != 0 and payload.get("status") != "error":
+        payload["status"] = "error"
+        payload["error"] = payload.get("error") or result.stderr or result.stdout
+    return payload
 
 
 def _rule_is_enabled(value) -> bool:
@@ -57,6 +104,21 @@ def _extract_table_id(payload: Dict[str, Any]) -> str:
                 if isinstance(table.get(key), str) and table.get(key):
                     return table[key]
     return ""
+
+
+def _extract_base_token(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if "/base/" not in text:
+        return text
+    parsed = urlparse(text)
+    path = parsed.path or text
+    parts = [p for p in path.split("/") if p]
+    for idx, part in enumerate(parts):
+        if part == "base" and idx + 1 < len(parts):
+            return parts[idx + 1]
+    return text.rstrip("/").split("/")[-1].split("?")[0]
 
 
 async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]:
@@ -153,6 +215,36 @@ async def _create_base(project_name: str, folder_token: str = "", time_zone: str
     if not token:
         raise HTTPException(status_code=500, detail=f"新建 Base 成功但未返回 token: {data}")
     return {"base_token": token, "raw": data}
+
+
+async def _copy_base(template_base_token: str, project_name: str, folder_token: str = "", time_zone: str = "Asia/Shanghai") -> Dict[str, Any]:
+    source_token = _extract_base_token(template_base_token)
+    if not source_token:
+        raise HTTPException(status_code=400, detail="缺少母版 Base Token 或链接")
+    cmd = [
+        shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+        "base", "+base-copy",
+        "--as", "user",
+        "--base-token", source_token,
+        "--name", project_name,
+        "--without-content",
+    ]
+    if folder_token:
+        cmd.extend(["--folder-token", folder_token])
+    if time_zone:
+        cmd.extend(["--time-zone", time_zone])
+    payload = await _run_lark_cli(cmd, timeout_sec=60)
+    data = payload.get("data", {})
+    base_obj = data.get("base", {}) if isinstance(data, dict) else {}
+    token = str(
+        (data.get("app_token") if isinstance(data, dict) else "")
+        or (data.get("base_token") if isinstance(data, dict) else "")
+        or (base_obj.get("base_token") if isinstance(base_obj, dict) else "")
+        or ""
+    )
+    if not token:
+        raise HTTPException(status_code=500, detail=f"复制 Base 成功但未返回 token: {data}")
+    return {"base_token": token, "template_base_token": source_token, "raw": data}
 
 
 async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
@@ -329,10 +421,14 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "内容": ["desc", "content", "note_content"],
         "博主名": ["author_nickname", "nickname"],
         "账号": ["author_nickname", "nickname", "博主名"],
+        "账号名称": ["author_nickname", "nickname", "博主名", "账号"],
         "账号ID": ["author_user_id", "user_id", "author_id"],
+        "小红书ID": ["author_user_id", "user_id", "author_id", "账号ID"],
         "账号主页": ["author_homepage_url", "author_profile_url", "博主主页"],
         "博主主页": ["author_homepage_url", "author_profile_url"],
+        "主页链接": ["author_homepage_url", "author_profile_url", "博主主页", "账号主页"],
         "笔记链接": ["note_url"],
+        "发布链接": ["note_url", "笔记链接"],
         "笔记ID": ["note_id", "id"],
         "关键词": ["source_keyword", "搜索关键词"],
         "搜索关键词": ["source_keyword"],
@@ -341,12 +437,18 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "话题标签": ["tag_list", "topics"],
         "点赞量": ["liked_count", "like_count", "点赞数"],
         "点赞数": ["liked_count", "like_count", "点赞量"],
+        "点赞": ["liked_count", "like_count", "点赞量", "点赞数"],
         "收藏量": ["collected_count", "收藏数"],
         "收藏数": ["collected_count", "收藏量"],
+        "收藏": ["collected_count", "收藏量", "收藏数"],
         "评论量": ["comment_count", "评论数"],
         "评论数": ["comment_count", "评论量"],
+        "评论": ["comment_count", "评论量", "评论数"],
         "分享量": ["share_count", "分享数"],
         "分享数": ["share_count", "分享量"],
+        "分享": ["share_count", "分享量", "分享数"],
+        "阅读量": ["read_count", "view_count", "浏览量"],
+        "发布日期": ["publish_date", "发布时间", "time", "create_time"],
         "博主粉丝数": ["author_fans", "author_fans_count", "fans_count"],
         "首发时间": ["time", "create_time", "发布时间"],
         "采集时间": ["last_update_time", "crawl_time", "抓取时间"],
@@ -356,6 +458,7 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "liked_count", "collected_count", "comment_count", "share_count", "like_count", "create_time",
         "点赞量", "收藏量", "评论量", "分享量",
         "点赞数", "收藏数", "评论数", "分享数",
+        "点赞", "收藏", "评论", "分享", "阅读量", "互动总和", "发布日期",
         "博主粉丝数",
     }
     values: List[Any] = []
@@ -368,7 +471,30 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                 break
         if field_name == "stage" and value == "":
             value = "trial_notes" if data_type == "notes" else "trial_comments"
-        if field_name in {"author_homepage_url", "账号主页", "博主主页"} and value == "":
+        if field_name == "媒介进度" and value == "":
+            value = "已发布"
+        if field_name == "互动总和" and value == "":
+            total = 0
+            for key in ("liked_count", "like_count", "collected_count", "comment_count", "share_count", "点赞", "收藏", "评论", "分享"):
+                try:
+                    total += int(str(row.get(key) or 0))
+                except Exception:
+                    pass
+            value = total
+        if field_name == "互动等级" and value == "":
+            total = 0
+            for key in ("liked_count", "like_count", "collected_count", "comment_count", "share_count", "点赞", "收藏", "评论", "分享"):
+                try:
+                    total += int(str(row.get(key) or 0))
+                except Exception:
+                    pass
+            if total >= 1000:
+                value = "千互动爆文"
+            elif total >= 100:
+                value = "百互动爆文"
+            else:
+                value = "普通笔记"
+        if field_name in {"author_homepage_url", "账号主页", "博主主页", "主页链接"} and value == "":
             author_id = row.get("author_user_id") or row.get("user_id") or row.get("账号ID")
             value = f"https://www.xiaohongshu.com/user/profile/{author_id}" if author_id else ""
         if field_name in numeric_fields:
@@ -420,7 +546,7 @@ async def _refresh_collab_creator_notes(request: CollaborationMonitorStartReques
         creator_ids=",".join(creator_id_list), max_notes_count=max(1, request.notes_per_creator),
         max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
-        save_option=request.save_option, cookies=request.cookies, headless=request.headless,
+        enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
     success = await crawler_manager.start(start_request)
     if not success:
@@ -624,7 +750,7 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
         creator_ids=",".join(creator_id_list), max_notes_count=max(1, request.notes_per_creator),
         max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
-        save_option=request.save_option, cookies=request.cookies, headless=request.headless,
+        enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
     success = await crawler_manager.start(start_request)
     if not success:
@@ -632,6 +758,38 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
             raise HTTPException(status_code=400, detail="Crawler is already running")
         raise HTTPException(status_code=500, detail="Failed to start sample creator crawler")
     return {"status": "ok", "message": "样本账号抓取任务已启动", "creator_count": len(creator_id_list), "notes_per_creator": start_request.max_notes_count}
+
+
+@router.post("/huitun/login")
+async def huitun_login(request: HuitunLoginRequest):
+    args = ["login-wait", "--login-timeout-ms", str(max(30_000, request.timeout_ms))]
+    if request.keep_open:
+        args.append("--keep-open")
+    result = await _run_huitun_automation(args, timeout_sec=max(60, int(request.timeout_ms / 1000) + 30))
+    return result
+
+
+@router.post("/huitun/screenshot")
+async def huitun_screenshot(request: HuitunScreenshotRequest):
+    args = ["screenshot", "--url", request.url]
+    result = await _run_huitun_automation(args, timeout_sec=90)
+    return result
+
+
+@router.post("/huitun/export-anchor-list")
+async def huitun_export_anchor_list(request: HuitunExportAnchorListRequest):
+    args = [
+        "export-anchor-list",
+        "--rank-tab", request.rank_tab.strip() or "涨粉榜",
+    ]
+    if request.category.strip():
+        args.extend(["--category", request.category.strip()])
+    if request.screenshot_before_export:
+        args.append("--screenshot-before-export")
+    if request.keep_open:
+        args.append("--keep-open")
+    result = await _run_huitun_automation(args, timeout_sec=150)
+    return result
 
 
 @router.post("/setup-scenario-tables")
@@ -674,6 +832,28 @@ async def get_base_tables(base_token: str):
 async def bootstrap_project(request: ScenarioBootstrapRequest):
     if not request.project_name.strip():
         raise HTTPException(status_code=400, detail="项目名不能为空")
+    if request.template_base_token.strip():
+        base_info = await _copy_base(
+            request.template_base_token.strip(),
+            request.project_name.strip(),
+            request.folder_token.strip(),
+            request.time_zone.strip() or "Asia/Shanghai",
+        )
+        base_token = base_info["base_token"]
+        copied_tables = await _list_base_tables(base_token)
+        tables = [
+            {"table_name": item["name"], "table_id": item["id"], "copied": True}
+            for item in copied_tables
+        ]
+        return {
+            "status": "ok",
+            "project_name": request.project_name.strip(),
+            "base_token": base_token,
+            "template_base_token": base_info.get("template_base_token", ""),
+            "root_table": None,
+            "tables": tables,
+            "base_raw": base_info.get("raw", {}),
+        }
     base_info = await _create_base(request.project_name.strip(), request.folder_token.strip(), request.time_zone.strip() or "Asia/Shanghai")
     base_token = base_info["base_token"]
     root_fields = [{"name": "项目名", "type": "text"}, {"name": "项目状态", "type": "text"}, {"name": "负责人", "type": "text"}, {"name": "监控关键词", "type": "text"}]
@@ -756,7 +936,17 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
                 with contextlib.suppress(Exception):
                     Path(tmp_json_path).unlink(missing_ok=True)
         created += len(payload["rows"])
-    return {"status": "ok", "message": "Local data synced to Base", "file": str(file_path), "fields": table_fields, "created": created}
+    target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
+    return {
+        "status": "ok",
+        "message": "Local data synced to Base",
+        "base_token": request.base_token,
+        "table_id": request.table_id,
+        "target_url": target_url,
+        "file": str(file_path),
+        "fields": table_fields,
+        "created": created,
+    }
 
 
 @router.post("/collaboration-monitor/start")

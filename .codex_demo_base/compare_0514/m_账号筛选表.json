@@ -1,0 +1,126 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldRoR6R5N",
+        "name": "笔记标题",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldvhh4nGu",
+        "name": "评论量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "flduu2llZj",
+        "name": "账号主页",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldV9SW6Vx",
+        "name": "笔记链接",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "flduZMIQc8",
+        "name": "推荐理由",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldJlqelXE",
+        "name": "账号",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldGUie7Er",
+        "name": "收藏量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fld3LcUcsk",
+        "name": "搜索关键词",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldqVXB4IA",
+        "name": "项目名",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldIbpbEtk",
+        "name": "语义标签",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldByLUhxE",
+        "name": "账号ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldCnKcT98",
+        "name": "点赞量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      }
+    ],
+    "total": 12
+  },
+  "_notice": {
+    "skills": {
+      "current": "",
+      "message": "lark-cli skills not installed, run: lark-cli update",
+      "target": "1.0.28"
+    },
+    "update": {
+      "current": "1.0.28",
+      "latest": "1.0.29",
+      "message": "lark-cli 1.0.29 available, current 1.0.28, run: lark-cli update"
+    }
+  }
+}

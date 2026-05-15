@@ -1,0 +1,196 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "flddB7z3lQ",
+        "name": "关键词",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldiediu1z",
+        "name": "采集时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fld6jXoZu4",
+        "name": "收藏数",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldOdGYPjg",
+        "name": "点赞数",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldvLuWsUB",
+        "name": "博主主页",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldyhuTd9V",
+        "name": "话题标签",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldRFTh6Fk",
+        "name": "分享数",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldJc3cxvB",
+        "name": "笔记类型",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldNG1DRd9",
+        "name": "笔记ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldZTbYgC5",
+        "name": "当日使用标记",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldv6MhL4a",
+        "name": "博主名",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldfe3QfMj",
+        "name": "内容",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldVzGhLrj",
+        "name": "评论数",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldvBVH09D",
+        "name": "博主粉丝数",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldoK4d62x",
+        "name": "笔记链接",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldIyUCr9G",
+        "name": "项目名",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldLhXVcF7",
+        "name": "已使用账号记录",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldePYt6n1",
+        "name": "首发时间",
+        "style": {
+          "format": "yyyy/MM/dd"
+        },
+        "type": "datetime"
+      },
+      {
+        "id": "fldduLLT70",
+        "name": "封面图",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldwwq2o2e",
+        "name": "标题",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      }
+    ],
+    "total": 20
+  },
+  "_notice": {
+    "skills": {
+      "current": "",
+      "message": "lark-cli skills not installed, run: lark-cli update",
+      "target": "1.0.28"
+    },
+    "update": {
+      "current": "1.0.28",
+      "latest": "1.0.29",
+      "message": "lark-cli 1.0.29 available, current 1.0.28, run: lark-cli update"
+    }
+  }
+}

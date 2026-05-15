@@ -23,7 +23,7 @@ from urllib.parse import quote, urlencode
 
 import httpx
 from playwright.async_api import BrowserContext, Page
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_not_exception_type
+from tenacity import retry, stop_after_attempt, wait_random, wait_fixed, retry_if_not_exception_type
 from tools.httpx_util import make_async_client
 
 import config
@@ -66,8 +66,26 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
         self._extractor = XiaoHongShuExtractor()
+        self._client_proxy = proxy
+        self._client = make_async_client(
+            proxy=self.proxy,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
         # Initialize proxy pool (from ProxyRefreshMixin)
         self.init_proxy_pool(proxy_ip_pool)
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client_proxy != self.proxy:
+            await self._client.aclose()
+            self._client = make_async_client(
+                proxy=self.proxy,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+            self._client_proxy = self.proxy
+        return self._client
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
     async def _pre_headers(self, url: str, params: Optional[Dict] = None, payload: Optional[Dict] = None) -> Dict:
         """请求头参数签名 (使用 xhshow 纯算法)
@@ -106,7 +124,11 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers.update(headers)
         return self.headers
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), retry=retry_if_not_exception_type(NoteNotFoundError))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_random(1, 2),
+        retry=retry_if_not_exception_type((NoteNotFoundError, IPBlockError, DataFetchError)),
+    )
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
         Wrapper for httpx common request method, processes request response
@@ -123,16 +145,20 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         # return response.text
         return_response = kwargs.pop("return_response", False)
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        client = await self._get_client()
+        response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
+        if response.status_code == 429:
+            raise IPBlockError("Rate limited by Xiaohongshu, status_code=429")
         if response.status_code == 471 or response.status_code == 461:
             # someday someone maybe will bypass captcha
             verify_type = response.headers["Verifytype"]
             verify_uuid = response.headers["Verifyuuid"]
             msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
             utils.logger.error(msg)
-            raise Exception(msg)
+            raise IPBlockError(msg)
+        if response.status_code >= 500:
+            response.raise_for_status()
 
         if return_response:
             return response.text
@@ -175,7 +201,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             full_url = f"{self._host}{uri}"
 
         return await self.request(
-            method="GET", url=full_url, headers=headers
+            method="GET", url=full_url, headers=headers.copy()
         )
 
     async def post(self, uri: str, data: dict, **kwargs) -> Dict:
@@ -194,7 +220,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             method="POST",
             url=f"{self._host}{uri}",
             data=json_str,
-            headers=headers,
+            headers=headers.copy(),
             **kwargs,
         )
 
@@ -202,24 +228,24 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         # Check if proxy is expired before request
         await self._refresh_proxy_if_expired()
 
-        async with make_async_client(proxy=self.proxy) as client:
-            try:
-                response = await client.request("GET", url, timeout=self.timeout)
-                response.raise_for_status()
-                if not response.reason_phrase == "OK":
-                    utils.logger.error(
-                        f"[XiaoHongShuClient.get_note_media] request {url} err, res:{response.text}"
-                    )
-                    return None
-                else:
-                    return response.content
-            except (
-                httpx.HTTPError
-            ) as exc:  # some wrong when call httpx.request method, such as connection error, client error, server error or response status code is not 2xx
+        client = await self._get_client()
+        try:
+            response = await client.request("GET", url, timeout=self.timeout)
+            response.raise_for_status()
+            if not response.reason_phrase == "OK":
                 utils.logger.error(
-                    f"[XiaoHongShuClient.get_aweme_media] {exc.__class__.__name__} for {exc.request.url} - {exc}"
-                )  # Keep original exception type name for developer debugging
+                    f"[XiaoHongShuClient.get_note_media] request {url} err, res:{response.text}"
+                )
                 return None
+            else:
+                return response.content
+        except (
+            httpx.HTTPError
+        ) as exc:  # some wrong when call httpx.request method, such as connection error, client error, server error or response status code is not 2xx
+            utils.logger.error(
+                f"[XiaoHongShuClient.get_aweme_media] {exc.__class__.__name__} for {exc.request.url} - {exc}"
+            )  # Keep original exception type name for developer debugging
+            return None
 
     async def query_self(self) -> Optional[Dict]:
         """
@@ -229,10 +255,10 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         """
         uri = "/api/sns/web/v1/user/selfinfo"
         headers = await self._pre_headers(uri, params={})
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.get(f"{self._host}{uri}", headers=headers)
-            if response.status_code == 200:
-                return response.json()
+        client = await self._get_client()
+        response = await client.get(f"{self._host}{uri}", headers=headers.copy())
+        if response.status_code == 200:
+            return response.json()
         return None
 
     async def pong(self) -> bool:
@@ -478,7 +504,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 comments = comments[: max_count - len(result)]
             if callback:
                 await callback(note_id, comments)
-            await asyncio.sleep(crawl_interval)
+            if crawl_interval > 0:
+                await asyncio.sleep(crawl_interval)
             result.extend(comments)
             sub_comments = await self.get_comments_all_sub_comments(
                 comments=comments,
@@ -553,7 +580,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                         comments = comments_res["comments"]
                         if callback:
                             await callback(note_id, comments)
-                        await asyncio.sleep(crawl_interval)
+                        if crawl_interval > 0:
+                            await asyncio.sleep(crawl_interval)
                         result.extend(comments)
                     except DataFetchError as e:
                         utils.logger.warning(
@@ -683,7 +711,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 await callback(notes_to_add)
 
             result.extend(notes_to_add)
-            await asyncio.sleep(crawl_interval)
+            if crawl_interval > 0:
+                await asyncio.sleep(crawl_interval)
 
         utils.logger.info(
             f"[XiaoHongShuClient.get_all_notes_by_creator] Finished getting notes for user {user_id}, total: {len(result)}"

@@ -1,0 +1,263 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "fields": [
+      {
+        "id": "fldIIml1Wz",
+        "name": "发布日期",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldQchPejo",
+        "name": "评论",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": true,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fld4AWunMi",
+        "name": "收藏",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldUGUYAu0",
+        "multiple": false,
+        "name": "内容主题",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Light",
+            "name": "领券攻略/回淘"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Light",
+            "name": "国补3C/数码"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Light",
+            "name": "服饰趋势"
+          },
+          {
+            "hue": "Carmine",
+            "lightness": "Light",
+            "name": "美妆趋势"
+          },
+          {
+            "hue": "Turquoise",
+            "lightness": "Light",
+            "name": "家居焕新"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldeaCc15z",
+        "multiple": false,
+        "name": "互动等级",
+        "options": [
+          {
+            "hue": "Red",
+            "lightness": "Light",
+            "name": "千互动爆文"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Light",
+            "name": "百互动爆文"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Lighter",
+            "name": "普通笔记"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldjA0gRJn",
+        "name": "点赞",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": false,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldjtojGVG",
+        "multiple": false,
+        "name": "媒介归属",
+        "options": [
+          {
+            "hue": "Blue",
+            "lightness": "Light",
+            "name": "一一"
+          },
+          {
+            "hue": "Green",
+            "lightness": "Light",
+            "name": "皮"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Light",
+            "name": "小满"
+          },
+          {
+            "hue": "Purple",
+            "lightness": "Light",
+            "name": "十三"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Light",
+            "name": "DD"
+          },
+          {
+            "hue": "Gray",
+            "lightness": "Light",
+            "name": "未填写"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldpxYfgtg",
+        "name": "项目名",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldIZac5U9",
+        "name": "阅读量",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": true,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldICjQfRh",
+        "name": "发布链接",
+        "style": {
+          "type": "url"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldBRCQUjl",
+        "name": "分享",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": true,
+          "type": "plain"
+        },
+        "type": "number"
+      },
+      {
+        "id": "fldiUyPgzG",
+        "name": "主页链接",
+        "style": {
+          "type": "url"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldqSrzlRQ",
+        "name": "小红书ID",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldBRXb6E9",
+        "name": "复盘建议",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fldOkTVPPp",
+        "multiple": false,
+        "name": "媒介进度",
+        "options": [
+          {
+            "hue": "Green",
+            "lightness": "Light",
+            "name": "已发布"
+          },
+          {
+            "hue": "Orange",
+            "lightness": "Light",
+            "name": "待发布"
+          },
+          {
+            "hue": "Red",
+            "lightness": "Light",
+            "name": "异常"
+          }
+        ],
+        "type": "select"
+      },
+      {
+        "id": "fldsnAkwC9",
+        "name": "账号名称",
+        "style": {
+          "type": "plain"
+        },
+        "type": "text"
+      },
+      {
+        "id": "fld9kl4Ej1",
+        "name": "互动总和",
+        "style": {
+          "percentage": false,
+          "precision": 0,
+          "thousands_separator": true,
+          "type": "plain"
+        },
+        "type": "number"
+      }
+    ],
+    "total": 17
+  },
+  "_notice": {
+    "skills": {
+      "current": "",
+      "message": "lark-cli skills not installed, run: lark-cli update",
+      "target": "1.0.28"
+    },
+    "update": {
+      "current": "1.0.28",
+      "latest": "1.0.29",
+      "message": "lark-cli 1.0.29 available, current 1.0.28, run: lark-cli update"
+    }
+  }
+}

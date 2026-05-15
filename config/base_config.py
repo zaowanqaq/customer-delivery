@@ -70,8 +70,12 @@ START_PAGE = 1
 # Control the number of crawled videos/posts
 CRAWLER_MAX_NOTES_COUNT = 15
 
-# Controlling the number of concurrent crawlers
-MAX_CONCURRENCY_NUM = 1
+# Controlling the number of concurrent note-level crawlers.
+# Set to 1 to fall back to the previous mostly-serial behavior.
+MAX_CONCURRENCY_NUM = 5
+ENABLE_DETAIL_COMMENT_PARALLEL = True
+SLEEP_JITTER = (0.3, 0.8)
+PAGE_GAP_JITTER = (0.8, 1.5)
 
 # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
 ENABLE_GET_MEIDAS = False

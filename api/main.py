@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .routers import crawler_router, data_router, websocket_router
+from .routers import crawler_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
     title="MediaCrawler WebUI API",
@@ -40,6 +40,7 @@ OPS_CONFIG_DEFAULT = {
     "max_comments_count_singlenotes": 10,
     "enable_comments": True,
     "enable_sub_comments": False,
+    "enable_media": False,
     "save_option": "csv",
     "cookies": "",
     "headless": False,
@@ -51,6 +52,7 @@ OPS_CONFIG_DEFAULT = {
     "rule_base_token": "",
     "rule_table_id": "",
     "rule_name": "",
+    "template_base_token": "",
     "sync_base_token": "",
     "account_filter_table_id": "",
     "sync_notes_table_id": "",
@@ -76,6 +78,29 @@ OPS_CONFIG_DEFAULT = {
     "project_profiles": {},
 }
 
+PROJECT_BOUND_FIELDS = {
+    "project_name",
+    "template_base_token",
+    "sync_base_token",
+    "account_filter_table_id",
+    "sync_notes_table_id",
+    "note_recreation_table_id",
+    "sync_comments_table_id",
+    "collab_table_id",
+    "keywords",
+    "xhs_sort_by",
+    "xhs_note_type",
+    "xhs_publish_time",
+    "max_notes_count",
+    "max_comments_count_singlenotes",
+    "sample_creator_ids",
+    "notes_per_creator",
+    "collab_creator_ids",
+    "collab_notes_per_creator",
+    "collab_interval_hours",
+    "collab_sync_limit",
+}
+
 
 class OpsConfigPayload(BaseModel):
     platform: str = "xhs"
@@ -87,6 +112,7 @@ class OpsConfigPayload(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
+    enable_media: bool = False
     save_option: str = "csv"
     cookies: str = ""
     headless: bool = False
@@ -98,6 +124,7 @@ class OpsConfigPayload(BaseModel):
     rule_base_token: str = ""
     rule_table_id: str = ""
     rule_name: str = ""
+    template_base_token: str = ""
     sync_base_token: str = ""
     account_filter_table_id: str = ""
     sync_notes_table_id: str = ""
@@ -158,6 +185,7 @@ app.add_middleware(
 # Register routers
 app.include_router(crawler_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
+app.include_router(notes_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 
 
@@ -316,6 +344,12 @@ async def save_ops_config(payload: OpsConfigPayload):
         config_data["collab_notes_per_creator"] = 1
     if not isinstance(config_data.get("project_profiles"), dict):
         config_data["project_profiles"] = {}
+    current_project_key = str(config_data.get("current_project_key") or "")
+    current_profile = config_data["project_profiles"].get(current_project_key)
+    if isinstance(current_profile, dict):
+        for field in PROJECT_BOUND_FIELDS:
+            if field in current_profile:
+                config_data[field] = current_profile[field]
     _save_ops_config(config_data)
     return {"ok": True, "config": config_data}
 

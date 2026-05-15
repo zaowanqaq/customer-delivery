@@ -28,6 +28,7 @@ from playwright.async_api import (
     BrowserType,
     Page,
     Playwright,
+    TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
 from tenacity import RetryError
@@ -60,6 +61,46 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+
+    async def _sleep_jitter(self, jitter_range: tuple[float, float], reason: str) -> None:
+        min_sec, max_sec = jitter_range
+        delay = random.uniform(float(min_sec), float(max_sec))
+        utils.logger.info(f"[XiaoHongShuCrawler] Sleeping {delay:.2f}s {reason}")
+        await asyncio.sleep(delay)
+
+    def _detail_comment_parallel_allowed(self) -> bool:
+        # If publish-time filtering is active, fetching comments before detail filtering
+        # would write comments for notes that may later be discarded.
+        return (
+            bool(getattr(config, "ENABLE_DETAIL_COMMENT_PARALLEL", True))
+            and bool(getattr(config, "ENABLE_GET_COMMENTS", True))
+            and getattr(config, "XHS_SEARCH_PUBLISH_TIME", "不限") in ("", "不限")
+        )
+
+    async def _open_index_page(self) -> None:
+        try:
+            await self.context_page.goto(
+                self.index_url,
+                wait_until="domcontentloaded",
+                timeout=60_000,
+            )
+        except PlaywrightTimeoutError as ex:
+            current_url = self.context_page.url or ""
+            if current_url.startswith(self.index_url):
+                utils.logger.warning(
+                    "[XiaoHongShuCrawler.start] Index page navigation timed out after DOM load wait, "
+                    f"but current_url={current_url}; continue with cookie/API checks. error={ex}"
+                )
+                return
+            utils.logger.warning(
+                "[XiaoHongShuCrawler.start] Index page navigation timed out before reaching XHS, "
+                f"retrying with commit wait. current_url={current_url}. error={ex}"
+            )
+            await self.context_page.goto(
+                self.index_url,
+                wait_until="commit",
+                timeout=15_000,
+            )
 
     def _resolve_search_sort(self) -> SearchSortType:
         """Resolve xhs sort strategy from config (mcp-compatible labels first)."""
@@ -148,7 +189,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 await self.browser_context.add_init_script(path="libs/stealth.min.js")
 
             self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+            await self._open_index_page()
 
             # Create a client to interact with the Xiaohongshu website.
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
@@ -276,17 +317,25 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     has_more = bool(notes_res.get("has_more", False))
                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+                    page_items = [
+                        post_item
+                        for post_item in items
+                        if post_item.get("model_type") not in ("rec_query", "hot_query")
+                    ][: max_notes_count - kept_notes]
                     task_list = [
-                        self.get_note_detail_async_task(
+                        self.process_search_note(
                             note_id=post_item.get("id"),
                             xsec_source=post_item.get("xsec_source"),
                             xsec_token=post_item.get("xsec_token"),
                             semaphore=semaphore,
-                        ) for post_item in items if post_item.get("model_type") not in ("rec_query", "hot_query")
+                        ) for post_item in page_items
                     ]
-                    note_details = await asyncio.gather(*task_list)
+                    note_details = await asyncio.gather(*task_list, return_exceptions=True)
                     filtered_out = 0
                     for note_detail in note_details:
+                        if isinstance(note_detail, Exception):
+                            utils.logger.error(f"[XiaoHongShuCrawler.search] process note task error: {note_detail}")
+                            continue
                         if note_detail:
                             if not self._match_publish_time_filter(note_detail):
                                 filtered_out += 1
@@ -306,7 +355,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         f"kept_notes={kept_notes} page_kept={len(note_ids)} page_filtered={filtered_out} has_more={has_more}"
                     )
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Note details: {note_details}")
-                    await self.batch_get_note_comments(note_ids, xsec_tokens)
+                    if not self._detail_comment_parallel_allowed():
+                        await self.batch_get_note_comments(note_ids, xsec_tokens)
                     if kept_notes >= max_notes_count:
                         utils.logger.info(f"[XiaoHongShuCrawler.search] Reached max_notes_count={max_notes_count}, stop current keyword")
                         break
@@ -314,9 +364,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         utils.logger.info("[XiaoHongShuCrawler.search] No more content from API, stop current keyword")
                         break
 
-                    # Sleep after each page navigation
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                    await self._sleep_jitter(config.PAGE_GAP_JITTER, f"after page {page-1}")
                 except DataFetchError:
                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
                     break
@@ -343,8 +391,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 utils.logger.error(f"[XiaoHongShuCrawler.get_creators_and_notes] Failed to parse creator URL: {e}")
                 continue
 
-            # Use fixed crawling interval
-            crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
+            crawl_interval = random.uniform(*config.PAGE_GAP_JITTER)
             # Get all note information of the creator
             all_notes_list = await self.xhs_client.get_all_notes_by_creator(
                 user_id=user_id,
@@ -385,6 +432,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         Note: Must specify note_id, xsec_source, xsec_token
         """
         get_note_detail_task_list = []
+        semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         for full_note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
             note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
             utils.logger.info(f"[XiaoHongShuCrawler.get_specified_notes] Parse note url info: {note_url_info}")
@@ -392,7 +440,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 note_id=note_url_info.note_id,
                 xsec_source=note_url_info.xsec_source,
                 xsec_token=note_url_info.xsec_token,
-                semaphore=asyncio.Semaphore(config.MAX_CONCURRENCY_NUM),
+                semaphore=semaphore,
             )
             get_note_detail_task_list.append(crawler_task)
 
@@ -442,9 +490,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                 note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
 
-                # Sleep after fetching note detail
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[get_note_detail_async_task] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note {note_id}")
+                await self._sleep_jitter(config.SLEEP_JITTER, f"after fetching note {note_id}")
 
                 return note_detail
 
@@ -457,6 +503,74 @@ class XiaoHongShuCrawler(AbstractCrawler):
             except KeyError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_async_task] have not fund note detail note_id:{note_id}, err: {ex}")
                 return None
+
+    async def process_search_note(
+        self,
+        note_id: str,
+        xsec_source: str,
+        xsec_token: str,
+        semaphore: asyncio.Semaphore,
+    ) -> Optional[Dict]:
+        """Process one search result note under page-level concurrency control."""
+        async with semaphore:
+            try:
+                if self._detail_comment_parallel_allowed():
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.process_search_note] Begin detail/comment parallel, note_id: {note_id}"
+                    )
+                    detail_result, comment_result = await asyncio.gather(
+                        self.get_note_detail(note_id, xsec_source, xsec_token),
+                        self.get_comments(note_id, xsec_token),
+                        return_exceptions=True,
+                    )
+                    if isinstance(comment_result, Exception):
+                        utils.logger.error(
+                            f"[XiaoHongShuCrawler.process_search_note] Get comments error note_id={note_id}: {comment_result}"
+                        )
+                    if isinstance(detail_result, Exception):
+                        utils.logger.error(
+                            f"[XiaoHongShuCrawler.process_search_note] Get detail error note_id={note_id}: {detail_result}"
+                        )
+                        return None
+                    return detail_result
+
+                return await self.get_note_detail(note_id, xsec_source, xsec_token)
+            finally:
+                await self._sleep_jitter(config.SLEEP_JITTER, f"after processing note {note_id}")
+
+    async def get_note_detail(
+        self,
+        note_id: str,
+        xsec_source: str,
+        xsec_token: str,
+    ) -> Optional[Dict]:
+        note_detail = None
+        utils.logger.info(f"[get_note_detail] Begin get note detail, note_id: {note_id}")
+        try:
+            try:
+                note_detail = await self.xhs_client.get_note_by_id(note_id, xsec_source, xsec_token)
+            except RetryError:
+                pass
+
+            if not note_detail:
+                note_detail = await self.xhs_client.get_note_by_id_from_html(
+                    note_id, xsec_source, xsec_token, enable_cookie=True
+                )
+                if not note_detail:
+                    raise Exception(f"[get_note_detail] Failed to get note detail, Id: {note_id}")
+
+            note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
+            return note_detail
+
+        except NoteNotFoundError as ex:
+            utils.logger.warning(f"[XiaoHongShuCrawler.get_note_detail] Note not found: {note_id}, {ex}")
+            return None
+        except DataFetchError as ex:
+            utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail] Get note detail error: {ex}")
+            return None
+        except KeyError as ex:
+            utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail] have not fund note detail note_id:{note_id}, err: {ex}")
+            return None
 
     async def batch_get_note_comments(self, note_list: List[str], xsec_tokens: List[str]):
         """Batch get note comments"""
@@ -473,25 +587,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 name=note_id,
             )
             task_list.append(task)
-        await asyncio.gather(*task_list)
+        results = await asyncio.gather(*task_list, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                utils.logger.error(f"[XiaoHongShuCrawler.batch_get_note_comments] Get comments task error: {result}")
 
-    async def get_comments(self, note_id: str, xsec_token: str, semaphore: asyncio.Semaphore):
+    async def get_comments(self, note_id: str, xsec_token: str, semaphore: Optional[asyncio.Semaphore] = None):
         """Get note comments with keyword filtering and quantity limitation"""
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(1)
         async with semaphore:
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Begin get note id comments {note_id}")
-            # Use fixed crawling interval
-            crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
             await self.xhs_client.get_note_all_comments(
                 note_id=note_id,
                 xsec_token=xsec_token,
-                crawl_interval=crawl_interval,
+                crawl_interval=0,
                 callback=xhs_store.batch_update_xhs_note_comments,
                 max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
             )
-
-            # Sleep after fetching comments
-            await asyncio.sleep(crawl_interval)
-            utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for note {note_id}")
 
     async def create_xhs_client(self, httpx_proxy: Optional[str]) -> XiaoHongShuClient:
         """Create Xiaohongshu client"""
@@ -594,6 +707,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def close(self):
         """Close browser context"""
+        if getattr(self, "xhs_client", None):
+            await self.xhs_client.close()
         # Special handling if using CDP mode
         if self.cdp_manager:
             await self.cdp_manager.cleanup()

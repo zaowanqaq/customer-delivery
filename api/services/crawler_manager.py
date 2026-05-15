@@ -251,6 +251,7 @@ class CrawlerManager:
 
         cmd.extend(["--get_comment", "true" if config.enable_comments else "false"])
         cmd.extend(["--get_sub_comment", "true" if config.enable_sub_comments else "false"])
+        cmd.extend(["--get_media", "true" if config.enable_media else "false"])
 
         normalized_cookies = self._normalize_cookie_string(config.cookies or "")
         if normalized_cookies:

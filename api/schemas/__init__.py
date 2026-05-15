@@ -12,6 +12,9 @@ from .crawler import (
     ScenarioBootstrapRequest,
     CollaborationMonitorStartRequest,
     CollaborationMonitorStopRequest,
+    HuitunLoginRequest,
+    HuitunScreenshotRequest,
+    HuitunExportAnchorListRequest,
     CrawlerStatusResponse,
     LogEntry,
 )
@@ -29,6 +32,9 @@ __all__ = [
     "ScenarioBootstrapRequest",
     "CollaborationMonitorStartRequest",
     "CollaborationMonitorStopRequest",
+    "HuitunLoginRequest",
+    "HuitunScreenshotRequest",
+    "HuitunExportAnchorListRequest",
     "CrawlerStatusResponse",
     "LogEntry",
 ]

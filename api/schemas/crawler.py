@@ -53,6 +53,7 @@ class CrawlerStartRequest(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
+    enable_media: bool = False
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
@@ -102,6 +103,7 @@ class SampleCreatorStartRequest(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
+    enable_media: bool = False
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
@@ -119,6 +121,7 @@ class ScenarioTableSetupRequest(BaseModel):
 class ScenarioBootstrapRequest(BaseModel):
     """Create a new project base and bootstrap root/business tables."""
     project_name: str
+    template_base_token: str = ""
     root_table_name: str = "项目主表"
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
@@ -142,6 +145,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     enable_comments: bool = True
     enable_sub_comments: bool = False
+    enable_media: bool = False
     cookies: str = ""
     headless: bool = False
     sync_limit: int = 20
@@ -151,6 +155,25 @@ class CollaborationMonitorStartRequest(BaseModel):
 class CollaborationMonitorStopRequest(BaseModel):
     """Stop collaboration monitor sync job."""
     job_id: str
+
+
+class HuitunLoginRequest(BaseModel):
+    """Open Huitun browser and wait for login state to become valid."""
+    timeout_ms: int = 300000
+    keep_open: bool = False
+
+
+class HuitunScreenshotRequest(BaseModel):
+    """Capture Huitun page status and screenshot."""
+    url: str = "https://xhs.huitun.com/#/anchor/anchor_list"
+
+
+class HuitunExportAnchorListRequest(BaseModel):
+    """Export Huitun anchor ranking list through browser UI."""
+    rank_tab: str = "涨粉榜"
+    category: str = ""
+    screenshot_before_export: bool = True
+    keep_open: bool = False
 
 
 class CrawlerStatusResponse(BaseModel):
