@@ -115,6 +115,7 @@ class ScenarioTableSetupRequest(BaseModel):
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
     note_recreation_table_name: str = "笔记二创表"
+    comments_table_name: str = "评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
 
 
@@ -126,6 +127,7 @@ class ScenarioBootstrapRequest(BaseModel):
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
     note_recreation_table_name: str = "笔记二创表"
+    comments_table_name: str = "评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
     folder_token: str = ""
     time_zone: str = "Asia/Shanghai"

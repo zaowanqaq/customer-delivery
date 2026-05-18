@@ -325,6 +325,27 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
     ]
 
 
+def _comments_fields() -> List[Dict[str, Any]]:
+    return [
+        _text_field("项目名"),
+        _text_field("关键词"),
+        _text_field("笔记ID"),
+        _text_field("评论ID"),
+        _text_field("评论内容"),
+        _text_field("评论用户"),
+        _text_field("评论用户ID"),
+        _datetime_field("评论时间"),
+        _text_field("IP属地"),
+        _number_field("点赞数"),
+        _number_field("二级评论数"),
+        _text_field("父评论ID"),
+        _text_field("评论图片"),
+        _text_field("头像"),
+        _text_field("stage"),
+        _datetime_field("采集时间"),
+    ]
+
+
 def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     project_root = Path(__file__).resolve().parents[2]
     suffix = "contents" if data_type == "notes" else "comments"
@@ -452,6 +473,16 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "博主粉丝数": ["author_fans", "author_fans_count", "fans_count"],
         "首发时间": ["time", "create_time", "发布时间"],
         "采集时间": ["last_update_time", "crawl_time", "抓取时间"],
+        "评论ID": ["comment_id"],
+        "评论内容": ["content"],
+        "评论用户": ["comment_user_nickname", "nickname"],
+        "评论用户ID": ["comment_user_id", "user_id"],
+        "评论时间": ["create_time"],
+        "IP属地": ["ip_location"],
+        "二级评论数": ["sub_comment_count"],
+        "父评论ID": ["parent_comment_id"],
+        "评论图片": ["pictures"],
+        "头像": ["avatar"],
         "author_nickname": ["nickname"], "author_user_id": ["user_id"], "comment_user_id": ["user_id"], "comment_user_nickname": ["nickname"],
     }
     numeric_fields = {
@@ -459,7 +490,7 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "点赞量", "收藏量", "评论量", "分享量",
         "点赞数", "收藏数", "评论数", "分享数",
         "点赞", "收藏", "评论", "分享", "阅读量", "互动总和", "发布日期",
-        "博主粉丝数",
+        "博主粉丝数", "二级评论数",
     }
     values: List[Any] = []
     for field_name in table_fields:
@@ -799,6 +830,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     account_filter_fields = [_text_field("项目名"), _text_field("搜索关键词"), _text_field("账号"), _text_field("账号ID"), _text_field("账号主页"), _text_field("笔记标题"), _text_field("笔记链接"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _text_field("语义标签"), _text_field("推荐理由")]
     viral_monitor_fields = _viral_monitor_fields()
     note_recreation_fields = _viral_monitor_fields()
+    comments_fields = _comments_fields()
     collaboration_fields = [_text_field("项目名"), _text_field("监控周期"), _text_field("搜索关键词"), _text_field("笔记标题"), _text_field("笔记链接"), _text_field("博主名"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _number_field("分享量"), _datetime_field("抓取时间")]
     existing = await _list_base_tables(request.base_token)
     existing_map = {t["name"]: t["id"] for t in existing}
@@ -814,6 +846,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
         await create_or_reuse(request.account_filter_table_name, account_filter_fields),
         await create_or_reuse(request.viral_monitor_table_name, viral_monitor_fields),
         await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
+        await create_or_reuse(request.comments_table_name, comments_fields),
         await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
     ]
     return {"status": "ok", "tables": tables}
@@ -840,18 +873,23 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             request.time_zone.strip() or "Asia/Shanghai",
         )
         base_token = base_info["base_token"]
-        copied_tables = await _list_base_tables(base_token)
-        tables = [
-            {"table_name": item["name"], "table_id": item["id"], "copied": True}
-            for item in copied_tables
-        ]
+        scenario = await setup_scenario_tables(
+            ScenarioTableSetupRequest(
+                base_token=base_token,
+                account_filter_table_name=request.account_filter_table_name,
+                viral_monitor_table_name=request.viral_monitor_table_name,
+                note_recreation_table_name=request.note_recreation_table_name,
+                comments_table_name=request.comments_table_name,
+                collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+            )
+        )
         return {
             "status": "ok",
             "project_name": request.project_name.strip(),
             "base_token": base_token,
             "template_base_token": base_info.get("template_base_token", ""),
             "root_table": None,
-            "tables": tables,
+            "tables": scenario.get("tables", []),
             "base_raw": base_info.get("raw", {}),
         }
     base_info = await _create_base(request.project_name.strip(), request.folder_token.strip(), request.time_zone.strip() or "Asia/Shanghai")
@@ -889,6 +927,9 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         if request.project_name:
             obj["项目名"] = request.project_name
             obj["所属项目"] = request.project_name
+        if request.source_keyword and not (obj.get("source_keyword") or obj.get("关键词")):
+            obj["source_keyword"] = request.source_keyword
+            obj["关键词"] = request.source_keyword
         rows.append(_row_to_table_values(obj, table_fields, request.data_type))
     if request.data_type == "notes":
         liked_idx = table_fields.index("liked_count") if "liked_count" in table_fields else -1

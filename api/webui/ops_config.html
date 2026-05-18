@@ -387,6 +387,7 @@
       <input id="account_filter_table_name" class="v1-hidden" value="账号筛选表">
       <input id="viral_monitor_table_name" class="v1-hidden" value="爆款监控表">
       <input id="note_recreation_table_name" class="v1-hidden" value="笔记二创表">
+      <input id="comments_table_name" class="v1-hidden" value="评论表">
       <input id="collaboration_monitor_table_name" class="v1-hidden" value="合作笔记监控表">
       <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
@@ -669,7 +670,7 @@
       <div class="btns">
         <button class="primary" onclick="syncSampleToAccountFilter()">同步步骤2结果 -> 账号筛选表</button>
         <button class="ghost" onclick="syncViralToMonitor()">同步步骤3结果 -> 爆款监控表</button>
-        <button class="ghost" onclick="syncCommentsToBase()">同步 comments（可选）</button>
+        <button class="ghost" onclick="syncCommentsToBase()">导入评论表</button>
       </div>
     </section>
         </div>
@@ -768,7 +769,7 @@
 
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
-      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "collaboration_monitor_table_name",
+      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name",
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
@@ -1155,6 +1156,16 @@
       return (tables || []).find((t) => String(t.name || "").trim() === name) || null;
     }
 
+    async function resolveTableName(baseToken, tableId) {
+      try {
+        const tables = await fetchBaseTables(baseToken);
+        const meta = findTableMeta(tables, tableId);
+        return meta && meta.name ? meta.name : "";
+      } catch (e) {
+        return "";
+      }
+    }
+
     function renderTableValue(baseToken, tableId, fallbackName = "") {
       if (!tableId) return `<span>未配置</span>`;
       const href = tableUrl(baseToken, tableId);
@@ -1330,6 +1341,7 @@
         account_filter_table_name: document.getElementById("account_filter_table_name").value.trim(),
         viral_monitor_table_name: document.getElementById("viral_monitor_table_name").value.trim(),
         note_recreation_table_name: document.getElementById("note_recreation_table_name").value.trim(),
+        comments_table_name: document.getElementById("comments_table_name").value.trim(),
         collaboration_monitor_table_name: document.getElementById("collaboration_monitor_table_name").value.trim(),
         account_filter_table_id: document.getElementById("account_filter_table_id").value.trim(),
         sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
@@ -1473,6 +1485,7 @@
           account_filter_table_name: payload.account_filter_table_name,
           viral_monitor_table_name: payload.viral_monitor_table_name,
           note_recreation_table_name: payload.note_recreation_table_name,
+          comments_table_name: payload.comments_table_name,
           collaboration_monitor_table_name: payload.collaboration_monitor_table_name
         };
         const res = await fetch("/api/crawler/bootstrap-project", {
@@ -1495,6 +1508,7 @@
           if (tableName.includes("账号筛选")) document.getElementById("account_filter_table_id").value = tableId;
           if (tableName.includes("爆款")) document.getElementById("sync_notes_table_id").value = tableId;
           if (tableName.includes("二创")) document.getElementById("note_recreation_table_id").value = tableId;
+          if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
           if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
@@ -1684,7 +1698,12 @@
       const result = await res.json();
       log(`${sceneLabel} 同步结果: ` + JSON.stringify(result));
       const targetUrl = result.target_url || tableUrl(body.base_token, body.table_id);
-      if (targetUrl) log(`${sceneLabel} 实际写入目标: ${targetUrl}`);
+      if (targetUrl) {
+        const tableName = await resolveTableName(body.base_token, body.table_id);
+        const tableLabel = tableName ? `${tableName} (${body.table_id})` : body.table_id;
+        const projectLabel = body.project_name ? `项目「${body.project_name}」 -> ` : "";
+        log(`${sceneLabel} 实际写入目标: ${projectLabel}${tableLabel} ${targetUrl}`);
+      }
     }
 
     async function syncSampleToAccountFilter() { await syncToBaseByScene("sample"); }
