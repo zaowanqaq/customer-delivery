@@ -15,6 +15,9 @@ from .crawler import (
     HuitunLoginRequest,
     HuitunScreenshotRequest,
     HuitunExportAnchorListRequest,
+    PgyKolRunRequest,
+    PgyKolSyncRequest,
+    PgyLoginRequest,
     CrawlerStatusResponse,
     LogEntry,
 )
@@ -35,6 +38,9 @@ __all__ = [
     "HuitunLoginRequest",
     "HuitunScreenshotRequest",
     "HuitunExportAnchorListRequest",
+    "PgyKolRunRequest",
+    "PgyKolSyncRequest",
+    "PgyLoginRequest",
     "CrawlerStatusResponse",
     "LogEntry",
 ]

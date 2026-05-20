@@ -34,6 +34,7 @@
   "note_recreation_table_name": "笔记二创表",
   "comments_table_name": "评论表",
   "collaboration_monitor_table_name": "合作笔记监控表",
+  "creator_selection_table_name": "达人智能圈选表",
   "collab_project_name": "",
   "collab_source_keyword": "",
   "collab_creator_ids": "",
@@ -42,6 +43,10 @@
   "collab_table_id": "tblwWcVMQxnzdFM6",
   "collab_interval_hours": 4,
   "collab_sync_limit": 20,
+  "pgy_nickname": "范冰冰",
+  "pgy_red_id": "",
+  "pgy_table_id": "tblIEDxxxmhlHXv4",
+  "pgy_sync_after_run": "true",
   "project_name": "徒步",
   "current_project_key": "徒步",
   "project_profiles": {
@@ -143,7 +148,9 @@
       "collab_creator_ids": "",
       "collab_notes_per_creator": 20,
       "collab_interval_hours": 4,
-      "collab_sync_limit": 20
+      "collab_sync_limit": 20,
+      "pgy_table_id": "tblIEDxxxmhlHXv4",
+      "creator_selection_table_name": "达人智能圈选表"
     }
   }
 }

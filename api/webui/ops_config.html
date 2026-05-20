@@ -141,6 +141,12 @@
     .huitun-result { background: #fff8f0; border: 1px solid #e7d8ca; border-radius: 8px; padding: 16px; min-height: 214px; }
     .huitun-result h3 { margin: 0 0 10px; font-size: 15px; color: var(--ink); }
     .huitun-result pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: #4b4037; font-size: 12px; line-height: 1.6; font-family: 'JetBrains Mono', Consolas, monospace; }
+    .pgy-result { display: grid; gap: 10px; color: #4b4037; font-size: 13px; line-height: 1.6; }
+    .pgy-result-row strong { color: var(--ink); }
+    .pgy-shot { width: 100%; max-height: 420px; object-fit: contain; border: 1px solid #e7d8ca; border-radius: 8px; background: #fff; }
+    .pgy-progress { display: grid; gap: 6px; margin-top: 4px; }
+    .pgy-progress div { display: flex; align-items: center; gap: 8px; }
+    .pgy-progress span { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
     .huitun-path { display: inline-flex; max-width: 100%; overflow-wrap: anywhere; color: var(--accent-strong); font-weight: 800; }
     .notes-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; gap: 12px; align-items: end; margin-bottom: 16px; min-width: 0; }
     .notes-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -387,13 +393,15 @@
       <input id="account_filter_table_name" class="v1-hidden" value="账号筛选表">
       <input id="viral_monitor_table_name" class="v1-hidden" value="爆款监控表">
       <input id="note_recreation_table_name" class="v1-hidden" value="笔记二创表">
-      <input id="comments_table_name" class="v1-hidden" value="评论表">
+      <input id="comments_table_name" class="v1-hidden" value="笔记评论表">
       <input id="collaboration_monitor_table_name" class="v1-hidden" value="合作笔记监控表">
+      <input id="creator_selection_table_name" class="v1-hidden" value="达人智能圈选表">
       <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="note_recreation_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="pgy_table_id" class="v1-hidden" placeholder="tbl...">
       <div class="btns">
         <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键初始化项目（复制母版）</button>
       </div>
@@ -497,43 +505,31 @@
         <div id="tab-huitun" class="tab-pane">
           <section class="card">
             <h2>达人智能圈选</h2>
-            <p class="hint">通过灰豚网页 UI 自动进入达人榜单并点击导出，适合把会员后台数据先落到本地，再做相似账号评分和飞书同步。</p>
+            <p class="hint">通过小红书蒲公英搜索达人，保存传播表现、粉丝分析，并抓取“相似博主推荐”前 20 个达人。</p>
             <div class="huitun-console">
               <div>
                 <div class="grid">
                   <div class="row">
-                    <label>榜单类型</label>
-                    <select id="huitun_rank_tab">
-                      <option>涨粉榜</option>
-                      <option>商业推广榜</option>
-                      <option>地域榜</option>
-                      <option>爆文榜</option>
-                    </select>
+                    <label>达人昵称</label>
+                    <input id="pgy_nickname" placeholder="李佳薇">
                   </div>
                   <div class="row">
-                    <label>达人分类</label>
-                    <input id="huitun_category" placeholder="美妆">
+                    <label>小红书号</label>
+                    <input id="pgy_red_id" placeholder="49674066162">
                   </div>
                   <div class="row">
-                    <label>登录等待时长</label>
-                    <select id="huitun_login_timeout">
-                      <option value="300000">5分钟</option>
-                      <option value="600000">10分钟</option>
-                      <option value="120000">2分钟</option>
-                    </select>
-                  </div>
-                  <div class="row">
-                    <label>导出前截图</label>
-                    <select id="huitun_screenshot_before_export">
-                      <option value="true">true</option>
-                      <option value="false">false</option>
+                    <label>运行后自动同步</label>
+                    <select id="pgy_sync_after_run">
+                      <option value="false">否</option>
+                      <option value="true">是</option>
                     </select>
                   </div>
                 </div>
                 <div class="btns">
-                  <button class="ghost" onclick="huitunLogin()">打开灰豚登录/刷新登录态</button>
-                  <button class="ghost" onclick="huitunCheck()">验证页面状态</button>
-                  <button class="primary" onclick="huitunExportAnchorList()">导出达人榜单</button>
+                  <button class="ghost" onclick="pgyLogin()">打开蒲公英登录窗口</button>
+                  <button class="ghost" onclick="pgyCheckStatus()">验证蒲公英登录态</button>
+                  <button class="primary" onclick="pgyRunKol()">运行达人分析</button>
+                  <button class="ghost" onclick="pgySyncKol()">同步最近结果到多维表</button>
                 </div>
               </div>
               <div class="huitun-result">
@@ -769,7 +765,7 @@
 
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
-      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name",
+      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "creator_selection_table_name",
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
@@ -778,6 +774,7 @@
       "xhs_search_scope", "xhs_location", "sync_limit", "sync_file_path",
       "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_notes_per_creator",
       "collab_interval_hours", "collab_sync_limit",
+      "pgy_nickname", "pgy_red_id", "pgy_table_id", "pgy_sync_after_run",
       "current_project_key", "project_profiles"
     ];
     const projectBoundFields = [
@@ -787,7 +784,7 @@
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
       "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator",
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
-      "collab_sync_limit"
+      "collab_sync_limit", "pgy_nickname", "pgy_red_id", "pgy_table_id", "pgy_sync_after_run"
     ];
 
     let latestCollabJobId = "";
@@ -1212,6 +1209,16 @@
       const recreationMeta = findTableMeta(tables, payload.note_recreation_table_id);
       const commentsMeta = findTableMeta(tables, payload.sync_comments_table_id);
       const collabMeta = findTableMeta(tables, payload.collab_table_id);
+      let pgyTableId = payload.pgy_table_id || "";
+      if (!pgyTableId) {
+        const matched = findTableMetaByName(tables, payload.creator_selection_table_name || "达人智能圈选表");
+        if (matched && matched.id) {
+          pgyTableId = String(matched.id);
+          const pgyIdInput = document.getElementById("pgy_table_id");
+          if (pgyIdInput) pgyIdInput.value = pgyTableId;
+        }
+      }
+      const pgyMeta = findTableMeta(tables, pgyTableId);
       const baseHref = baseUrl(baseToken);
 
       view.innerHTML = `
@@ -1220,6 +1227,7 @@
         <div class="meta-row"><span class="meta-key">步骤2样本账号 -> 账号筛选表</span><span class="meta-val">${renderTableValue(baseToken, accountTableId, accountMeta && accountMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 爆款监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_notes_table_id, notesMeta && notesMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">笔记二创表</span><span class="meta-val">${renderTableValue(baseToken, payload.note_recreation_table_id, recreationMeta && recreationMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤4达人智能圈选 -> 达人智能圈选表</span><span class="meta-val">${renderTableValue(baseToken, pgyTableId, pgyMeta && pgyMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">comments 同步目标（可选）</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">合作监控目标</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
       `;
@@ -1231,7 +1239,8 @@
       const accountLabel = accountMeta && accountMeta.name ? accountMeta.name : (accountTableId || "未配置");
       const noteLabel = notesMeta && notesMeta.name ? notesMeta.name : (payload.sync_notes_table_id || "未配置");
       const commentLabel = commentsMeta && commentsMeta.name ? commentsMeta.name : (payload.sync_comments_table_id || "未配置");
-      syncTargetHint.textContent = `当前写入目标：步骤2 -> ${accountLabel}；步骤3 -> ${noteLabel}；comments -> ${commentLabel}`;
+      const pgyLabel = pgyMeta && pgyMeta.name ? pgyMeta.name : (pgyTableId || "未配置");
+      syncTargetHint.textContent = `当前写入目标：步骤2 -> ${accountLabel}；步骤3 -> ${noteLabel}；步骤4 -> ${pgyLabel}；comments -> ${commentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -1244,6 +1253,7 @@
         note_recreation_table_id: payload.note_recreation_table_id,
         sync_comments_table_id: payload.sync_comments_table_id,
         collab_table_id: payload.collab_table_id,
+        pgy_table_id: payload.pgy_table_id,
         keywords: payload.keywords,
         xhs_sort_by: payload.xhs_sort_by,
         xhs_note_type: payload.xhs_note_type,
@@ -1374,6 +1384,10 @@
         collab_notes_per_creator: Number(document.getElementById("collab_notes_per_creator").value || 20),
         collab_interval_hours: Number(document.getElementById("collab_interval_hours").value || 4),
         collab_sync_limit: Number(document.getElementById("collab_sync_limit").value || 20),
+        pgy_nickname: document.getElementById("pgy_nickname").value.trim(),
+        pgy_red_id: document.getElementById("pgy_red_id").value.trim(),
+        pgy_table_id: document.getElementById("pgy_table_id").value.trim(),
+        pgy_sync_after_run: document.getElementById("pgy_sync_after_run").value,
         current_project_key: currentProjectKey,
         project_profiles: projectProfiles,
         rule_base_token: "",
@@ -1486,7 +1500,8 @@
           viral_monitor_table_name: payload.viral_monitor_table_name,
           note_recreation_table_name: payload.note_recreation_table_name,
           comments_table_name: payload.comments_table_name,
-          collaboration_monitor_table_name: payload.collaboration_monitor_table_name
+          collaboration_monitor_table_name: payload.collaboration_monitor_table_name,
+          creator_selection_table_name: payload.creator_selection_table_name || "达人智能圈选表"
         };
         const res = await fetch("/api/crawler/bootstrap-project", {
           method: "POST",
@@ -1510,6 +1525,7 @@
           if (tableName.includes("二创")) document.getElementById("note_recreation_table_id").value = tableId;
           if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
           if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
+          if (tableName.includes("达人智能圈选")) document.getElementById("pgy_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
         const defaultKey = payload.project_name;
@@ -1557,20 +1573,89 @@
       log("样本账号抓取启动结果: " + JSON.stringify(await res.json()));
     }
 
+    let latestPgyOutput = null;
+    let pgyProgressTimer = null;
+
+    function pgyStatusLabel(status) {
+      const map = {
+        running: "运行中",
+        logged_in_or_public: "已登录，可继续运行达人分析",
+        login_window_opened: "登录窗口已打开，请在浏览器里完成登录",
+        login_required: "未登录或登录已失效，请先完成蒲公英登录",
+        success: "同步完成",
+        error: "执行失败"
+      };
+      return map[status] || status || "未知";
+    }
+
+    function pgyFileUrl(path) {
+      return `/api/crawler/pgy/file?path=${encodeURIComponent(path)}`;
+    }
+
+    function pgyProgressHtml(progress) {
+      if (!Array.isArray(progress) || !progress.length) return "";
+      const items = progress.map((item) => {
+        const message = typeof item === "string" ? item : item.message;
+        return `<div><span></span>${escapeHtml(message || "")}</div>`;
+      }).join("");
+      return `<div class="pgy-progress">${items}</div>`;
+    }
+
+    function stopPgyProgress() {
+      if (!pgyProgressTimer) return;
+      clearInterval(pgyProgressTimer);
+      pgyProgressTimer = null;
+    }
+
+    function startPgyProgress(nickname) {
+      stopPgyProgress();
+      const stages = [
+        "打开蒲公英找博主页面",
+        "验证登录态",
+        "切换到搜昵称入口",
+        `搜索达人：${nickname}`,
+        "读取相似博主推荐",
+        "进入达人详情页",
+        "读取传播表现和粉丝分析",
+        "保存本地文件"
+      ];
+      const active = [];
+      let index = 0;
+      const tick = () => {
+        if (index < stages.length) active.push({ message: stages[index++] });
+        renderHuitunResult({ status: "running", progress: active });
+      };
+      tick();
+      pgyProgressTimer = setInterval(tick, 4500);
+    }
+
     function renderHuitunResult(data) {
       const el = document.getElementById("huitun_result");
       if (!el) return;
-      const lines = [];
-      lines.push(`状态：${data.status || "unknown"}`);
-      if (data.url) lines.push(`页面：${data.url}`);
-      if (data.download) lines.push(`导出文件：${data.download}`);
-      if (data.screenshot) lines.push(`截图：${data.screenshot}`);
-      if (data.user_data_dir) lines.push(`登录态目录：${data.user_data_dir}`);
-      if (data.error) lines.push(`错误：${data.error}`);
-      if (data.text_preview) lines.push(`页面摘要：\n${data.text_preview}`);
-      el.textContent = lines.join("\n\n");
-      if (data.download) log("灰豚导出成功: " + data.download);
-      else log("灰豚执行结果: " + JSON.stringify(data));
+      const rows = [];
+      rows.push(`<div class="pgy-result-row"><strong>状态：</strong>${escapeHtml(pgyStatusLabel(data.status))}</div>`);
+      if (data.nickname) rows.push(`<div class="pgy-result-row"><strong>达人昵称：</strong>${escapeHtml(data.nickname)}</div>`);
+      if (data.red_id) rows.push(`<div class="pgy-result-row"><strong>小红书号：</strong>${escapeHtml(data.red_id)}</div>`);
+      if (data.outputs && data.outputs.output_dir) rows.push(`<div class="pgy-result-row"><strong>输出目录：</strong>${escapeHtml(data.outputs.output_dir)}</div>`);
+      if (data.outputs && data.outputs.summary) rows.push(`<div class="pgy-result-row"><strong>汇总文件：</strong>${escapeHtml(data.outputs.summary)}</div>`);
+      if (data.outputs && data.outputs.similar_csv) rows.push(`<div class="pgy-result-row"><strong>相似博主 CSV：</strong>${escapeHtml(data.outputs.similar_csv)}</div>`);
+      if (data.outputs && data.outputs.similar_count !== undefined) rows.push(`<div class="pgy-result-row"><strong>相似博主数量：</strong>${escapeHtml(data.outputs.similar_count)}</div>`);
+      if (data.sync && data.sync.created !== undefined) rows.push(`<div class="pgy-result-row"><strong>多维表同步：</strong>新增 ${escapeHtml(data.sync.created)} 行</div>`);
+      if (data.sync && data.sync.target_url) rows.push(`<div class="pgy-result-row"><strong>多维表：</strong><a href="${escapeHtml(data.sync.target_url)}" target="_blank" rel="noreferrer">打开</a></div>`);
+      if (data.user_data_dir) rows.push(`<div class="pgy-result-row"><strong>登录信息保存位置：</strong>${escapeHtml(data.user_data_dir)}</div>`);
+      if (data.error) rows.push(`<div class="pgy-result-row"><strong>错误：</strong>${escapeHtml(data.error)}</div>`);
+      if (data.detail) rows.push(`<div class="pgy-result-row"><strong>错误：</strong>${escapeHtml(data.detail)}</div>`);
+      if (data.progress) rows.push(pgyProgressHtml(data.progress));
+      const screenshot = data.screenshot || (data.outputs && data.outputs.screenshot);
+      if (screenshot) rows.push(`<img class="pgy-shot" src="${escapeHtml(pgyFileUrl(screenshot))}" alt="蒲公英截图">`);
+      el.innerHTML = `<div class="pgy-result">${rows.join("")}</div>`;
+      if (data.outputs) latestPgyOutput = data.outputs;
+      const logParts = [`状态=${pgyStatusLabel(data.status)}`];
+      if (data.nickname) logParts.push(`达人=${data.nickname}`);
+      if (data.outputs && data.outputs.output_dir) logParts.push(`输出=${data.outputs.output_dir}`);
+      if (data.outputs && data.outputs.similar_count !== undefined) logParts.push(`相似博主=${data.outputs.similar_count}`);
+      if (data.detail || data.error) logParts.push(`错误=${data.detail || data.error}`);
+      log("蒲公英执行结果: " + logParts.join("；"));
     }
 
     async function postHuitun(path, body) {
@@ -1587,39 +1672,91 @@
       return data;
     }
 
-    async function huitunLogin() {
-      const timeoutMs = Number(document.getElementById("huitun_login_timeout").value || 300000);
-      log("正在打开灰豚登录窗口，请在浏览器里完成登录...");
-      try {
-        await postHuitun("/api/crawler/huitun/login", { timeout_ms: timeoutMs, keep_open: false });
-      } catch (e) {
-        log("灰豚登录/刷新失败: " + e.message);
-      }
+    function getPgySyncTarget(payload) {
+      const baseToken = payload.sync_base_token || payload.scenario_base_token || "";
+      const tableId = payload.pgy_table_id || "";
+      return { baseToken, tableId };
     }
 
-    async function huitunCheck() {
-      log("正在验证灰豚页面状态...");
-      try {
-        await postHuitun("/api/crawler/huitun/screenshot", { url: "https://xhs.huitun.com/#/anchor/anchor_list" });
-      } catch (e) {
-        log("灰豚状态验证失败: " + e.message);
+    async function pgyRunKol() {
+      const payload = resolveProjectPayload(getFormData());
+      const nickname = document.getElementById("pgy_nickname").value.trim();
+      const redId = document.getElementById("pgy_red_id").value.trim();
+      const syncAfterRun = document.getElementById("pgy_sync_after_run").value === "true";
+      const { baseToken, tableId } = getPgySyncTarget(payload);
+      if (!nickname && !redId) {
+        log("请填写达人昵称或小红书号");
+        return;
       }
-    }
-
-    async function huitunExportAnchorList() {
-      const rankTab = document.getElementById("huitun_rank_tab").value;
-      const category = document.getElementById("huitun_category").value.trim();
-      const screenshotBeforeExport = document.getElementById("huitun_screenshot_before_export").value === "true";
-      log(`正在导出灰豚达人榜单：${rankTab}${category ? " / " + category : ""}`);
+      if (syncAfterRun && (!baseToken || !tableId)) {
+        log("自动同步需要先在项目管理中初始化/配置达人智能圈选表");
+        return;
+      }
+      await saveConfig();
+      log(`正在运行蒲公英达人分析：${nickname || redId}${redId ? " / " + redId : ""}`);
+      startPgyProgress(nickname || redId);
       try {
-        await postHuitun("/api/crawler/huitun/export-anchor-list", {
-          rank_tab: rankTab,
-          category,
-          screenshot_before_export: screenshotBeforeExport,
+        await postHuitun("/api/crawler/pgy/run-kol", {
+          nickname,
+          red_id: redId,
+          sync_after_run: syncAfterRun,
+          base_token: baseToken,
+          table_id: tableId,
           keep_open: false
         });
       } catch (e) {
-        log("灰豚达人榜单导出失败: " + e.message);
+        log("蒲公英达人分析失败: " + e.message);
+      } finally {
+        stopPgyProgress();
+      }
+    }
+
+    async function pgyLogin() {
+      log("正在打开蒲公英登录窗口，请在 5 分钟内完成登录；窗口会保持打开...");
+      try {
+        await postHuitun("/api/crawler/pgy/login", { keep_open: true, timeout_ms: 300000 });
+      } catch (e) {
+        log("蒲公英登录/刷新失败: " + e.message);
+      }
+    }
+
+    async function pgyCheckStatus() {
+      log("正在验证蒲公英登录态...");
+      try {
+        await postHuitun("/api/crawler/pgy/status", {});
+      } catch (e) {
+        log("蒲公英状态验证失败: " + e.message);
+      }
+    }
+
+    async function pgySyncKol() {
+      const payload = resolveProjectPayload(getFormData());
+      const { baseToken, tableId } = getPgySyncTarget(payload);
+      const nickname = document.getElementById("pgy_nickname").value.trim();
+      const redId = document.getElementById("pgy_red_id").value.trim();
+      if (!baseToken || !tableId) {
+        log("请先在项目管理中初始化/配置达人智能圈选表");
+        return;
+      }
+      if ((!latestPgyOutput || !latestPgyOutput.summary) && !nickname && !redId) {
+        log("请先运行一次蒲公英达人分析，或填写达人昵称/小红书号后再同步最近结果");
+        return;
+      }
+      await saveConfig();
+      const fallbackOutputDir = nickname ? `downloads/pgy/${nickname}` : `downloads/pgy/${redId}`;
+      const syncPayload = {
+        base_token: baseToken,
+        table_id: tableId,
+        summary_path: latestPgyOutput && latestPgyOutput.summary ? latestPgyOutput.summary : "",
+        output_dir: latestPgyOutput && latestPgyOutput.output_dir ? latestPgyOutput.output_dir : fallbackOutputDir
+      };
+      log(`正在同步蒲公英结果到多维表：${syncPayload.output_dir || syncPayload.summary_path}`);
+      try {
+        const data = await postHuitun("/api/crawler/pgy/sync-kol", syncPayload);
+        const outputForRender = latestPgyOutput || { output_dir: syncPayload.output_dir, summary: syncPayload.summary_path || `${syncPayload.output_dir}/summary.json` };
+        renderHuitunResult({ status: data.status, sync: data, outputs: outputForRender });
+      } catch (e) {
+        log("蒲公英同步失败: " + e.message);
       }
     }
 

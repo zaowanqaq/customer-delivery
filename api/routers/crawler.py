@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import csv
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,6 +15,7 @@ from uuid import uuid4
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from ..schemas import (
     CrawlerStartRequest,
@@ -28,12 +30,25 @@ from ..schemas import (
     HuitunExportAnchorListRequest,
     HuitunLoginRequest,
     HuitunScreenshotRequest,
+    PgyKolRunRequest,
+    PgyKolSyncRequest,
+    PgyLoginRequest,
 )
 from ..services import crawler_manager
 import config
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
+PGY_CDP_PORT = 9223
+PGY_CDP_ENDPOINT = f"http://127.0.0.1:{PGY_CDP_PORT}"
+
+
+def _pgy_cdp_available() -> bool:
+    try:
+        with urllib.request.urlopen(f"{PGY_CDP_ENDPOINT}/json/version", timeout=1) as response:
+            return response.status == 200
+    except Exception:
+        return False
 
 
 async def _run_huitun_automation(args: List[str], timeout_sec: int = 180) -> Dict[str, Any]:
@@ -69,6 +84,63 @@ async def _run_huitun_automation(args: List[str], timeout_sec: int = 180) -> Dic
             break
     if not payload:
         payload = {"status": "error", "error": result.stderr or result.stdout or "灰豚自动化没有返回 JSON"}
+    payload["returncode"] = result.returncode
+    if result.stderr:
+        payload["stderr"] = result.stderr[-1200:]
+    if result.returncode != 0 and payload.get("status") != "error":
+        payload["status"] = "error"
+        payload["error"] = payload.get("error") or result.stderr or result.stdout
+    return payload
+
+
+async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[str, Any]:
+    project_root = Path(__file__).resolve().parents[2]
+    script_path = project_root / "tools" / "pgy_automation.py"
+    final_args = list(args)
+    if "--cdp" not in final_args and _pgy_cdp_available():
+        final_args.extend(["--cdp", PGY_CDP_ENDPOINT])
+    cmd = [sys.executable, str(script_path), *final_args]
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+            check=False,
+            cwd=str(project_root),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail=f"蒲公英自动化超时（{timeout_sec}s）") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"蒲公英自动化启动失败: {exc}") from exc
+
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    payload: Dict[str, Any] = {}
+    progress: List[Dict[str, Any]] = []
+    for line in reversed(lines):
+        try:
+            maybe = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(maybe, dict) and maybe.get("event") == "progress":
+            continue
+        if isinstance(maybe, dict):
+            payload = maybe
+            break
+    for line in lines:
+        try:
+            maybe = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(maybe, dict) and maybe.get("event") == "progress":
+            progress.append(maybe)
+    if not payload:
+        payload = {"status": "error", "error": result.stderr or result.stdout or "蒲公英自动化没有返回 JSON"}
+    if progress:
+        payload["progress"] = progress
     payload["returncode"] = result.returncode
     if result.stderr:
         payload["stderr"] = result.stderr[-1200:]
@@ -330,19 +402,45 @@ def _comments_fields() -> List[Dict[str, Any]]:
         _text_field("项目名"),
         _text_field("关键词"),
         _text_field("笔记ID"),
-        _text_field("评论ID"),
         _text_field("评论内容"),
         _text_field("评论用户"),
-        _text_field("评论用户ID"),
         _datetime_field("评论时间"),
         _text_field("IP属地"),
         _number_field("点赞数"),
         _number_field("二级评论数"),
         _text_field("父评论ID"),
         _text_field("评论图片"),
-        _text_field("头像"),
-        _text_field("stage"),
-        _datetime_field("采集时间"),
+    ]
+
+
+def _creator_selection_fields() -> List[Dict[str, Any]]:
+    return [
+        _text_field("类型"),
+        _number_field("排名"),
+        _text_field("达人昵称"),
+        _text_field("小红书号"),
+        _text_field("目标达人昵称"),
+        _text_field("目标小红书号"),
+        _text_field("地区"),
+        _number_field("粉丝数"),
+        _number_field("获赞收藏"),
+        _number_field("商业笔记数"),
+        _number_field("最低报价"),
+        _number_field("图文报价"),
+        _number_field("视频报价"),
+        _text_field("标签"),
+        _number_field("曝光中位数"),
+        _number_field("阅读中位数"),
+        _number_field("互动中位数"),
+        _text_field("互动率"),
+        _number_field("粉丝增量"),
+        _text_field("活跃粉丝占比"),
+        _text_field("阅读粉丝占比"),
+        _text_field("互动粉丝占比"),
+        _text_field("输出目录"),
+        _text_field("截图"),
+        _text_field("详情文本"),
+        _text_field("更新时间"),
     ]
 
 
@@ -485,8 +583,9 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "头像": ["avatar"],
         "author_nickname": ["nickname"], "author_user_id": ["user_id"], "comment_user_id": ["user_id"], "comment_user_nickname": ["nickname"],
     }
+    datetime_fields = {"采集时间", "首发时间", "评论时间", "create_time", "last_modify_ts"}
     numeric_fields = {
-        "liked_count", "collected_count", "comment_count", "share_count", "like_count", "create_time",
+        "liked_count", "collected_count", "comment_count", "share_count", "like_count",
         "点赞量", "收藏量", "评论量", "分享量",
         "点赞数", "收藏数", "评论数", "分享数",
         "点赞", "收藏", "评论", "分享", "阅读量", "互动总和", "发布日期",
@@ -528,6 +627,15 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         if field_name in {"author_homepage_url", "账号主页", "博主主页", "主页链接"} and value == "":
             author_id = row.get("author_user_id") or row.get("user_id") or row.get("账号ID")
             value = f"https://www.xiaohongshu.com/user/profile/{author_id}" if author_id else ""
+        if field_name in datetime_fields and value not in ("", None):
+            try:
+                timestamp = int(float(str(value)))
+                if timestamp > 10_000_000_000:
+                    value = timestamp
+                else:
+                    value = timestamp * 1000
+            except Exception:
+                pass
         if field_name in numeric_fields:
             try:
                 value = int(str(value))
@@ -535,6 +643,191 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                 value = 0
         values.append(value)
     return values
+
+
+def _pgy_summary_path_from_request(request: PgyKolSyncRequest) -> Path:
+    project_root = Path(__file__).resolve().parents[2]
+    if request.summary_path:
+        path = Path(request.summary_path)
+    elif request.output_dir:
+        path = Path(request.output_dir) / "summary.json"
+    else:
+        raise HTTPException(status_code=400, detail="缺少 output_dir 或 summary_path")
+    if not path.is_absolute():
+        path = project_root / path
+    path = path.resolve()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"未找到蒲公英结果文件: {path}")
+    return path
+
+
+def _pick_number(*values: Any) -> Any:
+    for value in values:
+        if value not in ("", None):
+            return value
+    return ""
+
+
+def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any]:
+    alias_map = {
+        "类型": ["row_type", "类型"],
+        "达人类型": ["row_type", "类型"],
+        "排名": ["rank", "排名"],
+        "达人昵称": ["nickname", "博主昵称", "博主名"],
+        "博主昵称": ["nickname", "达人昵称", "博主名"],
+        "博主名": ["nickname", "达人昵称", "博主昵称"],
+        "小红书号": ["red_id", "小红书号"],
+        "小红书ID": ["red_id", "小红书号"],
+        "目标达人昵称": ["target_nickname", "目标达人昵称"],
+        "目标小红书号": ["target_red_id", "目标小红书号"],
+        "地区": ["location", "地区"],
+        "粉丝数": ["fans_count", "粉丝数"],
+        "获赞收藏": ["like_collect_count", "获赞收藏"],
+        "商业笔记数": ["business_note_count", "商业笔记数"],
+        "最低报价": ["lower_price", "最低报价"],
+        "图文报价": ["picture_price", "图文报价"],
+        "视频报价": ["video_price", "视频报价"],
+        "标签": ["tags", "标签"],
+        "曝光中位数": ["imp_median", "曝光中位数"],
+        "阅读中位数": ["read_median", "阅读中位数"],
+        "互动中位数": ["interaction_median", "互动中位数"],
+        "互动率": ["interaction_rate", "互动率"],
+        "粉丝增量": ["fans_increase", "粉丝增量"],
+        "活跃粉丝占比": ["active_fans_rate", "活跃粉丝占比"],
+        "阅读粉丝占比": ["read_fans_rate", "阅读粉丝占比"],
+        "互动粉丝占比": ["engage_fans_rate", "互动粉丝占比"],
+        "输出目录": ["output_dir", "输出目录"],
+        "截图": ["screenshot", "截图"],
+        "详情文本": ["detail_text", "详情文本"],
+        "更新时间": ["updated_at", "更新时间"],
+        "采集时间": ["updated_at", "采集时间"],
+    }
+    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "曝光中位数", "阅读中位数", "互动中位数", "粉丝增量"}
+    values: List[Any] = []
+    for field_name in table_fields:
+        keys = alias_map.get(field_name, [field_name])
+        value = ""
+        for key in keys:
+            if key in row and row[key] not in ("", None):
+                value = row[key]
+                break
+        if field_name in numeric_fields and value not in ("", None):
+            try:
+                value = float(str(value).replace(",", ""))
+                if value.is_integer():
+                    value = int(value)
+            except Exception:
+                pass
+        values.append(value)
+    return values
+
+
+def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[str, Any]]:
+    target = summary.get("blogger_detail") or {}
+    propagation = summary.get("propagation_performance") or {}
+    notes_rate = propagation.get("notes_rate") or {}
+    fans = summary.get("fan_analysis") or {}
+    fans_summary = fans.get("fans_summary") or {}
+    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    target_tags = []
+    for tag in target.get("featureTags") or target.get("contentTags") or []:
+        if isinstance(tag, str):
+            target_tags.append(tag)
+        elif isinstance(tag, dict):
+            target_tags.append(str(tag.get("name") or tag.get("tagName") or tag.get("taxonomy1Tag") or tag))
+        else:
+            target_tags.append(str(tag))
+    target_row = {
+        "row_type": "目标达人",
+        "rank": 0,
+        "nickname": summary.get("nickname") or target.get("name") or "",
+        "red_id": summary.get("red_id") or target.get("redId") or "",
+        "target_nickname": summary.get("nickname") or target.get("name") or "",
+        "target_red_id": summary.get("red_id") or target.get("redId") or "",
+        "location": target.get("location") or "",
+        "fans_count": target.get("fansCount") or "",
+        "like_collect_count": target.get("likeCollectCountInfo") or "",
+        "business_note_count": target.get("businessNoteCount") or "",
+        "lower_price": target.get("lowerPrice") or "",
+        "picture_price": target.get("picturePrice") or "",
+        "video_price": target.get("videoPrice") or "",
+        "tags": ",".join(target_tags),
+        "imp_median": notes_rate.get("impMedian") or "",
+        "read_median": notes_rate.get("readMedian") or "",
+        "interaction_median": notes_rate.get("interactionMedian") or "",
+        "interaction_rate": notes_rate.get("interactionRate") or "",
+        "fans_increase": fans_summary.get("fansIncreaseNum") or "",
+        "active_fans_rate": fans_summary.get("activeFansRate") or "",
+        "read_fans_rate": fans_summary.get("readFansRate") or "",
+        "engage_fans_rate": fans_summary.get("engageFansRate") or "",
+        "output_dir": output_dir,
+        "screenshot": summary.get("screenshot") or "",
+        "detail_text": summary.get("detail_text") or "",
+        "updated_at": updated_at,
+    }
+    rows = [target_row]
+    for item in summary.get("similar_creators") or []:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "row_type": "相似博主",
+            "target_nickname": target_row["nickname"],
+            "target_red_id": target_row["red_id"],
+            "output_dir": output_dir,
+            "screenshot": summary.get("screenshot") or "",
+            "detail_text": summary.get("detail_text") or "",
+            "updated_at": updated_at,
+            **item,
+        }
+        rows.append(row)
+    return rows
+
+
+async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any]:
+    if not request.base_token or not request.table_id:
+        raise HTTPException(status_code=400, detail="缺少 base_token 或 table_id")
+    summary_path = _pgy_summary_path_from_request(request)
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取蒲公英 summary.json 失败: {exc}") from exc
+
+    table_fields = await _read_table_fields(request.base_token, request.table_id)
+    if not table_fields:
+        raise HTTPException(status_code=400, detail="目标表没有字段，无法同步")
+    output_dir = str(summary_path.parent)
+    rows = _pgy_summary_to_rows(summary, output_dir)
+    table_rows = [_pgy_row_to_values(row, table_fields) for row in rows]
+    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    created = 0
+    for i in range(0, len(table_rows), 200):
+        payload = {"fields": table_fields, "rows": table_rows[i:i + 200]}
+        await _run_lark_cli(
+            [
+                lark_cli_bin,
+                "base",
+                "+record-batch-create",
+                "--as",
+                "user",
+                "--base-token",
+                request.base_token,
+                "--table-id",
+                request.table_id,
+                "--json",
+                json.dumps(payload, ensure_ascii=False),
+            ],
+            timeout_sec=60,
+        )
+        created += len(table_rows[i:i + 200])
+    return {
+        "status": "success",
+        "created": created,
+        "base_token": request.base_token,
+        "table_id": request.table_id,
+        "summary": str(summary_path),
+        "fields": table_fields,
+        "target_url": f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}",
+    }
 
 
 async def _read_rule_table(base_token: str, table_id: str) -> List[Dict]:
@@ -823,6 +1116,112 @@ async def huitun_export_anchor_list(request: HuitunExportAnchorListRequest):
     return result
 
 
+@router.post("/pgy/run-kol")
+async def pgy_run_kol(request: PgyKolRunRequest):
+    if not request.nickname.strip() and not request.red_id.strip():
+        raise HTTPException(status_code=400, detail="请至少填写达人昵称或小红书号")
+    args = ["run-kol"]
+    if request.nickname.strip():
+        args.extend(["--nickname", request.nickname.strip()])
+    if request.red_id.strip():
+        args.extend(["--red-id", request.red_id.strip()])
+    if request.keep_open:
+        args.append("--keep-open")
+    result = await _run_pgy_automation(args, timeout_sec=180)
+    if result.get("status") == "login_required":
+        raise HTTPException(status_code=401, detail=result.get("error") or "蒲公英需要登录")
+    if result.get("status") == "error" or result.get("returncode"):
+        raise HTTPException(status_code=400, detail=result.get("error") or result)
+    if request.sync_after_run:
+        outputs = result.get("outputs") or {}
+        sync_result = await _sync_pgy_summary_to_base(
+            PgyKolSyncRequest(
+                base_token=request.base_token,
+                table_id=request.table_id,
+                summary_path=outputs.get("summary") or "",
+                output_dir=outputs.get("output_dir") or "",
+            )
+        )
+        result["sync"] = sync_result
+    return result
+
+
+@router.post("/pgy/login")
+async def pgy_login(request: PgyLoginRequest):
+    args = ["login"]
+    wait_seconds = max(30, min(1800, int(request.timeout_ms / 1000)))
+    args.extend(["--login-wait-seconds", str(wait_seconds)])
+    if request.keep_open:
+        project_root = Path(__file__).resolve().parents[2]
+        script_path = project_root / "tools" / "pgy_automation.py"
+        if _pgy_cdp_available():
+            return {
+                "status": "login_window_opened",
+                "message": "蒲公英登录窗口已打开",
+                "cdp": PGY_CDP_ENDPOINT,
+                "wait_seconds": wait_seconds,
+            }
+        cmd = [
+            sys.executable,
+            str(script_path),
+            *args,
+            "--remote-debugging-port",
+            str(PGY_CDP_PORT),
+            "--detach-hold-open",
+        ]
+        try:
+            subprocess.Popen(
+                cmd,
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"蒲公英登录窗口启动失败: {exc}") from exc
+        return {
+            "status": "login_window_opened",
+            "message": "蒲公英登录窗口已打开，请在浏览器内完成登录；登录状态每 1 秒检测一次",
+            "cdp": PGY_CDP_ENDPOINT,
+            "wait_seconds": wait_seconds,
+        }
+    result = await _run_pgy_automation(args, timeout_sec=wait_seconds + 45)
+    if result.get("status") == "error" or result.get("returncode"):
+        raise HTTPException(status_code=400, detail=result.get("error") or result)
+    return result
+
+
+@router.post("/pgy/status")
+async def pgy_status():
+    result = await _run_pgy_automation(["screenshot"], timeout_sec=90)
+    if result.get("status") == "error" or result.get("returncode"):
+        raise HTTPException(status_code=400, detail=result.get("error") or result)
+    return result
+
+
+@router.get("/pgy/file")
+async def pgy_file(path: str):
+    project_root = Path(__file__).resolve().parents[2]
+    downloads_root = (project_root / "downloads").resolve()
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = project_root / file_path
+    file_path = file_path.resolve()
+    try:
+        file_path.relative_to(downloads_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="只能预览 downloads 目录下的文件") from exc
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(path=str(file_path))
+
+
+@router.post("/pgy/sync-kol")
+async def pgy_sync_kol(request: PgyKolSyncRequest):
+    return await _sync_pgy_summary_to_base(request)
+
+
 @router.post("/setup-scenario-tables")
 async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     if not request.base_token:
@@ -832,6 +1231,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     note_recreation_fields = _viral_monitor_fields()
     comments_fields = _comments_fields()
     collaboration_fields = [_text_field("项目名"), _text_field("监控周期"), _text_field("搜索关键词"), _text_field("笔记标题"), _text_field("笔记链接"), _text_field("博主名"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _number_field("分享量"), _datetime_field("抓取时间")]
+    creator_selection_fields = _creator_selection_fields()
     existing = await _list_base_tables(request.base_token)
     existing_map = {t["name"]: t["id"] for t in existing}
 
@@ -848,6 +1248,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
         await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
         await create_or_reuse(request.comments_table_name, comments_fields),
         await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
+        await create_or_reuse(request.creator_selection_table_name, creator_selection_fields),
     ]
     return {"status": "ok", "tables": tables}
 
@@ -881,6 +1282,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
                 note_recreation_table_name=request.note_recreation_table_name,
                 comments_table_name=request.comments_table_name,
                 collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+                creator_selection_table_name=request.creator_selection_table_name,
             )
         )
         return {

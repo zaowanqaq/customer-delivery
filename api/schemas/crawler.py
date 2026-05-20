@@ -115,8 +115,9 @@ class ScenarioTableSetupRequest(BaseModel):
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
     note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "评论表"
+    comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    creator_selection_table_name: str = "达人智能圈选表"
 
 
 class ScenarioBootstrapRequest(BaseModel):
@@ -127,8 +128,9 @@ class ScenarioBootstrapRequest(BaseModel):
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
     note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "评论表"
+    comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    creator_selection_table_name: str = "达人智能圈选表"
     folder_token: str = ""
     time_zone: str = "Asia/Shanghai"
 
@@ -176,6 +178,30 @@ class HuitunExportAnchorListRequest(BaseModel):
     category: str = ""
     screenshot_before_export: bool = True
     keep_open: bool = False
+
+
+class PgyKolRunRequest(BaseModel):
+    """Run Xiaohongshu Pugongying KOL analysis by nickname/red_id."""
+    nickname: str = ""
+    red_id: str = ""
+    keep_open: bool = False
+    sync_after_run: bool = False
+    base_token: str = ""
+    table_id: str = ""
+
+
+class PgyLoginRequest(BaseModel):
+    """Open Pugongying browser to refresh login state."""
+    keep_open: bool = False
+    timeout_ms: int = 300000
+
+
+class PgyKolSyncRequest(BaseModel):
+    """Sync one local Pugongying KOL analysis result to Lark Base."""
+    base_token: str
+    table_id: str
+    output_dir: str = ""
+    summary_path: str = ""
 
 
 class CrawlerStatusResponse(BaseModel):

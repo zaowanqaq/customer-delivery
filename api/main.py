@@ -64,8 +64,9 @@ OPS_CONFIG_DEFAULT = {
     "account_filter_table_name": "账号筛选表",
     "viral_monitor_table_name": "爆款监控表",
     "note_recreation_table_name": "笔记二创表",
-    "comments_table_name": "评论表",
+    "comments_table_name": "笔记评论表",
     "collaboration_monitor_table_name": "合作笔记监控表",
+    "creator_selection_table_name": "达人智能圈选表",
     "collab_project_name": "",
     "collab_source_keyword": "",
     "collab_creator_ids": "",
@@ -74,6 +75,10 @@ OPS_CONFIG_DEFAULT = {
     "collab_table_id": "",
     "collab_interval_hours": 4,
     "collab_sync_limit": 20,
+    "pgy_nickname": "",
+    "pgy_red_id": "",
+    "pgy_table_id": "",
+    "pgy_sync_after_run": "false",
     "project_name": "",
     "current_project_key": "",
     "project_profiles": {},
@@ -100,6 +105,10 @@ PROJECT_BOUND_FIELDS = {
     "collab_notes_per_creator",
     "collab_interval_hours",
     "collab_sync_limit",
+    "pgy_nickname",
+    "pgy_red_id",
+    "pgy_table_id",
+    "pgy_sync_after_run",
 }
 
 
@@ -137,8 +146,9 @@ class OpsConfigPayload(BaseModel):
     account_filter_table_name: str = "账号筛选表"
     viral_monitor_table_name: str = "爆款监控表"
     note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "评论表"
+    comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    creator_selection_table_name: str = "达人智能圈选表"
     collab_project_name: str = ""
     collab_source_keyword: str = ""
     collab_creator_ids: str = ""
@@ -147,6 +157,10 @@ class OpsConfigPayload(BaseModel):
     collab_table_id: str = ""
     collab_interval_hours: int = 4
     collab_sync_limit: int = 20
+    pgy_nickname: str = ""
+    pgy_red_id: str = ""
+    pgy_table_id: str = ""
+    pgy_sync_after_run: str = "false"
     project_name: str = ""
     current_project_key: str = ""
     project_profiles: Dict[str, Dict[str, Any]] = {}
