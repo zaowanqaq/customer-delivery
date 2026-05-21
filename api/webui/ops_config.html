@@ -261,7 +261,8 @@
       <div class="nav-item" data-step="03" data-tab="tab-step2">样本账号抓取</div>
       <div class="nav-item" data-step="04" data-tab="tab-huitun">达人智能圈选</div>
       <div class="nav-item" data-step="05" data-tab="tab-step3">爆款内容检索</div>
-      <div class="nav-item" data-step="06" data-tab="tab-step4">数据同步中心</div>
+      <!-- 客户交付版默认自动同步，保留手动同步中心供内部排障使用但不在 UI 中展示。 -->
+      <div class="nav-item v1-hidden" data-step="06" data-tab="tab-step4" data-internal-manual-sync="true">数据同步中心</div>
       <div class="nav-item" data-step="07" data-tab="tab-step5">合作笔记监控</div>
       <div class="nav-item" data-step="08" data-tab="tab-monitor">终端运行日志</div>
     </div>
@@ -365,34 +366,35 @@
           <div class="project-grid">
           <section class="card">
       <h2>项目切换器</h2>
-      <p class="hint">用于已有项目 1/2/3 快速切换配置，不需要每次重新建表。</p>
+      <p class="hint">用于保存客户自己的项目配置。新交付环境默认不会带出旧项目、旧 Token 或开发机路径。</p>
       <div class="grid">
         <div class="row">
           <label>已保存项目</label>
           <select id="project_selector"></select>
         </div>
         <div class="row">
-          <label>项目槽位名（如 项目1/项目2）</label>
-          <input id="project_slot_name" placeholder="项目1">
+          <label>项目槽位名（用于下次快速切换）</label>
+          <input id="project_slot_name" placeholder="例如：新品上市项目">
         </div>
       </div>
       <div class="btns">
         <button class="ghost" onclick="applySelectedProject()">切换到所选项目</button>
         <button class="ghost" onclick="saveCurrentProjectProfile()">保存当前为项目槽位</button>
         <button class="danger" onclick="deleteSelectedProject()">删除所选项目配置</button>
+        <button class="ghost" onclick="resetWorkbenchConfig()">清空工作台配置</button>
       </div>
     </section>
           <section class="card">
       <h2>步骤1：初始化项目</h2>
-      <p class="hint">填写项目名和母版 Base 链接/Token，系统会直接复制母版，只回填项目 Base 与各业务表 ID；后续只写入内容数据，不改表结构。</p>
+      <p class="hint">填写客户项目名和客户可访问的母版 Base 链接/Token。初始化后系统会回填本项目 Base 与各业务表 ID。</p>
       <div class="grid">
         <div class="row">
           <label>所属项目名（必填）</label>
-          <input id="project_name" placeholder="北京车展2026">
+          <input id="project_name" placeholder="例如：客户品牌新品上市">
         </div>
         <div class="row">
           <label>母版 Base 链接 / Token（必填）</label>
-          <input id="template_base_token" placeholder="https://my.feishu.cn/base/... 或 XA3M...">
+          <input id="template_base_token" placeholder="粘贴客户母版 Base 链接，或只填 Base Token">
         </div>
       </div>
       <input id="folder_token" class="v1-hidden" placeholder="fld...">
@@ -425,22 +427,36 @@
         </div>
       </div>
     </section>
+          <section class="card">
+      <h2>交付环境检测</h2>
+      <p class="hint">首次部署或功能异常时先运行检测，确认 Python、Playwright 浏览器、飞书 CLI 和本机数据目录状态。</p>
+      <div class="btns">
+        <button class="ghost" onclick="checkDeliveryEnvironment()">检测当前电脑环境</button>
+      </div>
+      <div id="env_check_view" class="meta-panel">
+        <div class="meta-row">
+          <span class="meta-key">状态</span>
+          <span class="meta-val">尚未检测</span>
+        </div>
+      </div>
+    </section>
         </div>
         <div id="tab-config" class="tab-pane">
           <section class="card">
       <h2>公共抓取配置（步骤2/3/5共用）</h2>
-      <p class="hint">所有抓取任务共用同一套登录和评论参数。</p>
+      <p class="hint">所有抓取任务共用同一套登录、评论和媒体下载参数。推荐先使用扫码登录；Cookie 只填写客户自己的 Cookie。</p>
       <div class="grid">
         <div class="row">
           <label>登录方式</label>
           <select id="login_type">
-            <option value="qrcode">qrcode</option>
-            <option value="cookie">cookie</option>
+            <option value="qrcode">扫码登录（推荐）</option>
+            <option value="cookie">Cookie 登录</option>
           </select>
         </div>
-        <div class="row">
+        <!-- 本地落盘仍是同步到 Base 的中间步骤，客户 UI 隐藏保存格式选择。 -->
+        <div class="row v1-hidden">
           <label>保存格式</label>
-          <select id="save_option">
+          <select id="save_option" class="v1-hidden">
             <option value="jsonl">jsonl</option>
             <option value="csv">csv</option>
             <option value="json">json</option>
@@ -450,29 +466,30 @@
         <div class="row">
           <label>无头模式</label>
           <select id="headless">
-            <option value="false">false</option>
-            <option value="true">true</option>
+            <option value="false">显示浏览器窗口</option>
+            <option value="true">后台运行浏览器</option>
           </select>
         </div>
         <div class="row">
           <label>抓取评论</label>
           <select id="enable_comments">
-            <option value="true">true</option>
-            <option value="false">false</option>
+            <option value="true">抓取评论</option>
+            <option value="false">不抓取评论</option>
           </select>
         </div>
         <div class="row">
           <label>抓取二级评论</label>
           <select id="enable_sub_comments">
-            <option value="false">false</option>
-            <option value="true">true</option>
+            <option value="false">不抓取二级评论</option>
+            <option value="true">抓取二级评论</option>
           </select>
         </div>
-        <div class="row">
+        <!-- 媒体文件仍按配置落本地供同步/排障使用，客户 UI 不暴露本地下载开关。 -->
+        <div class="row v1-hidden">
           <label>下载图片/视频到本地</label>
-          <select id="enable_media">
-            <option value="true">true</option>
-            <option value="false">false</option>
+          <select id="enable_media" class="v1-hidden">
+            <option value="true">下载媒体到本机</option>
+            <option value="false">只保存链接</option>
           </select>
         </div>
         <div class="row">
@@ -481,7 +498,7 @@
         </div>
         <div class="row full">
           <label>Cookies（仅 cookie 登录时填写）</label>
-          <textarea id="cookies" placeholder="粘贴 Cookie 字符串"></textarea>
+          <textarea id="cookies" placeholder="仅 Cookie 登录时填写；扫码登录请留空"></textarea>
         </div>
       </div>
       <div class="btns">
@@ -494,11 +511,11 @@
         <div id="tab-step2" class="tab-pane">
           <section class="card">
       <h2>步骤2：样本账号抓取（3-5账号）</h2>
-      <p class="hint">输入样本账号主页链接或账号ID，每个账号默认抓 20 篇。</p>
+      <p class="hint">输入客户提供的样本账号主页链接或账号 ID，每行一个；系统不会预置任何账号。</p>
       <div class="grid">
         <div class="row full">
           <label>样本账号列表（逗号或换行）</label>
-          <textarea id="sample_creator_ids" placeholder="https://www.xiaohongshu.com/user/profile/xxx"></textarea>
+          <textarea id="sample_creator_ids" placeholder="每行一个小红书主页链接或账号 ID"></textarea>
         </div>
         <div class="row">
           <label>每个账号抓取篇数</label>
@@ -525,9 +542,10 @@
                     <label>小红书号（可选）</label>
                     <input id="pgy_red_id" placeholder="用于重名时精确匹配，不会自动填充">
                   </div>
-                  <div class="row">
+                  <!-- 默认自动同步到达人智能圈选表；保留开关代码供内部排障，不对客户展示。 -->
+                  <div class="row v1-hidden">
                     <label>运行后自动同步</label>
-                    <select id="pgy_sync_after_run">
+                    <select id="pgy_sync_after_run" class="v1-hidden">
                       <option value="true">是，写入达人智能圈选表</option>
                       <option value="false">否，仅保存本地文件</option>
                     </select>
@@ -538,7 +556,8 @@
                   <button class="ghost" onclick="pgyCheckStatus()">验证蒲公英登录态</button>
                   <button class="primary" onclick="pgyRunKol()">分析达人并列出相似达人</button>
                   <button class="ghost" onclick="pgyRunSelectedSimilar()">抓取勾选相似达人详情</button>
-                  <button class="ghost" onclick="pgySyncKol()">备用：同步最近本地结果</button>
+                  <!-- 保留手动同步代码：仅内部排障时可临时取消隐藏，不删除 pgySyncKol。 -->
+                  <button class="ghost v1-hidden" data-internal-pgy-manual-sync="true" onclick="pgySyncKol()">备用：同步最近本地结果</button>
                 </div>
               </div>
               <div class="huitun-result">
@@ -556,7 +575,7 @@
       <div class="grid">
         <div class="row">
           <label>搜索关键词（单个）</label>
-          <input id="keywords" placeholder="北京车展">
+          <input id="keywords" placeholder="输入本项目要检索的关键词">
         </div>
         <div class="row">
           <label>最大笔记数</label>
@@ -602,7 +621,7 @@
     </section>
           <section class="card notes-panel">
             <h2>结果浏览</h2>
-            <p class="hint">和抓取流程并排查看本地小红书结果，支持关键词筛选、标题/正文搜索、瀑布流预览与详情查看。</p>
+            <p class="hint">和抓取流程并排查看当前采集结果，支持关键词筛选、标题/正文搜索、瀑布流预览与详情查看。</p>
             <div class="notes-toolbar">
               <div class="row">
                 <label>搜索标题或正文</label>
@@ -663,30 +682,32 @@
       <p class="hint">先本地抓取，再写入飞书；会自动写入“项目名/所属项目”。不同步骤会写入不同目标表。</p>
       <p class="hint" id="sync_target_hint">当前写入目标：未解析（请先初始化项目）。</p>
       <div class="grid">
-        <div class="row full">
+        <!-- 保留手动同步代码：本地文件路径只供内部排障使用，客户侧默认自动选择最新抓取文件。 -->
+        <div class="row full v1-hidden">
           <label>本地文件路径（可选，不填=自动用最新抓取文件）</label>
-          <input id="sync_file_path" placeholder="可选：本机数据文件路径，例如 xhs/jsonl/search_contents_xxx.jsonl 或 .xlsx">
+          <input id="sync_file_path" class="v1-hidden" placeholder="可选；留空会自动选择当前用户数据目录里的最新抓取结果">
         </div>
-        <div class="row">
+        <div class="row v1-hidden">
           <label>同步数量上限（0=全部）</label>
-          <input id="sync_limit" type="number" min="0" value="0">
+          <input id="sync_limit" class="v1-hidden" type="number" min="0" value="0">
         </div>
       </div>
-      <div class="btns">
-        <button class="primary" onclick="syncSampleToAccountFilter()">同步步骤2结果 -> 账号筛选表</button>
-        <button class="ghost" onclick="syncViralToMonitor()">同步步骤3结果 -> 爆款监控表</button>
-        <button class="ghost" onclick="syncCommentsToBase()">导入评论表</button>
+      <!-- 保留手动同步代码：客户交付版通过步骤2/3/5自动同步，这组按钮默认隐藏。 -->
+      <div class="btns v1-hidden" data-internal-manual-sync="true">
+        <button class="primary" data-internal-manual-sync="true" onclick="syncSampleToAccountFilter()">同步步骤2结果 -> 账号筛选表</button>
+        <button class="ghost" data-internal-manual-sync="true" onclick="syncViralToMonitor()">同步步骤3结果 -> 爆款监控表</button>
+        <button class="ghost" data-internal-manual-sync="true" onclick="syncCommentsToBase()">导入评论表</button>
       </div>
     </section>
         </div>
         <div id="tab-step5" class="tab-pane">
           <section class="card">
       <h2>步骤5：合作博主监控（4/8/24h）</h2>
-      <p class="hint">按你提供的博主名单持续监控，不再只靠关键词。</p>
+      <p class="hint">按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。</p>
       <div class="grid">
         <div class="row full">
           <label>合作博主账号名单（逗号或换行）</label>
-          <textarea id="collab_creator_ids" placeholder="https://www.xiaohongshu.com/user/profile/xxx"></textarea>
+          <textarea id="collab_creator_ids" placeholder="每行一个合作博主主页链接或账号 ID"></textarea>
         </div>
         <div class="row">
           <label>每轮每个账号抓取篇数</label>
@@ -771,6 +792,9 @@
     let notesSearchTimer = null;
     let currentGallery = [];
     let currentGalleryIndex = 0;
+    const AUTO_SYNC_POLL_INTERVAL_MS = 2000;
+    const AUTO_SYNC_MAX_WAIT_MS = 45 * 60 * 1000;
+    const autoSyncTimers = {};
 
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
@@ -795,6 +819,61 @@
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
       "collab_sync_limit", "pgy_table_id", "pgy_sync_after_run"
     ];
+    const defaultWorkbenchConfig = {
+      platform: "xhs",
+      crawler_type: "search",
+      project_name: "",
+      folder_token: "",
+      template_base_token: "",
+      scenario_base_token: "",
+      sync_base_token: "",
+      account_filter_table_name: "账号筛选表",
+      viral_monitor_table_name: "爆款监控表",
+      note_recreation_table_name: "笔记二创表",
+      comments_table_name: "笔记评论表",
+      collaboration_monitor_table_name: "合作笔记监控表",
+      creator_selection_table_name: "达人智能圈选表",
+      account_filter_table_id: "",
+      sync_notes_table_id: "",
+      note_recreation_table_id: "",
+      sync_comments_table_id: "",
+      collab_table_id: "",
+      login_type: "qrcode",
+      save_option: "csv",
+      headless: false,
+      enable_comments: true,
+      enable_sub_comments: false,
+      enable_media: true,
+      max_comments_count_singlenotes: 10,
+      cookies: "",
+      sample_creator_ids: "",
+      notes_per_creator: 20,
+      keywords: "",
+      start_page: 1,
+      max_notes_count: 20,
+      xhs_sort_by: "综合",
+      xhs_note_type: "不限",
+      xhs_publish_time: "不限",
+      xhs_search_scope: "不限",
+      xhs_location: "不限",
+      sync_limit: 0,
+      sync_file_path: "",
+      collab_project_name: "",
+      collab_source_keyword: "",
+      collab_creator_ids: "",
+      collab_notes_per_creator: 20,
+      collab_interval_hours: 4,
+      collab_sync_limit: 20,
+      pgy_nickname: "",
+      pgy_red_id: "",
+      pgy_table_id: "",
+      pgy_sync_after_run: "true",
+      current_project_key: "",
+      project_profiles: {},
+      rule_base_token: "",
+      rule_table_id: "",
+      rule_name: ""
+    };
 
     let latestCollabJobId = "";
     const statusEl = document.getElementById("status");
@@ -831,9 +910,77 @@
       return String(num);
     }
 
+    function isAbsoluteLocalPath(path) {
+      return /^[A-Za-z]:[\\/]/.test(path || "") || /^\\\\/.test(path || "") || /^\//.test(path || "");
+    }
+
+    function displayLocalPath(path) {
+      const raw = String(path || "").trim();
+      if (!raw) return "";
+      if (!isAbsoluteLocalPath(raw)) return raw;
+      const parts = raw.split(/[\\/]+/).filter(Boolean);
+      const tail = parts.slice(-3).join(" / ");
+      return tail ? `本机路径 / ${tail}` : "本机路径";
+    }
+
+    function localPathTitle(path) {
+      return String(path || "").trim() ? " title=\"完整路径仅保存在本机，用于故障排查\"" : "";
+    }
+
     function setText(id, value) {
       const el = document.getElementById(id);
       if (el) el.textContent = value;
+    }
+
+    function renderEnvChecks(data) {
+      const box = document.getElementById("env_check_view");
+      if (!box) return;
+      const checks = Array.isArray(data.checks) ? data.checks : [];
+      if (!checks.length) {
+        box.innerHTML = `
+          <div class="meta-row">
+            <span class="meta-key">状态</span>
+            <span class="meta-val">${escapeHtml(data.message || "未返回检测项")}</span>
+          </div>`;
+        return;
+      }
+      box.innerHTML = checks.map((item) => {
+        const state = item.ok ? "通过" : (item.required ? "需处理" : "提示");
+        const message = [state, item.message, item.detail ? `(${displayLocalPath(item.detail)})` : ""]
+          .filter(Boolean)
+          .join(" - ");
+        return `
+          <div class="meta-row">
+            <span class="meta-key">${escapeHtml(item.name || "检测项")}</span>
+            <span class="meta-val">${escapeHtml(message)}</span>
+          </div>`;
+      }).join("");
+    }
+
+    async function checkDeliveryEnvironment() {
+      const box = document.getElementById("env_check_view");
+      if (box) {
+        box.innerHTML = `
+          <div class="meta-row">
+            <span class="meta-key">状态</span>
+            <span class="meta-val">正在检测...</span>
+          </div>`;
+      }
+      try {
+        const res = await fetch("/api/env/check");
+        const data = await res.json();
+        renderEnvChecks(data);
+        log(data.message || "环境检测完成");
+      } catch (e) {
+        if (box) {
+          box.innerHTML = `
+            <div class="meta-row">
+              <span class="meta-key">状态</span>
+              <span class="meta-val">环境检测失败：${escapeHtml(e.message || e)}</span>
+            </div>`;
+        }
+        log("环境检测失败: " + (e.message || e));
+      }
     }
 
     async function loadNotesStats() {
@@ -1349,7 +1496,8 @@
       if (nicknameInput) nicknameInput.value = "";
       if (redIdInput) redIdInput.value = "";
       const syncSelect = document.getElementById("pgy_sync_after_run");
-      if (syncSelect && !syncSelect.value) syncSelect.value = "true";
+      // 客户交付版隐藏同步开关并强制默认自动同步；历史配置里的 false 不再影响运行。
+      if (syncSelect) syncSelect.value = "true";
       refreshProjectSelector();
       refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
     }
@@ -1368,6 +1516,7 @@
         note_recreation_table_name: document.getElementById("note_recreation_table_name").value.trim(),
         comments_table_name: document.getElementById("comments_table_name").value.trim(),
         collaboration_monitor_table_name: document.getElementById("collaboration_monitor_table_name").value.trim(),
+        creator_selection_table_name: document.getElementById("creator_selection_table_name").value.trim(),
         account_filter_table_id: document.getElementById("account_filter_table_id").value.trim(),
         sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
         note_recreation_table_id: document.getElementById("note_recreation_table_id").value.trim(),
@@ -1443,6 +1592,26 @@
       const data = await res.json();
       if (data.ok) log("配置保存成功");
       else log("配置保存失败: " + JSON.stringify(data));
+    }
+
+    async function resetWorkbenchConfig() {
+      if (!confirm("确定清空当前工作台配置？这会移除已保存项目、Cookie 和表格绑定。")) return;
+      projectProfiles = {};
+      currentProjectKey = "";
+      const payload = { ...defaultWorkbenchConfig };
+      const res = await fetch("/api/ops-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        log("清空配置失败: " + JSON.stringify(data));
+        return;
+      }
+      fillForm(data.config || payload);
+      document.getElementById("project_slot_name").value = "";
+      log("工作台配置已清空，请填写客户项目名和客户母版 Base 后开始初始化");
     }
 
     async function saveCurrentProjectProfile() {
@@ -1585,7 +1754,12 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      log("样本账号抓取启动结果: " + JSON.stringify(await res.json()));
+      const result = await res.json();
+      log("样本账号抓取启动结果: " + JSON.stringify(result));
+      if (res.ok && result.status === "ok") {
+        startProgressMonitor();
+        waitCrawlerIdleThenAutoSync("sample");
+      }
     }
 
     let latestPgyOutput = null;
@@ -1672,9 +1846,9 @@
       }
       if (data.nickname) rows.push(`<div class="pgy-result-row"><strong>达人昵称：</strong>${escapeHtml(data.nickname)}</div>`);
       if (data.red_id) rows.push(`<div class="pgy-result-row"><strong>小红书号：</strong>${escapeHtml(data.red_id)}</div>`);
-      if (data.outputs && data.outputs.output_dir) rows.push(`<div class="pgy-result-row"><strong>输出目录：</strong>${escapeHtml(data.outputs.output_dir)}</div>`);
-      if (data.outputs && data.outputs.summary) rows.push(`<div class="pgy-result-row"><strong>汇总文件：</strong>${escapeHtml(data.outputs.summary)}</div>`);
-      if (data.outputs && data.outputs.similar_csv) rows.push(`<div class="pgy-result-row"><strong>相似博主 CSV：</strong>${escapeHtml(data.outputs.similar_csv)}</div>`);
+      if (data.outputs && data.outputs.output_dir) rows.push(`<div class="pgy-result-row"><strong>输出目录：</strong><span${localPathTitle(data.outputs.output_dir)}>${escapeHtml(displayLocalPath(data.outputs.output_dir))}</span></div>`);
+      if (data.outputs && data.outputs.summary) rows.push(`<div class="pgy-result-row"><strong>汇总文件：</strong><span${localPathTitle(data.outputs.summary)}>${escapeHtml(displayLocalPath(data.outputs.summary))}</span></div>`);
+      if (data.outputs && data.outputs.similar_csv) rows.push(`<div class="pgy-result-row"><strong>相似达人 CSV：</strong><span${localPathTitle(data.outputs.similar_csv)}>${escapeHtml(displayLocalPath(data.outputs.similar_csv))}</span></div>`);
       if (data.outputs && data.outputs.similar_count !== undefined) rows.push(`<div class="pgy-result-row"><strong>相似博主数量：</strong>${escapeHtml(data.outputs.similar_count)}</div>`);
       if (data.outputs && data.outputs.similar_creators) rows.push(pgySimilarPickerHtml(data.outputs.similar_creators));
       if (data.sync && data.sync.created !== undefined) {
@@ -1682,7 +1856,7 @@
         rows.push(`<div class="pgy-result-row"><strong>多维表同步：</strong>新增 ${escapeHtml(data.sync.created)} 行${updated}</div>`);
       }
       if (data.sync && data.sync.target_url) rows.push(`<div class="pgy-result-row"><strong>多维表：</strong><a href="${escapeHtml(data.sync.target_url)}" target="_blank" rel="noreferrer">打开</a></div>`);
-      if (data.user_data_dir) rows.push(`<div class="pgy-result-row"><strong>登录信息保存位置：</strong>${escapeHtml(data.user_data_dir)}</div>`);
+      if (data.user_data_dir) rows.push(`<div class="pgy-result-row"><strong>登录信息：</strong><span${localPathTitle(data.user_data_dir)}>${escapeHtml(displayLocalPath(data.user_data_dir))}</span></div>`);
       if (data.error) rows.push(`<div class="pgy-result-row"><strong>错误：</strong>${escapeHtml(data.error)}</div>`);
       if (data.detail) rows.push(`<div class="pgy-result-row"><strong>错误：</strong>${escapeHtml(data.detail)}</div>`);
       if (data.progress) rows.push(pgyProgressHtml(data.progress));
@@ -1695,7 +1869,7 @@
       }
       const logParts = [`状态=${pgyStatusLabel(data.status)}`];
       if (data.nickname) logParts.push(`达人=${data.nickname}`);
-      if (data.outputs && data.outputs.output_dir) logParts.push(`输出=${data.outputs.output_dir}`);
+      if (data.outputs && data.outputs.output_dir) logParts.push(`输出=${displayLocalPath(data.outputs.output_dir)}`);
       if (data.outputs && data.outputs.similar_count !== undefined) logParts.push(`相似博主=${data.outputs.similar_count}`);
       if (data.detail || data.error) logParts.push(`错误=${data.detail || data.error}`);
       log("蒲公英执行结果: " + logParts.join("；"));
@@ -1846,6 +2020,46 @@
       }
     }
 
+    function clearAutoSyncTimer(scene) {
+      if (!autoSyncTimers[scene]) return;
+      clearInterval(autoSyncTimers[scene]);
+      delete autoSyncTimers[scene];
+    }
+
+    function autoSyncLabel(scene) {
+      return scene === "sample" ? "步骤2样本账号" : "步骤3爆款结果";
+    }
+
+    function waitCrawlerIdleThenAutoSync(scene) {
+      clearAutoSyncTimer(scene);
+      const startedAt = Date.now();
+      let sawRunning = true;
+      autoSyncTimers[scene] = setInterval(async () => {
+        try {
+          const res = await fetch("/api/crawler/status");
+          const data = await res.json();
+          if (data.status === "running" || data.status === "stopping") {
+            sawRunning = true;
+            return;
+          }
+          if (data.status === "idle" && sawRunning) {
+            clearAutoSyncTimer(scene);
+            log(`${autoSyncLabel(scene)}抓取完成，开始自动同步到多维表`);
+            await syncToBaseByScene(scene);
+            if (scene === "viral") startNotesAutoRefresh();
+            return;
+          }
+          if (Date.now() - startedAt > AUTO_SYNC_MAX_WAIT_MS) {
+            clearAutoSyncTimer(scene);
+            log(`${autoSyncLabel(scene)}自动同步等待超时，请检查终端运行日志`);
+          }
+        } catch (e) {
+          clearAutoSyncTimer(scene);
+          log(`${autoSyncLabel(scene)}自动同步监控失败: ${e.message}`);
+        }
+      }, AUTO_SYNC_POLL_INTERVAL_MS);
+    }
+
     async function startCrawler() {
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
@@ -1879,9 +2093,13 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-      log("爆款抓取启动结果: " + JSON.stringify(await res.json()));
-      startProgressMonitor();
-      startNotesAutoRefresh();
+      const result = await res.json();
+      log("爆款抓取启动结果: " + JSON.stringify(result));
+      if (res.ok && result.status === "ok") {
+        startProgressMonitor();
+        startNotesAutoRefresh();
+        waitCrawlerIdleThenAutoSync("viral");
+      }
     }
 
     async function syncToBaseByScene(scene) {

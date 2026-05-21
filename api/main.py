@@ -7,7 +7,9 @@ Or: python -m api.main
 import asyncio
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict
 import uvicorn
@@ -37,7 +39,7 @@ OPS_CONFIG_DEFAULT = {
     "platform": "xhs",
     "login_type": "qrcode",
     "crawler_type": "search",
-    "keywords": "AI运营",
+    "keywords": "",
     "start_page": 1,
     "max_notes_count": 20,
     "max_comments_count_singlenotes": 10,
@@ -55,12 +57,14 @@ OPS_CONFIG_DEFAULT = {
     "rule_base_token": "",
     "rule_table_id": "",
     "rule_name": "",
+    "folder_token": "",
     "template_base_token": "",
     "sync_base_token": "",
     "account_filter_table_id": "",
     "sync_notes_table_id": "",
     "sync_comments_table_id": "",
     "sync_limit": 0,
+    "sync_file_path": "",
     "sample_creator_ids": "",
     "notes_per_creator": 20,
     "scenario_base_token": "",
@@ -135,12 +139,14 @@ class OpsConfigPayload(BaseModel):
     rule_base_token: str = ""
     rule_table_id: str = ""
     rule_name: str = ""
+    folder_token: str = ""
     template_base_token: str = ""
     sync_base_token: str = ""
     account_filter_table_id: str = ""
     sync_notes_table_id: str = ""
     sync_comments_table_id: str = ""
     sync_limit: int = 0
+    sync_file_path: str = ""
     sample_creator_ids: str = ""
     notes_per_creator: int = 20
     scenario_base_token: str = ""
@@ -230,6 +236,15 @@ async def serve_ops_config():
     return {"message": "ops_config.html not found", "path": page_path}
 
 
+@app.get("/favicon.ico")
+async def serve_favicon():
+    """Return a favicon so browser checks do not produce a noisy 404."""
+    favicon_path = os.path.join(WEBUI_DIR, "vite.svg")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/svg+xml")
+    return {"message": "favicon not found"}
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
@@ -237,51 +252,78 @@ async def health_check():
 
 @app.get("/api/env/check")
 async def check_environment():
-    """Check if MediaCrawler environment is configured correctly"""
+    """Check whether the customer workstation can run the ops workbench."""
+    checks = []
+
+    def add_check(name: str, ok: bool, message: str, required: bool = True, detail: str = "") -> None:
+        checks.append({
+            "name": name,
+            "ok": ok,
+            "required": required,
+            "message": message,
+            "detail": detail[:500] if detail else "",
+        })
+
+    add_check(
+        "Python",
+        sys.version_info >= (3, 11),
+        f"{sys.version.split()[0]}（要求 3.11 或更高）",
+    )
+
     try:
-        # Run uv run main.py --help command to check environment
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+        import playwright  # noqa: F401
+        add_check("Python 依赖", True, "FastAPI / Uvicorn / Playwright 已安装")
+    except Exception as exc:
+        add_check("Python 依赖", False, "依赖未安装完整，请重新运行启动脚本安装 requirements.txt", detail=str(exc))
+
+    try:
+        script = (
+            "from pathlib import Path; "
+            "from playwright.sync_api import sync_playwright; "
+            "p=sync_playwright().start(); "
+            "path=p.chromium.executable_path; "
+            "p.stop(); "
+            "print(path); "
+            "raise SystemExit(0 if Path(path).exists() else 1)"
+        )
         process = await asyncio.create_subprocess_exec(
-            "uv", "run", "main.py", "--help",
+            sys.executable,
+            "-c",
+            script,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd="."  # Project root directory
+            cwd=str(PROJECT_ROOT),
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=30.0  # 30 seconds timeout
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15.0)
+        browser_path = stdout.decode("utf-8", errors="ignore").strip()
+        err = stderr.decode("utf-8", errors="ignore").strip()
+        add_check(
+            "Playwright 浏览器",
+            process.returncode == 0,
+            "Chromium 已安装" if process.returncode == 0 else "Chromium 未安装，请运行 python -m playwright install chromium",
+            detail=browser_path or err,
         )
+    except Exception as exc:
+        add_check("Playwright 浏览器", False, "Chromium 检查失败，请运行 python -m playwright install chromium", detail=str(exc))
 
-        if process.returncode == 0:
-            return {
-                "success": True,
-                "message": "MediaCrawler environment configured correctly",
-                "output": stdout.decode("utf-8", errors="ignore")[:500]  # Truncate to first 500 characters
-            }
-        else:
-            error_msg = stderr.decode("utf-8", errors="ignore") or stdout.decode("utf-8", errors="ignore")
-            return {
-                "success": False,
-                "message": "Environment check failed",
-                "error": error_msg[:500]
-            }
-    except asyncio.TimeoutError:
-        return {
-            "success": False,
-            "message": "Environment check timeout",
-            "error": "Command execution exceeded 30 seconds"
-        }
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "message": "uv command not found",
-            "error": "Please ensure uv is installed and configured in system PATH"
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": "Environment check error",
-            "error": str(e)
-        }
+    lark_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
+    if lark_bin:
+        add_check("飞书 CLI", True, "已找到 lark-cli；请确认已用客户飞书账号完成授权", detail=lark_bin)
+    else:
+        add_check("飞书 CLI", False, "未找到 lark-cli；初始化 Base 和同步多维表前必须安装并授权")
+
+    ensure_runtime_dirs()
+    add_check("工作台配置目录", True, "已就绪", detail=str(OPS_CONFIG_PATH))
+    add_check("运行数据目录", True, "已就绪", detail=str(OPS_CONFIG_PATH.parent.parent))
+
+    success = all(item["ok"] for item in checks if item["required"])
+    return {
+        "success": success,
+        "message": "环境检查通过" if success else "环境检查未通过，请按提示处理",
+        "checks": checks,
+    }
 
 
 @app.get("/api/config/platforms")
