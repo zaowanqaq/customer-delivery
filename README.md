@@ -1,293 +1,161 @@
-# 🔥 MediaCrawler - 自媒体平台爬虫 🕷️
+# 小红书数据采集与多维表格同步工作台
 
-<div align="center">
+本仓库是面向交付部署的小红书专用版本，只保留小红书公开内容采集、蒲公英达人分析、合作笔记监控、飞书多维表格初始化与同步相关能力。原多平台示例、旧版多语言文档、旧 WebUI 构建产物和无关演示工程已清理。
 
-<a href="https://trendshift.io/repositories/8291" target="_blank">
-  <img src="https://trendshift.io/api/badge/repositories/8291" alt="NanmiCoder%2FMediaCrawler | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-</a>
+> 免责声明：本项目仅供个人学习、研究和合规的数据整理场景使用。使用者应遵守目标网站服务条款、法律法规和客户数据合规要求，不得进行高频、大规模或侵害他人权益的采集行为。因使用本项目造成的任何后果由使用者自行承担。
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/MediaCrawler?style=social)](https://github.com/NanmiCoder/MediaCrawler/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/MediaCrawler?style=social)](https://github.com/NanmiCoder/MediaCrawler/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/MediaCrawler)](https://github.com/NanmiCoder/MediaCrawler/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/MediaCrawler)](https://github.com/NanmiCoder/MediaCrawler/pulls)
-[![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
-[![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README_en.md)
-[![Español](https://img.shields.io/badge/🇪🇸_Español-Available-green)](README_es.md)
-</div>
+## 功能范围
 
+- 小红书关键词搜索、指定笔记、达人主页采集。
+- 小红书笔记、评论、达人数据保存到本机运行数据目录。
+- 采集完成后默认自动同步到飞书多维表格。
+- 蒲公英达人分析支持运行后自动同步。
+- 合作笔记监控支持 4 / 8 / 24 小时循环刷新与同步。
+- Web 工作台提供项目配置、环境检查、飞书表初始化、采集、同步和监控入口。
 
+## 运行环境
 
-> **免责声明：**
-> 
-> 大家请以学习为目的使用本仓库⚠️⚠️⚠️⚠️，[爬虫违法违规的案件](https://github.com/HiddenStrawberry/Crawler_Illegal_Cases_In_China)  <br>
->
->本仓库的所有内容仅供学习和参考之用，禁止用于商业用途。任何人或组织不得将本仓库的内容用于非法用途或侵犯他人合法权益。本仓库所涉及的爬虫技术仅用于学习和研究，不得用于对其他平台进行大规模爬虫或其他非法行为。对于因使用本仓库内容而引起的任何法律责任，本仓库不承担任何责任。使用本仓库的内容即表示您同意本免责声明的所有条款和条件。
->
-> 点击查看更为详细的免责声明。[点击跳转](#disclaimer)
+- Python 3.11 或更高版本。
+- Chrome 或 Edge 浏览器，用于 CDP 模式保持真实浏览器会话。
+- Playwright Chromium，用于兜底浏览器能力检查。
+- `lark-cli`，用于飞书多维表格建表和数据同步。
+- 推荐使用 `uv` 管理 Python 依赖；也支持原生 `venv`。
 
+## 快速启动
 
+### Windows
 
+```powershell
+.\start_ops.bat
+```
 
-## 📖 项目简介
+### macOS / Linux
 
-一个功能强大的**多平台自媒体数据采集工具**，支持小红书、抖音、快手、B站、微博、贴吧、知乎等主流平台的公开信息抓取。
+```bash
+chmod +x ./start_ops.sh
+./start_ops.sh
+```
 
-### 🔧 技术原理
+启动脚本会创建 `.venv`、检查运行期依赖、安装缺失依赖、检查 Playwright 浏览器并打开工作台：
 
-- **核心技术**：基于 [Playwright](https://playwright.dev/) 浏览器自动化框架登录保存登录态
-- **无需JS逆向**：利用保留登录态的浏览器上下文环境，通过 JS 表达式获取签名参数
-- **优势特点**：无需逆向复杂的加密算法，大幅降低技术门槛
+```text
+http://127.0.0.1:8081/ops-config
+```
 
+如需指定依赖源，可提前设置：
 
-## ✨ 功能特性
-| 平台   | 关键词搜索 | 指定帖子ID爬取 | 二级评论 | 指定创作者主页 | 登录态缓存 | IP代理池 | 生成评论词云图 |
-| ------ | ---------- | -------------- | -------- | -------------- | ---------- | -------- | -------------- |
-| 小红书 | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 抖音   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 快手   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| B 站   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 微博   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 贴吧   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
-| 知乎   | ✅          | ✅              | ✅        | ✅              | ✅          | ✅        | ✅              |
+```bash
+export PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
 
+Windows PowerShell：
 
+```powershell
+$env:PYPI_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+```
 
-<strong>MediaCrawlerPro 重磅发布！开源不易，欢迎订阅支持</strong>
+## 手动安装
 
-> 专注于学习成熟项目的架构设计，不仅仅是爬虫技术，Pro 版本的代码设计思路同样值得深入学习！
-
-[MediaCrawlerPro](https://github.com/MediaCrawlerPro) 相较于开源版本的核心优势：
-
-#### 🎯 核心功能升级
-- ✅ **自媒体内容拆解Agent**（新增功能）
-- ✅ **断点续爬功能**（重点特性）
-- ✅ **多账号 + IP代理池支持**（重点特性）
-- ✅ **去除 Playwright 依赖**，使用更简单
-- ✅ **完整 Linux 环境支持**
-
-#### 🏗️ 架构设计优化
-- ✅ **代码重构优化**，更易读易维护（解耦 JS 签名逻辑）
-- ✅ **企业级代码质量**，适合构建大型爬虫项目
-- ✅ **完美架构设计**，高扩展性，源码学习价值更大
-
-#### 🎁 额外功能
-- ✅ **自媒体视频下载器桌面端**（适合学习全栈开发）
-- ✅ **多平台首页信息流推荐**（HomeFeed）
-- ✅ **AI Agent Skill 支持**（[OpenClaw](https://openclaw.ai/) 🦞 / Claude Code / Cursor 一键安装，让 Agent 自动爬取数据）
-- [ ] **基于评论分析AI Agent正在开发中 🚀🚀**
-
-点击查看：[MediaCrawlerPro 项目主页](https://github.com/MediaCrawlerPro) 更多介绍
-
-
-
-## 🚀 快速开始
-
-> 💡 **如果这个项目对您有帮助，请给个 ⭐ Star 支持一下！**
-
-## 📋 前置依赖
-
-### 🚀 uv 安装（推荐）
-
-在进行下一步操作之前，请确保电脑上已经安装了 uv：
-
-- **安装地址**：[uv 官方安装指南](https://docs.astral.sh/uv/getting-started/installation)
-- **验证安装**：终端输入命令 `uv --version`，如果正常显示版本号，证明已经安装成功
-- **推荐理由**：uv 是目前最强的 Python 包管理工具，速度快、依赖解析准确
-
-### 🟢 Node.js 安装
-
-项目依赖 Node.js，请前往官网下载安装：
-
-- **下载地址**：https://nodejs.org/en/download/
-- **版本要求**：>= 16.0.0
-
-### 📦 Python 包安装
-
-```shell
-# 进入项目目录
-cd MediaCrawler
-
-# 使用 uv sync 命令来保证 python 版本和相关依赖包的一致性
+```bash
 uv sync
+uv run playwright install chromium
+uv run uvicorn api.main:app --host 127.0.0.1 --port 8081
 ```
 
-### 🌐 浏览器驱动安装
+原生 `venv`：
 
-```shell
-# 安装浏览器驱动
-uv run playwright install
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8081
 ```
 
-## 🚀 运行爬虫程序
+Windows 原生 `venv`：
 
-```shell
-# 在 config/base_config.py 查看配置项目功能，写的有中文注释
-
-# 从配置文件中读取关键词搜索相关的帖子并爬取帖子信息与评论
-uv run main.py --platform xhs --lt qrcode --type search
-
-# 从配置文件中读取指定的帖子ID列表获取指定帖子的信息与评论信息
-uv run main.py --platform xhs --lt qrcode --type detail
-
-# 打开对应APP扫二维码登录
-
-# 其他平台爬虫使用示例，执行下面的命令查看
-uv run main.py --help
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8081
 ```
 
-<details>
-<summary>🖥️ <strong>WebUI 可视化操作界面</strong></summary>
+## 命令行采集
 
-MediaCrawler 提供了基于 Web 的可视化操作界面，无需命令行也能轻松使用爬虫功能。
-
-#### 启动 WebUI 服务
-
-```shell
-# 启动 API 服务器（默认端口 8080）
-uv run uvicorn api.main:app --port 8080 --reload
-
-# 或者使用模块方式启动
-uv run python -m api.main
+```bash
+uv run main.py --platform xhs --lt qrcode --type search --keywords "关键词"
+uv run main.py --platform xhs --lt qrcode --type detail --specified_id "小红书笔记链接"
+uv run main.py --platform xhs --lt qrcode --type creator --creator_id "小红书达人主页链接"
 ```
 
-启动成功后，访问 `http://localhost:8080` 即可打开 WebUI 界面。
+常用参数：
 
-#### WebUI 功能特性
+- `--save_data_option jsonl`：默认保存格式，便于追加写入和同步。
+- `--get_comment true`：采集一级评论。
+- `--get_sub_comment true`：采集二级评论。
+- `--max_notes_count 20`：限制采集笔记数量。
+- `--headless false`：保留可见浏览器，便于扫码和人工验证。
 
-- 可视化配置爬虫参数（平台、登录方式、爬取类型等）
-- 实时查看爬虫运行状态和日志
-- 数据预览和导出
+## 数据目录
 
-#### 界面预览
+默认数据、浏览器状态和工作台配置写入当前用户运行目录，不写入源码目录：
 
-<img src="docs/static/images/img_8.png" alt="WebUI 界面预览">
+- Windows：`%APPDATA%\MediaCrawler\default`
+- macOS：`~/Library/Application Support/MediaCrawler/default`
+- Linux：`~/.local/share/mediacrawler/default`
 
-</details>
+可以通过环境变量覆盖：
 
-<details>
-<summary>🔗 <strong>使用 Python 原生 venv 管理环境（不推荐）</strong></summary>
-
-#### 创建并激活 Python 虚拟环境
-
-> 如果是爬取抖音和知乎，需要提前安装 nodejs 环境，版本大于等于：`16` 即可
-
-```shell
-# 进入项目根目录
-cd MediaCrawler
-
-# 创建虚拟环境
-# 我的 python 版本是：3.11 requirements.txt 中的库是基于这个版本的
-# 如果是其他 python 版本，可能 requirements.txt 中的库不兼容，需自行解决
-python -m venv venv
-
-# macOS & Linux 激活虚拟环境
-source venv/bin/activate
-
-# Windows 激活虚拟环境
-venv\Scripts\activate
+```bash
+export MEDIACRAWLER_HOME=/path/to/runtime
 ```
 
-#### 安装依赖库
+## 飞书多维表格同步
 
-```shell
-pip install -r requirements.txt
+工作台以“自动同步”为默认流程：
+
+1. 在工作台配置飞书 `base_token`、目标表和项目参数。
+2. 启动小红书采集或蒲公英达人分析。
+3. 本地文件仍会保存到运行数据目录，用于审计和失败重试。
+4. 采集进程结束后，工作台等待空闲并自动触发同步。
+
+手动同步相关前端入口已隐藏，但后端接口保留，方便后续排障或临时恢复。
+
+## 合作笔记监控
+
+合作监控支持 4 / 8 / 24 小时间隔。启动后会先执行一次刷新和同步，然后等待配置间隔再进入下一轮；停止监控会取消后台任务。该能力依赖当前工作台进程持续运行，若机器关机或服务退出，需要重新启动工作台。
+
+## 环境检查
+
+打开工作台后先运行“环境检查”。检查项包括：
+
+- Python 版本。
+- 运行期 Python 依赖。
+- Playwright Chromium。
+- CDP 模式所需 Chrome / Edge。
+- `lark-cli` 安装与授权状态。
+- 工作台配置目录和运行数据目录。
+
+## 测试
+
+```bash
+uv run pytest
 ```
 
-#### 安装 playwright 浏览器驱动
+无本地 Redis 或 MongoDB 服务时，相关集成测试会自动跳过；核心小红书交付流程、部署可移植性、工作台 UI 和飞书同步参数测试应通过。
 
-```shell
-playwright install
-```
+## 目录说明
 
-#### 运行爬虫程序（原生环境）
+- `media_platform/xhs/`：小红书采集实现。
+- `store/xhs/`：小红书数据落盘和数据库存储实现。
+- `api/`：工作台 API、静态页面和飞书同步编排。
+- `tools/`：浏览器、CDP、飞书、蒲公英和辅助工具。
+- `config/`：小红书和运行环境配置。
+- `docs/`：仍被运行时或交付说明引用的少量文档和资源。
 
-```shell
-# 项目默认是没有开启评论爬取模式，如需评论请在 config/base_config.py 中的 ENABLE_GET_COMMENTS 变量修改
-# 一些其他支持项，也可以在 config/base_config.py 查看功能，写的有中文注释
+## 常见问题
 
-# 从配置文件中读取关键词搜索相关的帖子并爬取帖子信息与评论
-python main.py --platform xhs --lt qrcode --type search
-
-# 从配置文件中读取指定的帖子ID列表获取指定帖子的信息与评论信息
-python main.py --platform xhs --lt qrcode --type detail
-
-# 打开对应APP扫二维码登录
-
-# 其他平台爬虫使用示例，执行下面的命令查看
-python main.py --help
-```
-
-</details>
-
-
-## 💾 数据保存
-
-MediaCrawler 支持多种数据存储方式，包括 CSV、JSON、JSONL、Excel、SQLite 和 MySQL 数据库。
-
-📖 **详细使用说明请查看：[数据存储指南](docs/data_storage_guide.md)**
-
-
-[🚀 MediaCrawlerPro 重磅发布 🚀！更多的功能，更好的架构设计！开源不易，欢迎订阅支持！](https://github.com/MediaCrawlerPro)
-
-
-## 💬 交流群组
-- **微信交流群**：[点击加入](https://nanmicoder.github.io/MediaCrawler/%E5%BE%AE%E4%BF%A1%E4%BA%A4%E6%B5%81%E7%BE%A4.html)
-- **B站账号**：[关注我](https://space.bilibili.com/434377496)，分享AI与爬虫技术知识
-
-
-## 💰 赞助商展示
-
-<a href="https://tikhub.io/?utm_source=github.com/NanmiCoder/MediaCrawler&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad">
-<img width="500" src="docs/static/images/tikhub_banner_zh.png">
-<br>
-TikHub.io 提供 900+ 高稳定性数据接口，覆盖 TK、DY、XHS、Y2B、Ins、X 等 14+ 海内外主流平台，支持用户、内容、商品、评论等多维度公开数据 API，并配套 4000 万+ 已清洗结构化数据集，使用邀请码 <code>cfzyejV9</code> 注册并充值，即可额外获得 $2 赠送额度。
-</a>
-
----
-
-## 🤝 成为赞助者
-
-成为赞助者，可以将您的产品展示在这里，每天获得大量曝光！
-
-**联系方式**：
----
-
-## 📚 其他
-- **常见问题**：[MediaCrawler 完整文档](https://nanmicoder.github.io/MediaCrawler/)
-- **爬虫入门教程**：[CrawlerTutorial 免费教程](https://github.com/NanmiCoder/CrawlerTutorial)
-- **新闻爬虫开源项目**：[NewsCrawlerCollection](https://github.com/NanmiCoder/NewsCrawlerCollection)
-
-
-## ⭐ Star 趋势图
-
-如果这个项目对您有帮助，请给个 ⭐ Star 支持一下，让更多的人看到 MediaCrawler！
-
-[![Star History Chart](https://api.star-history.com/svg?repos=NanmiCoder/MediaCrawler&type=Date)](https://star-history.com/#NanmiCoder/MediaCrawler&Date)
-
-
-## 📚 参考
-
-- **小红书签名仓库**：[Cloxl 的 xhs 签名仓库](https://github.com/Cloxl/xhshow)
-- **小红书客户端**：[ReaJason 的 xhs 仓库](https://github.com/ReaJason/xhs)
-- **短信转发**：[SmsForwarder 参考仓库](https://github.com/pppscn/SmsForwarder)
-- **内网穿透工具**：[ngrok 官方文档](https://ngrok.com/docs/)
-
-
-# 免责声明
-<div id="disclaimer"> 
-
-## 1. 项目目的与性质
-本项目（以下简称“本项目”）是作为一个技术研究与学习工具而创建的，旨在探索和学习网络数据采集技术。本项目专注于自媒体平台的数据爬取技术研究，旨在提供给学习者和研究者作为技术交流之用。
-
-## 2. 法律合规性声明
-本项目开发者（以下简称“开发者”）郑重提醒用户在下载、安装和使用本项目时，严格遵守中华人民共和国相关法律法规，包括但不限于《中华人民共和国网络安全法》、《中华人民共和国反间谍法》等所有适用的国家法律和政策。用户应自行承担一切因使用本项目而可能引起的法律责任。
-
-## 3. 使用目的限制
-本项目严禁用于任何非法目的或非学习、非研究的商业行为。本项目不得用于任何形式的非法侵入他人计算机系统，不得用于任何侵犯他人知识产权或其他合法权益的行为。用户应保证其使用本项目的目的纯属个人学习和技术研究，不得用于任何形式的非法活动。
-
-## 4. 免责声明
-开发者已尽最大努力确保本项目的正当性及安全性，但不对用户使用本项目可能引起的任何形式的直接或间接损失承担责任。包括但不限于由于使用本项目而导致的任何数据丢失、设备损坏、法律诉讼等。
-
-## 5. 最终解释权
-关于本项目的最终解释权归开发者所有。开发者保留随时更改或更新本免责声明的权利，恕不另行通知。
-</div>
+- 扫码后仍无法继续：关闭无头模式，确认浏览器内已完成登录和滑块验证。
+- 环境检查提示缺少 Chrome / Edge：安装浏览器，或在 `config/base_config.py` 设置 `CUSTOM_BROWSER_PATH`。
+- 飞书同步失败：先确认 `lark-cli` 已安装并使用客户飞书账号授权，再检查目标 Base 和表权限。
+- 找不到本地数据文件：确认采集已完成，且 `MEDIACRAWLER_HOME` 没有切换到另一个运行目录。
