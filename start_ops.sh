@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 PY=".venv/bin/python"
 PORT="${PORT:-8081}"
 URL="http://127.0.0.1:${PORT}/ops-config"
+REQUIRED_IMPORTS="import fastapi, uvicorn, playwright, pandas, openpyxl, websockets, xhshow, cv2"
 
 echo "[MediaCrawler] Working directory: $(pwd)"
 
@@ -15,11 +16,16 @@ if [ ! -x "$PY" ]; then
 fi
 
 echo "[MediaCrawler] Checking required packages..."
-if ! "$PY" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+if ! "$PY" -c "$REQUIRED_IMPORTS" >/dev/null 2>&1; then
   echo "[MediaCrawler] Installing dependencies..."
-  "$PY" -m pip install --upgrade pip
-  "$PY" -m pip install -r requirements.txt
-  "$PY" -m pip install uvicorn
+  PIP_INDEX_ARGS=()
+  if [ -n "${PYPI_INDEX_URL:-}" ]; then
+    PIP_INDEX_ARGS=(-i "$PYPI_INDEX_URL")
+  elif [ -n "${PIP_INDEX_URL:-}" ]; then
+    PIP_INDEX_ARGS=(-i "$PIP_INDEX_URL")
+  fi
+  "$PY" -m pip install "${PIP_INDEX_ARGS[@]}" --upgrade pip
+  "$PY" -m pip install "${PIP_INDEX_ARGS[@]}" -r requirements.txt
 fi
 
 echo "[MediaCrawler] Checking Playwright browser..."

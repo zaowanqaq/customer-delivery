@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from config.runtime_paths import downloads_dir
+from config.runtime_paths import data_dir, downloads_dir
 from ..schemas import (
     CrawlerStartRequest,
     CrawlerStatusResponse,
@@ -577,7 +577,10 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
 def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     project_root = Path(__file__).resolve().parents[2]
     suffix = "contents" if data_type == "notes" else "comments"
-    data_root = project_root / "data" / "xhs"
+    data_roots = [data_dir() / "xhs"]
+    legacy_data_root = project_root / "data" / "xhs"
+    if legacy_data_root.resolve() != data_roots[0].resolve():
+        data_roots.append(legacy_data_root)
     mode = (crawler_type_hint or "").strip()
     patterns: List[tuple[str, str]] = []
     if mode:
@@ -598,11 +601,12 @@ def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     ])
 
     candidates: List[Path] = []
-    for folder, pattern in patterns:
-        dir_path = data_root / folder
-        if not dir_path.exists():
-            continue
-        candidates.extend(dir_path.glob(pattern))
+    for data_root in data_roots:
+        for folder, pattern in patterns:
+            dir_path = data_root / folder
+            if not dir_path.exists():
+                continue
+            candidates.extend(dir_path.glob(pattern))
     candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         raise HTTPException(status_code=404, detail=f"未找到本地 {data_type} 数据文件（jsonl/csv/json/xlsx/xls）")

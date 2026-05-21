@@ -6,10 +6,24 @@
 
 import time
 import unittest
+import socket
 
 from cache.redis_cache import RedisCache
+from config import db_config
 
 
+def _redis_available() -> bool:
+    try:
+        with socket.create_connection(
+            (db_config.REDIS_DB_HOST, int(db_config.REDIS_DB_PORT)),
+            timeout=0.5,
+        ):
+            return True
+    except OSError:
+        return False
+
+
+@unittest.skipUnless(_redis_available(), "Redis is not available on configured host/port")
 class TestRedisCache(unittest.TestCase):
 
     def setUp(self):

@@ -6,6 +6,7 @@ cd /d "%~dp0"
 set "PY=.venv\Scripts\python.exe"
 set "PORT=8081"
 set "URL=http://127.0.0.1:%PORT%/ops-config"
+set "REQUIRED_IMPORTS=import fastapi, uvicorn, playwright, pandas, openpyxl, websockets, xhshow, cv2"
 
 echo [MediaCrawler] Working directory: %CD%
 
@@ -20,12 +21,14 @@ if not exist "%PY%" (
 )
 
 echo [MediaCrawler] Checking required packages...
-"%PY%" -c "import fastapi, uvicorn" >nul 2>nul
+"%PY%" -c "%REQUIRED_IMPORTS%" >nul 2>nul
 if errorlevel 1 (
   echo [MediaCrawler] Installing dependencies...
-  "%PY%" -m pip install --upgrade pip
-  "%PY%" -m pip install -r requirements.txt
-  "%PY%" -m pip install uvicorn
+  set "PIP_INDEX_ARGS="
+  if defined PYPI_INDEX_URL set "PIP_INDEX_ARGS=-i %PYPI_INDEX_URL%"
+  if not defined PYPI_INDEX_URL if defined PIP_INDEX_URL set "PIP_INDEX_ARGS=-i %PIP_INDEX_URL%"
+  "%PY%" -m pip install %PIP_INDEX_ARGS% --upgrade pip
+  "%PY%" -m pip install %PIP_INDEX_ARGS% -r requirements.txt
 )
 
 echo [MediaCrawler] Checking Playwright browser...

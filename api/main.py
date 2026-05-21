@@ -5,6 +5,7 @@ Start command: uvicorn api.main:app --port 8081
 Or: python -m api.main
 """
 import asyncio
+import importlib
 import json
 import os
 import shutil
@@ -19,7 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import config
 from config.runtime_paths import ensure_runtime_dirs, ops_config_path
+from tools.browser_launcher import BrowserLauncher
 from .routers import crawler_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
@@ -116,6 +119,17 @@ PROJECT_BOUND_FIELDS = {
     "pgy_sync_after_run",
 }
 
+REQUIRED_RUNTIME_IMPORTS = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "playwright": "playwright",
+    "pandas": "pandas",
+    "openpyxl": "openpyxl",
+    "websockets": "websockets",
+    "xhshow": "xhshow",
+    "cv2": "opencv-python",
+}
+
 
 class OpsConfigPayload(BaseModel):
     platform: str = "xhs"
@@ -191,6 +205,39 @@ def _save_ops_config(config_data: dict) -> None:
     OPS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OPS_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config_data, f, ensure_ascii=False, indent=2)
+
+
+def _missing_runtime_dependencies() -> list[str]:
+    missing = []
+    for module_name, package_name in REQUIRED_RUNTIME_IMPORTS.items():
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing.append(package_name)
+    return missing
+
+
+def _check_cdp_browser_configuration() -> tuple[bool, str, str, bool]:
+    if not config.ENABLE_CDP_MODE:
+        return True, "CDP 模式未启用", "", False
+
+    custom_path = (config.CUSTOM_BROWSER_PATH or "").strip()
+    if custom_path:
+        custom_browser = Path(custom_path).expanduser()
+        ok = custom_browser.is_file()
+        message = "已找到自定义浏览器" if ok else "CUSTOM_BROWSER_PATH 指向的浏览器不存在"
+        return ok, message, str(custom_browser), True
+
+    browser_paths = BrowserLauncher().detect_browser_paths()
+    if browser_paths:
+        return True, "已找到系统 Chrome/Edge，可用于 CDP 模式", browser_paths[0], True
+
+    return (
+        False,
+        "当前配置启用 ENABLE_CDP_MODE，但未找到系统 Chrome/Edge；请安装浏览器或设置 CUSTOM_BROWSER_PATH",
+        f"CUSTOM_BROWSER_PATH={config.CUSTOM_BROWSER_PATH!r}",
+        True,
+    )
 
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
@@ -270,13 +317,16 @@ async def check_environment():
         f"{sys.version.split()[0]}（要求 3.11 或更高）",
     )
 
-    try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
-        import playwright  # noqa: F401
-        add_check("Python 依赖", True, "FastAPI / Uvicorn / Playwright 已安装")
-    except Exception as exc:
-        add_check("Python 依赖", False, "依赖未安装完整，请重新运行启动脚本安装 requirements.txt", detail=str(exc))
+    missing_packages = _missing_runtime_dependencies()
+    if missing_packages:
+        add_check(
+            "Python 依赖",
+            False,
+            "依赖未安装完整，请重新运行启动脚本安装 requirements.txt",
+            detail=", ".join(missing_packages),
+        )
+    else:
+        add_check("Python 依赖", True, "运行期 Python 依赖已安装")
 
     try:
         script = (
@@ -307,6 +357,17 @@ async def check_environment():
         )
     except Exception as exc:
         add_check("Playwright 浏览器", False, "Chromium 检查失败，请运行 python -m playwright install chromium", detail=str(exc))
+
+    try:
+        ok, message, detail, required = _check_cdp_browser_configuration()
+        add_check("CDP 浏览器", ok, message, required=required, detail=detail)
+    except Exception as exc:
+        add_check(
+            "CDP 浏览器",
+            False,
+            "CDP 浏览器配置检查失败；请确认 Chrome/Edge 安装或 CUSTOM_BROWSER_PATH 配置",
+            detail=str(exc),
+        )
 
     lark_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
     if lark_bin:

@@ -215,11 +215,14 @@ class CrawlerManager:
     def _build_command(self, config: CrawlerStartRequest) -> list:
         """Build main.py command line arguments"""
         uv_bin = shutil.which("uv")
-        venv_python = self._project_root / ".venv" / "Scripts" / "python.exe"
+        windows_venv_python = self._project_root / ".venv" / "Scripts" / "python.exe"
+        posix_venv_python = self._project_root / ".venv" / "bin" / "python"
         if uv_bin:
             cmd = [uv_bin, "run", "python", "main.py"]
-        elif venv_python.exists():
-            cmd = [str(venv_python), "main.py"]
+        elif windows_venv_python.exists():
+            cmd = [str(windows_venv_python), "main.py"]
+        elif posix_venv_python.exists():
+            cmd = [str(posix_venv_python), "main.py"]
         else:
             cmd = ["python", "main.py"]
 
