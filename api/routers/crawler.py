@@ -1310,6 +1310,7 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
     interval_seconds = request.interval_hours * 3600
     monitor_tag = f"{request.interval_hours}h"
     while True:
+        await asyncio.sleep(interval_seconds)
         job = collaboration_monitor_jobs.get(job_id)
         if not job:
             return
@@ -1320,7 +1321,6 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
             job["last_error"] = ""
         except Exception as e:
             job["last_error"] = str(e)
-        await asyncio.sleep(interval_seconds)
 
 
 @router.get("/preflight")
@@ -1777,7 +1777,7 @@ async def stop_collaboration_monitor(request: CollaborationMonitorStopRequest):
     task = job.get("task")
     if task:
         task.cancel()
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(asyncio.CancelledError):
             await task
     collaboration_monitor_jobs.pop(request.job_id, None)
     return {"status": "ok", "message": "合作笔记监控已停止", "job_id": request.job_id}
