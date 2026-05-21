@@ -8,10 +8,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from config.runtime_paths import data_dir
+
 router = APIRouter(prefix="/notes", tags=["notes"])
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = PROJECT_ROOT / "data" / "xhs"
+DATA_DIR = data_dir() / "xhs"
 IMAGE_DIR = DATA_DIR / "images"
 SUPPORTED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 NOTE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,96}$")
@@ -145,7 +147,7 @@ def _read_notes() -> List[Dict[str, Any]]:
             note_id = str(row.get("note_id") or "").strip()
             if not note_id or note_id in by_id:
                 continue
-            row["_source_file"] = str(path.relative_to(PROJECT_ROOT))
+            row["_source_file"] = str(path.relative_to(DATA_DIR.parent))
             by_id[note_id] = row
 
     notes = list(by_id.values())

@@ -141,12 +141,20 @@
     .huitun-result { background: #fff8f0; border: 1px solid #e7d8ca; border-radius: 8px; padding: 16px; min-height: 214px; }
     .huitun-result h3 { margin: 0 0 10px; font-size: 15px; color: var(--ink); }
     .huitun-result pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: #4b4037; font-size: 12px; line-height: 1.6; font-family: 'JetBrains Mono', Consolas, monospace; }
+    .pgy-result-host { min-height: 160px; color: #4b4037; font-size: 13px; line-height: 1.6; }
     .pgy-result { display: grid; gap: 10px; color: #4b4037; font-size: 13px; line-height: 1.6; }
     .pgy-result-row strong { color: var(--ink); }
     .pgy-shot { width: 100%; max-height: 420px; object-fit: contain; border: 1px solid #e7d8ca; border-radius: 8px; background: #fff; }
     .pgy-progress { display: grid; gap: 6px; margin-top: 4px; }
     .pgy-progress div { display: flex; align-items: center; gap: 8px; }
     .pgy-progress span { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
+    .pgy-similar-picker { margin-top: 10px; display: grid; gap: 8px; }
+    .pgy-similar-picker header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .pgy-similar-list { display: grid; gap: 6px; max-height: 260px; overflow: auto; padding-right: 4px; }
+    .pgy-similar-item { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e7d8ca; border-radius: 8px; background: #fffdf9; }
+    .pgy-similar-item input { width: 16px; height: 16px; }
+    .pgy-similar-name { font-weight: 800; color: var(--ink); }
+    .pgy-similar-meta { font-size: 12px; color: var(--muted); }
     .huitun-path { display: inline-flex; max-width: 100%; overflow-wrap: anywhere; color: var(--accent-strong); font-weight: 800; }
     .notes-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; gap: 12px; align-items: end; margin-bottom: 16px; min-width: 0; }
     .notes-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -463,8 +471,8 @@
         <div class="row">
           <label>下载图片/视频到本地</label>
           <select id="enable_media">
-            <option value="false">false</option>
             <option value="true">true</option>
+            <option value="false">false</option>
           </select>
         </div>
         <div class="row">
@@ -510,31 +518,32 @@
               <div>
                 <div class="grid">
                   <div class="row">
-                    <label>达人昵称</label>
-                    <input id="pgy_nickname" placeholder="李佳薇">
+                    <label>达人昵称（必填）</label>
+                    <input id="pgy_nickname" required placeholder="输入要分析的达人昵称">
                   </div>
                   <div class="row">
-                    <label>小红书号</label>
-                    <input id="pgy_red_id" placeholder="49674066162">
+                    <label>小红书号（可选）</label>
+                    <input id="pgy_red_id" placeholder="用于重名时精确匹配，不会自动填充">
                   </div>
                   <div class="row">
                     <label>运行后自动同步</label>
                     <select id="pgy_sync_after_run">
-                      <option value="false">否</option>
-                      <option value="true">是</option>
+                      <option value="true">是，写入达人智能圈选表</option>
+                      <option value="false">否，仅保存本地文件</option>
                     </select>
                   </div>
                 </div>
                 <div class="btns">
                   <button class="ghost" onclick="pgyLogin()">打开蒲公英登录窗口</button>
                   <button class="ghost" onclick="pgyCheckStatus()">验证蒲公英登录态</button>
-                  <button class="primary" onclick="pgyRunKol()">运行达人分析</button>
-                  <button class="ghost" onclick="pgySyncKol()">同步最近结果到多维表</button>
+                  <button class="primary" onclick="pgyRunKol()">分析达人并列出相似达人</button>
+                  <button class="ghost" onclick="pgyRunSelectedSimilar()">抓取勾选相似达人详情</button>
+                  <button class="ghost" onclick="pgySyncKol()">备用：同步最近本地结果</button>
                 </div>
               </div>
               <div class="huitun-result">
                 <h3>执行结果</h3>
-                <pre id="huitun_result">等待操作</pre>
+                <div id="huitun_result" class="pgy-result-host">等待操作</div>
               </div>
             </div>
           </section>
@@ -614,7 +623,7 @@
               <div class="notes-stat"><span>点赞合计</span><strong id="notes_likes">0</strong></div>
             </div>
             <div id="notes_keywords_strip" class="keyword-strip"></div>
-            <div id="notes_empty" class="notes-empty">暂无可浏览的数据。请先完成一次小红书抓取，或确认 data/xhs 下存在 contents 文件。</div>
+            <div id="notes_empty" class="notes-empty">暂无可浏览的数据。请先完成一次小红书抓取，或确认当前用户数据目录下存在 xhs contents 文件。</div>
             <div id="notes_board" class="notes-board"></div>
           </section>
           </div>
@@ -656,7 +665,7 @@
       <div class="grid">
         <div class="row full">
           <label>本地文件路径（可选，不填=自动用最新抓取文件）</label>
-          <input id="sync_file_path" placeholder="D:\trae international\MediaCrawler\data\xhs\jsonl\search_contents_xxx.jsonl 或 .xlsx">
+          <input id="sync_file_path" placeholder="可选：本机数据文件路径，例如 xhs/jsonl/search_contents_xxx.jsonl 或 .xlsx">
         </div>
         <div class="row">
           <label>同步数量上限（0=全部）</label>
@@ -774,7 +783,7 @@
       "xhs_search_scope", "xhs_location", "sync_limit", "sync_file_path",
       "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_notes_per_creator",
       "collab_interval_hours", "collab_sync_limit",
-      "pgy_nickname", "pgy_red_id", "pgy_table_id", "pgy_sync_after_run",
+      "pgy_table_id", "pgy_sync_after_run",
       "current_project_key", "project_profiles"
     ];
     const projectBoundFields = [
@@ -784,7 +793,7 @@
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
       "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator",
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
-      "collab_sync_limit", "pgy_nickname", "pgy_red_id", "pgy_table_id", "pgy_sync_after_run"
+      "collab_sync_limit", "pgy_table_id", "pgy_sync_after_run"
     ];
 
     let latestCollabJobId = "";
@@ -1335,6 +1344,12 @@
       if (currentProjectKey && projectProfiles[currentProjectKey]) {
         applyProjectProfile(projectProfiles[currentProjectKey]);
       }
+      const nicknameInput = document.getElementById("pgy_nickname");
+      const redIdInput = document.getElementById("pgy_red_id");
+      if (nicknameInput) nicknameInput.value = "";
+      if (redIdInput) redIdInput.value = "";
+      const syncSelect = document.getElementById("pgy_sync_after_run");
+      if (syncSelect && !syncSelect.value) syncSelect.value = "true";
       refreshProjectSelector();
       refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
     }
@@ -1384,8 +1399,8 @@
         collab_notes_per_creator: Number(document.getElementById("collab_notes_per_creator").value || 20),
         collab_interval_hours: Number(document.getElementById("collab_interval_hours").value || 4),
         collab_sync_limit: Number(document.getElementById("collab_sync_limit").value || 20),
-        pgy_nickname: document.getElementById("pgy_nickname").value.trim(),
-        pgy_red_id: document.getElementById("pgy_red_id").value.trim(),
+        pgy_nickname: "",
+        pgy_red_id: "",
         pgy_table_id: document.getElementById("pgy_table_id").value.trim(),
         pgy_sync_after_run: document.getElementById("pgy_sync_after_run").value,
         current_project_key: currentProjectKey,
@@ -1575,6 +1590,7 @@
 
     let latestPgyOutput = null;
     let pgyProgressTimer = null;
+    let latestPgySimilarCreators = [];
 
     function pgyStatusLabel(status) {
       const map = {
@@ -1585,7 +1601,7 @@
         success: "同步完成",
         error: "执行失败"
       };
-      return map[status] || status || "未知";
+      return map[status] || status || "执行失败";
     }
 
     function pgyFileUrl(path) {
@@ -1601,6 +1617,36 @@
       return `<div class="pgy-progress">${items}</div>`;
     }
 
+    function pgySimilarPickerHtml(similarCreators) {
+      if (!Array.isArray(similarCreators) || !similarCreators.length) return "";
+      const items = similarCreators.map((item, index) => {
+        const id = item._user_id || item.user_id || "";
+        const name = item.nickname || item.name || `相似达人 ${index + 1}`;
+        const redId = item.red_id || item.redId || "";
+        const fans = item.fans_count || item.fansCount || "";
+        const checked = index < 5 ? "checked" : "";
+        return `
+          <label class="pgy-similar-item">
+            <input type="checkbox" class="pgy-similar-checkbox" value="${escapeHtml(id)}" ${checked}>
+            <span>
+              <span class="pgy-similar-name">${escapeHtml(name)}</span>
+              <span class="pgy-similar-meta">${escapeHtml(redId ? "小红书号 " + redId : "无小红书号")}${fans ? " · 粉丝 " + escapeHtml(fans) : ""}</span>
+            </span>
+            <span class="pgy-similar-meta">#${escapeHtml(item.rank || index + 1)}</span>
+          </label>
+        `;
+      }).join("");
+      return `
+        <div class="pgy-similar-picker">
+          <header>
+            <strong>相似达人</strong>
+            <span class="pgy-similar-meta">默认勾选前 5 个，可按需选择后再抓详情</span>
+          </header>
+          <div class="pgy-similar-list">${items}</div>
+        </div>
+      `;
+    }
+
     function stopPgyProgress() {
       if (!pgyProgressTimer) return;
       clearInterval(pgyProgressTimer);
@@ -1609,24 +1655,10 @@
 
     function startPgyProgress(nickname) {
       stopPgyProgress();
-      const stages = [
-        "打开蒲公英找博主页面",
-        "验证登录态",
-        "切换到搜昵称入口",
-        `搜索达人：${nickname}`,
-        "读取相似博主推荐",
-        "进入达人详情页",
-        "读取传播表现和粉丝分析",
-        "保存本地文件"
-      ];
-      const active = [];
-      let index = 0;
-      const tick = () => {
-        if (index < stages.length) active.push({ message: stages[index++] });
-        renderHuitunResult({ status: "running", progress: active });
-      };
-      tick();
-      pgyProgressTimer = setInterval(tick, 4500);
+      renderHuitunResult({
+        status: "running",
+        progress: [{ message: `任务已提交：${nickname || "未命名达人"}。后端返回后展示真实执行日志。` }]
+      });
     }
 
     function renderHuitunResult(data) {
@@ -1634,13 +1666,21 @@
       if (!el) return;
       const rows = [];
       rows.push(`<div class="pgy-result-row"><strong>状态：</strong>${escapeHtml(pgyStatusLabel(data.status))}</div>`);
+      const inputNickname = (document.getElementById("pgy_nickname")?.value || "").trim();
+      if (inputNickname && data.nickname && inputNickname !== data.nickname) {
+        rows.push(`<div class="pgy-result-row"><strong>匹配提示：</strong>当前小红书号匹配到「${escapeHtml(data.nickname)}」，不是输入昵称「${escapeHtml(inputNickname)}」。如需按昵称搜索，请清空小红书号后重试。</div>`);
+      }
       if (data.nickname) rows.push(`<div class="pgy-result-row"><strong>达人昵称：</strong>${escapeHtml(data.nickname)}</div>`);
       if (data.red_id) rows.push(`<div class="pgy-result-row"><strong>小红书号：</strong>${escapeHtml(data.red_id)}</div>`);
       if (data.outputs && data.outputs.output_dir) rows.push(`<div class="pgy-result-row"><strong>输出目录：</strong>${escapeHtml(data.outputs.output_dir)}</div>`);
       if (data.outputs && data.outputs.summary) rows.push(`<div class="pgy-result-row"><strong>汇总文件：</strong>${escapeHtml(data.outputs.summary)}</div>`);
       if (data.outputs && data.outputs.similar_csv) rows.push(`<div class="pgy-result-row"><strong>相似博主 CSV：</strong>${escapeHtml(data.outputs.similar_csv)}</div>`);
       if (data.outputs && data.outputs.similar_count !== undefined) rows.push(`<div class="pgy-result-row"><strong>相似博主数量：</strong>${escapeHtml(data.outputs.similar_count)}</div>`);
-      if (data.sync && data.sync.created !== undefined) rows.push(`<div class="pgy-result-row"><strong>多维表同步：</strong>新增 ${escapeHtml(data.sync.created)} 行</div>`);
+      if (data.outputs && data.outputs.similar_creators) rows.push(pgySimilarPickerHtml(data.outputs.similar_creators));
+      if (data.sync && data.sync.created !== undefined) {
+        const updated = data.sync.updated !== undefined ? `，更新 ${escapeHtml(data.sync.updated)} 行` : "";
+        rows.push(`<div class="pgy-result-row"><strong>多维表同步：</strong>新增 ${escapeHtml(data.sync.created)} 行${updated}</div>`);
+      }
       if (data.sync && data.sync.target_url) rows.push(`<div class="pgy-result-row"><strong>多维表：</strong><a href="${escapeHtml(data.sync.target_url)}" target="_blank" rel="noreferrer">打开</a></div>`);
       if (data.user_data_dir) rows.push(`<div class="pgy-result-row"><strong>登录信息保存位置：</strong>${escapeHtml(data.user_data_dir)}</div>`);
       if (data.error) rows.push(`<div class="pgy-result-row"><strong>错误：</strong>${escapeHtml(data.error)}</div>`);
@@ -1649,7 +1689,10 @@
       const screenshot = data.screenshot || (data.outputs && data.outputs.screenshot);
       if (screenshot) rows.push(`<img class="pgy-shot" src="${escapeHtml(pgyFileUrl(screenshot))}" alt="蒲公英截图">`);
       el.innerHTML = `<div class="pgy-result">${rows.join("")}</div>`;
-      if (data.outputs) latestPgyOutput = data.outputs;
+      if (data.outputs) {
+        latestPgyOutput = data.outputs;
+        latestPgySimilarCreators = Array.isArray(data.outputs.similar_creators) ? data.outputs.similar_creators : latestPgySimilarCreators;
+      }
       const logParts = [`状态=${pgyStatusLabel(data.status)}`];
       if (data.nickname) logParts.push(`达人=${data.nickname}`);
       if (data.outputs && data.outputs.output_dir) logParts.push(`输出=${data.outputs.output_dir}`);
@@ -1682,10 +1725,10 @@
       const payload = resolveProjectPayload(getFormData());
       const nickname = document.getElementById("pgy_nickname").value.trim();
       const redId = document.getElementById("pgy_red_id").value.trim();
-      const syncAfterRun = document.getElementById("pgy_sync_after_run").value === "true";
+      const syncAfterRun = document.getElementById("pgy_sync_after_run").value !== "false";
       const { baseToken, tableId } = getPgySyncTarget(payload);
-      if (!nickname && !redId) {
-        log("请填写达人昵称或小红书号");
+      if (!nickname) {
+        log("请填写达人昵称；小红书号仅用于重名时精确匹配");
         return;
       }
       if (syncAfterRun && (!baseToken || !tableId)) {
@@ -1702,10 +1745,53 @@
           sync_after_run: syncAfterRun,
           base_token: baseToken,
           table_id: tableId,
+          similar_detail_limit: 0,
           keep_open: false
         });
       } catch (e) {
         log("蒲公英达人分析失败: " + e.message);
+      } finally {
+        stopPgyProgress();
+      }
+    }
+
+    async function pgyRunSelectedSimilar() {
+      const payload = resolveProjectPayload(getFormData());
+      const nickname = document.getElementById("pgy_nickname").value.trim();
+      const redId = document.getElementById("pgy_red_id").value.trim();
+      const syncAfterRun = document.getElementById("pgy_sync_after_run").value !== "false";
+      const { baseToken, tableId } = getPgySyncTarget(payload);
+      const checked = Array.from(document.querySelectorAll(".pgy-similar-checkbox:checked"))
+        .map((item) => item.value)
+        .filter(Boolean);
+      if (!nickname) {
+        log("请先填写达人昵称；小红书号仅用于重名时精确匹配");
+        return;
+      }
+      if (!checked.length) {
+        log("请先勾选需要抓取详情的相似达人");
+        return;
+      }
+      if (syncAfterRun && (!baseToken || !tableId)) {
+        log("自动同步需要先在项目管理中初始化/配置达人智能圈选表");
+        return;
+      }
+      await saveConfig();
+      log(`正在抓取选中相似达人详情：${checked.length} 个`);
+      startPgyProgress(nickname || redId);
+      try {
+        await postHuitun("/api/crawler/pgy/run-kol", {
+          nickname,
+          red_id: redId,
+          sync_after_run: syncAfterRun,
+          base_token: baseToken,
+          table_id: tableId,
+          similar_detail_limit: checked.length,
+          similar_user_ids: checked.join(","),
+          keep_open: false
+        });
+      } catch (e) {
+        log("蒲公英相似达人详情抓取失败: " + e.message);
       } finally {
         stopPgyProgress();
       }
@@ -1743,7 +1829,7 @@
         return;
       }
       await saveConfig();
-      const fallbackOutputDir = nickname ? `downloads/pgy/${nickname}` : `downloads/pgy/${redId}`;
+      const fallbackOutputDir = nickname ? `pgy/${nickname}` : `pgy/${redId}`;
       const syncPayload = {
         base_token: baseToken,
         table_id: tableId,

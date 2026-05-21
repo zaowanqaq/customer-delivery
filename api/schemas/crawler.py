@@ -53,7 +53,7 @@ class CrawlerStartRequest(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
-    enable_media: bool = False
+    enable_media: bool = True
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
@@ -103,7 +103,7 @@ class SampleCreatorStartRequest(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
-    enable_media: bool = False
+    enable_media: bool = True
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
@@ -149,7 +149,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     enable_comments: bool = True
     enable_sub_comments: bool = False
-    enable_media: bool = False
+    enable_media: bool = True
     cookies: str = ""
     headless: bool = False
     sync_limit: int = 20
@@ -184,6 +184,8 @@ class PgyKolRunRequest(BaseModel):
     """Run Xiaohongshu Pugongying KOL analysis by nickname/red_id."""
     nickname: str = ""
     red_id: str = ""
+    similar_detail_limit: int = 0
+    similar_user_ids: str = ""
     keep_open: bool = False
     sync_after_run: bool = False
     base_token: str = ""

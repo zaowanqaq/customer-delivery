@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -18,7 +20,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
 
-from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError, sync_playwright
+from playwright.sync_api import APIRequestContext, Browser, BrowserContext, Page, TimeoutError, sync_playwright
+
+from config.runtime_paths import browser_data_dir, downloads_dir
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -27,9 +31,11 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_USER_DATA_DIR = PROJECT_ROOT / "browser_data" / "pgy_user_data_dir"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "downloads" / "pgy"
+DEFAULT_USER_DATA_DIR = browser_data_dir() / "pgy_user_data_dir"
+DEFAULT_STORAGE_STATE = browser_data_dir() / "pgy_storage_state.json"
+DEFAULT_OUTPUT_DIR = downloads_dir() / "pgy"
 PGY_KOL_NOTE_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
+PGY_ORIGIN = "https://pgy.xiaohongshu.com"
 
 
 @dataclass
@@ -44,11 +50,26 @@ def _json_line(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
+def sanitize_log_text(text: object) -> str:
+    value = str(text or "")
+    value = re.sub(r"(?i)(cookie:\s*)(.+?)(\n|$)", r"\1[REDACTED]\3", value)
+    value = re.sub(r"(?i)(access-token-[^=\\s]+)=([^;\\s]+)", r"\1=[REDACTED]", value)
+    value = re.sub(r"(?i)(web_session|customer-sso-sid|solar\\.beaker\\.session\\.id|a1|websectiga|sec_poison_id)=([^;\\s]+)", r"\1=[REDACTED]", value)
+    return value
+
+
 def _progress(message: str, step: str = "") -> None:
-    payload = {"event": "progress", "message": message}
+    payload = {"event": "progress", "message": sanitize_log_text(message)}
     if step:
         payload["step"] = step
     _json_line(payload)
+
+
+def save_storage_state(context: BrowserContext, storage_state_path: str = "") -> str:
+    path = Path(storage_state_path or DEFAULT_STORAGE_STATE).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    context.storage_state(path=str(path))
+    return str(path)
 
 
 def _first_visible_page(context: BrowserContext) -> Page:
@@ -311,7 +332,10 @@ def save_screenshot(page: Page, name: str) -> str:
     path = DEFAULT_OUTPUT_DIR / name
     if page.is_closed():
         return str(path)
-    page.screenshot(path=str(path), full_page=False)
+    try:
+        page.screenshot(path=str(path), full_page=False, timeout=10_000)
+    except Exception:
+        return str(path)
     return str(path)
 
 
@@ -504,14 +528,16 @@ def find_kol_from_api_records(records: list[dict], nickname: str, red_id: str = 
         red_exact = [item for item in candidates if str(item.get("redId") or "") == red_id]
         if red_exact:
             return red_exact[0]
+        return {}
+    nickname = (nickname or "").strip()
+    if not nickname:
+        return {}
     exact = [item for item in candidates if item.get("name") == nickname]
     fuzzy = [item for item in candidates if nickname in str(item.get("name") or "")]
     if exact:
         return exact[0]
     if fuzzy:
         return fuzzy[0]
-    if candidates:
-        return candidates[0]
     return {}
 
 
@@ -598,6 +624,46 @@ def api_post_json(page: Page, path: str, payload: dict) -> dict:
     return json.loads(result["text"])
 
 
+def api_request_json(request: APIRequestContext, method: str, path: str, **kwargs) -> dict:
+    url = path if path.startswith("http") else f"{PGY_ORIGIN}{path}"
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "referer": PGY_KOL_NOTE_URL,
+        "origin": PGY_ORIGIN,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    }
+    timeout_ms = int(kwargs.get("timeout_ms") or 15_000)
+    if method.upper() == "GET":
+        resp = request.get(url, headers=headers, params=kwargs.get("params"), timeout=timeout_ms)
+    else:
+        resp = request.post(url, headers={**headers, "content-type": "application/json;charset=UTF-8"}, data=kwargs.get("data") or {}, timeout=timeout_ms)
+    text = resp.text()
+    if not resp.ok:
+        raise RuntimeError(sanitize_log_text(f"{method.upper()} {path} 失败: HTTP {resp.status} {text[:200]}"))
+    try:
+        return json.loads(text)
+    except Exception as exc:
+        raise RuntimeError(f"{method.upper()} {path} 返回非 JSON: {text[:200]}") from exc
+
+
+def first_successful_api_call(request: APIRequestContext, attempts: list[tuple[str, str, dict]], timeout_ms: int = 15_000) -> dict:
+    errors: list[str] = []
+    for method, path, payload in attempts:
+        try:
+            if method.upper() == "GET":
+                data = api_request_json(request, "GET", path, params=payload, timeout_ms=timeout_ms)
+            else:
+                data = api_request_json(request, "POST", path, data=payload, timeout_ms=timeout_ms)
+            if isinstance(data, dict) and data.get("code", 0) in (0, "0", None):
+                return data
+            if isinstance(data, dict) and data.get("success") is True:
+                return data
+            errors.append(f"{method} {path}: {str(data)[:180]}")
+        except Exception as exc:
+            errors.append(sanitize_log_text(f"{method} {path}: {exc}"))
+    raise RuntimeError(sanitize_log_text("; ".join(errors[-4:])))
+
+
 def extract_api_payload(raw: dict) -> object:
     if isinstance(raw, dict) and "data" in raw:
         return raw.get("data")
@@ -622,6 +688,55 @@ def classify_api_response(url: str) -> str:
     if "/api/solar/kol/get_similar_kol" in url:
         return "similar_creators"
     return ""
+
+
+def make_search_attempts(keyword: str) -> list[tuple[str, str, dict]]:
+    common = {
+        "keyword": keyword,
+        "searchText": keyword,
+        "query": keyword,
+        "page": 1,
+        "pageNum": 1,
+        "pageSize": 20,
+        "size": 20,
+        "limit": 20,
+        "business": 1,
+        "kolType": 0,
+        "platform": "xhs",
+    }
+    return [
+        ("POST", "/api/solar/cooperator/blogger/v2", common),
+        ("POST", "/api/solar/cooperator/blogger/v2", {"keyword": keyword, "page": 1, "pageSize": 20}),
+        ("GET", "/api/solar/cooperator/blogger/v2", {"keyword": keyword, "page": 1, "pageSize": 20}),
+        ("GET", "/api/solar/cooperator/blogger/v2", {"searchText": keyword, "pageNum": 1, "pageSize": 20}),
+    ]
+
+
+def make_detail_attempts(user_id: str) -> dict[str, list[tuple[str, str, dict]]]:
+    metrics_params = {"userId": user_id, "business": 0, "noteType": 3, "dateType": 1, "advertiseSwitch": 1}
+    return {
+        "blogger_detail": [("GET", f"/api/solar/cooperator/user/blogger/{user_id}", {})],
+        "data_summary": [("GET", "/api/pgy/kol/data/data_summary", {"userId": user_id, "business": 0})],
+        "core_data": [("POST", "/api/pgy/kol/data/core_data", {"userId": user_id, "business": "0", "noteType": 3, "dateType": 1, "advertiseSwitch": 1})],
+        "notes_rate": [("GET", "/api/solar/kol/data_v3/notes_rate", metrics_params)],
+        "fans_summary": [("GET", "/api/solar/kol/data_v3/fans_summary", {"userId": user_id})],
+        "fans_profile": [("GET", f"/api/solar/kol/data/{user_id}/fans_profile", {})],
+        "fans_history": [("GET", f"/api/solar/kol/data/{user_id}/fans_overall_new_history", {"dateType": 1, "increaseType": 1})],
+        "similar_creators": [("GET", "/api/solar/kol/get_similar_kol", {"userId": user_id, "pageNum": 1, "pageSize": 20})],
+    }
+
+
+def extract_kols_from_payload(payload: dict) -> list[dict]:
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    candidates: list[dict] = []
+    if isinstance(data, dict):
+        for key in ["kols", "list", "records", "items", "data"]:
+            value = data.get(key)
+            if isinstance(value, list):
+                candidates.extend([item for item in value if isinstance(item, dict)])
+    elif isinstance(data, list):
+        candidates.extend([item for item in data if isinstance(item, dict)])
+    return candidates
 
 
 def collect_detail_api_response(api_data: dict, response) -> None:
@@ -652,6 +767,7 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
         else:
             tags.append(str(tag))
     return {
+        "_user_id": kol.get("userId") or "",
         "rank": rank,
         "nickname": kol.get("name") or "",
         "red_id": kol.get("redId") or "",
@@ -666,13 +782,88 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
     }
 
 
-def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: str, page: Page) -> dict:
+def filter_similar_kols(kols: list[dict], selected_user_ids: set[str], limit: int) -> list[dict]:
+    if selected_user_ids:
+        return [kol for kol in kols if str(kol.get("userId") or "") in selected_user_ids]
+    return kols[: max(0, limit)]
+
+
+def _top_name_percent(items: list[dict], name_key: str = "name", percent_key: str = "percent", limit: int = 5) -> str:
+    parts: list[str] = []
+    for item in (items or [])[:limit]:
+        name = item.get(name_key) or item.get("group") or ""
+        percent = item.get(percent_key)
+        if percent not in ("", None):
+            try:
+                percent_text = f"{float(percent) * 100:.1f}%" if float(percent) <= 1 else f"{float(percent):.1f}%"
+            except Exception:
+                percent_text = str(percent)
+            parts.append(f"{name} {percent_text}".strip())
+        elif name:
+            parts.append(str(name))
+    return "，".join(parts)
+
+
+def _dominant_group(items: list[dict], name_key: str = "name") -> str:
+    if not items:
+        return ""
+    best = sorted(items, key=lambda item: item.get("percent") or 0, reverse=True)[0]
+    return str(best.get(name_key) or best.get("group") or "")
+
+
+def flatten_detail_metrics(api_data: dict) -> dict:
+    blogger = extract_api_payload(api_data.get("blogger_detail") or {}) or {}
+    data_summary = extract_api_payload(api_data.get("data_summary") or {}) or {}
+    notes_rate = extract_api_payload(api_data.get("notes_rate") or {}) or {}
+    fans_summary = extract_api_payload(api_data.get("fans_summary") or {}) or {}
+    fans_profile = extract_api_payload(api_data.get("fans_profile") or {}) or {}
+    gender = fans_profile.get("gender") or {}
+    return {
+        "kol_advantage": data_summary.get("kolAdvantage") or "",
+        "data_date": data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
+        "note_number": data_summary.get("noteNumber") or notes_rate.get("noteNumber") or "",
+        "imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or "",
+        "read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or "",
+        "interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
+        "like_median": notes_rate.get("likeMedian") or "",
+        "collect_median": notes_rate.get("collectMedian") or "",
+        "comment_median": notes_rate.get("commentMedian") or "",
+        "share_median": notes_rate.get("shareMedian") or "",
+        "follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
+        "interaction_rate": notes_rate.get("interactionRate") or "",
+        "video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
+        "picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
+        "thousand_like_percent": notes_rate.get("thousandLikePercent") or "",
+        "hundred_like_percent": notes_rate.get("hundredLikePercent") or "",
+        "active_day_7": data_summary.get("activeDayInLast7") or "",
+        "invite_num": data_summary.get("inviteNum") or "",
+        "response_rate": data_summary.get("responseRate") or "",
+        "fans_num": fans_summary.get("fansNum") or blogger.get("fansCount") or "",
+        "fans_increase": fans_summary.get("fansIncreaseNum") or "",
+        "fans_growth_rate": fans_summary.get("fansGrowthRate") or data_summary.get("fans30GrowthRate") or "",
+        "active_fans_rate": fans_summary.get("activeFansRate") or "",
+        "read_fans_rate": fans_summary.get("readFansRate") or "",
+        "engage_fans_rate": fans_summary.get("engageFansRate") or "",
+        "pay_fans_rate": fans_summary.get("payFansUserRate30d") or "",
+        "female_fans_rate": gender.get("female") or "",
+        "male_fans_rate": gender.get("male") or "",
+        "main_age": _dominant_group(fans_profile.get("ages") or [], "group"),
+        "top_provinces": _top_name_percent(fans_profile.get("provinces") or [], limit=5),
+        "top_cities": _top_name_percent(fans_profile.get("cities") or [], limit=5),
+        "top_interests": _top_name_percent(fans_profile.get("interests") or [], limit=8),
+    }
+
+
+def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: str, page: Optional[Page]) -> dict:
     safe_name = "".join(ch for ch in nickname if ch not in r'\/:*?"<>|').strip() or "kol"
     output_dir = DEFAULT_OUTPUT_DIR / safe_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     screenshot = output_dir / "detail.png"
-    page.screenshot(path=str(screenshot), full_page=True)
+    if page is not None:
+        page.screenshot(path=str(screenshot), full_page=True)
+    elif screenshot.exists():
+        pass
 
     detail_path = output_dir / "detail_text.txt"
     detail_path.write_text(detail_text, encoding="utf-8")
@@ -681,9 +872,18 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
     raw_path.write_text(json.dumps(api_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     similar_kols = ((api_data.get("similar_creators") or {}).get("data") or {}).get("kols") or []
+    similar_detail_map = api_data.get("similar_details") or {}
     similar_rows = [normalize_kol_row(index + 1, kol) for index, kol in enumerate(similar_kols[:20])]
+    for row in similar_rows:
+        detail = similar_detail_map.get(row.get("_user_id") or "") or {}
+        if detail:
+            row.update(flatten_detail_metrics(detail.get("api_data") or {}))
+            row["screenshot"] = detail.get("screenshot") or ""
+            row["detail_text"] = detail.get("detail_text") or ""
+            row["url"] = detail.get("url") or ""
     blogger_detail = extract_api_payload(api_data.get("blogger_detail") or {})
     red_id = blogger_detail.get("redId") or ""
+    target_metrics = flatten_detail_metrics(api_data)
 
     similar_path = output_dir / "similar_creators.csv"
     with similar_path.open("w", newline="", encoding="utf-8-sig") as f:
@@ -699,19 +899,51 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "picture_price",
             "video_price",
             "tags",
+            "kol_advantage",
+            "data_date",
+            "note_number",
+            "imp_median",
+            "read_median",
+            "interaction_median",
+            "like_median",
+            "collect_median",
+            "comment_median",
+            "share_median",
+            "follow_median",
+            "interaction_rate",
+            "video_full_view_rate",
+            "picture_3s_view_rate",
+            "thousand_like_percent",
+            "hundred_like_percent",
+            "fans_increase",
+            "fans_growth_rate",
+            "active_fans_rate",
+            "read_fans_rate",
+            "engage_fans_rate",
+            "pay_fans_rate",
+            "female_fans_rate",
+            "male_fans_rate",
+            "main_age",
+            "top_provinces",
+            "top_cities",
+            "top_interests",
+            "screenshot",
+            "detail_text",
+            "url",
         ]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(similar_rows)
 
     summary = {
         "nickname": nickname,
         "red_id": red_id,
-        "url": page.url,
-        "screenshot": str(screenshot),
+        "url": page.url if page is not None else f"{PGY_ORIGIN}/solar/pre-trade/blogger-detail/{user_id}",
+        "screenshot": str(screenshot) if screenshot.exists() else "",
         "detail_text": str(detail_path),
         "raw_api": str(raw_path),
         "blogger_detail": blogger_detail,
+        "target_metrics": target_metrics,
         "propagation_performance": {
             "data_summary": extract_api_payload(api_data.get("data_summary") or {}),
             "core_data": extract_api_payload(api_data.get("core_data") or {}),
@@ -732,9 +964,10 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
         "summary": str(summary_path),
         "raw_api": str(raw_path),
         "similar_csv": str(similar_path),
-        "screenshot": str(screenshot),
+        "screenshot": str(screenshot) if screenshot.exists() else "",
         "detail_text": str(detail_path),
         "similar_count": len(similar_rows),
+        "similar_creators": similar_rows,
         "red_id": red_id,
     }
 
@@ -755,6 +988,7 @@ def action_login(args: argparse.Namespace) -> None:
                     "status": login_state(page),
                     "url": page.url,
                     "user_data_dir": str(Path(args.user_data_dir).resolve()),
+                    "storage_state": save_storage_state(session.context, args.storage_state),
                     "screenshot": save_screenshot(page, "login_state.png"),
                 }
             )
@@ -773,6 +1007,7 @@ def action_screenshot(args: argparse.Namespace) -> None:
             {
                 "status": login_state(page),
                 "url": page.url,
+                "storage_state": save_storage_state(session.context, args.storage_state),
                 "screenshot": save_screenshot(page, "pgy_page.png"),
                 "text_preview": visible_text(page, limit=1600),
             }
@@ -870,7 +1105,7 @@ def _extract_kol_data(
     matched_name = kol.get("name") or nickname
     if not user_id:
         save_screenshot(page, "run_kol_user_id_not_found.png")
-        raise RuntimeError("已经完成昵称搜索，但没有从蒲公英列表接口中拿到达人 userId")
+        raise RuntimeError(f"已经完成搜索，但没有找到与“{target_red_id or nickname}”严格匹配的达人；请填写小红书号避免重名/误匹配")
 
     clicked_similar_more = click_similar_more(page, matched_name)
     similar_kols_data: Optional[dict] = None
@@ -912,6 +1147,156 @@ def _wait_for_detail_data(page: Page, detail_api_data: dict) -> None:
         page.wait_for_timeout(500)
 
 
+def _capture_kol_detail(
+    context: BrowserContext,
+    page: Page,
+    user_id: str,
+    output_dir: Path,
+    file_prefix: str,
+) -> tuple[Page, dict]:
+    local_data: dict = {}
+
+    def collect_response(response) -> None:
+        collect_detail_api_response(local_data, response)
+
+    page.on("response", collect_response)
+    try:
+        page = _navigate_to_kol_detail(context, page, user_id)
+        _wait_for_detail_data(page, local_data)
+        detail_text = visible_text(page, limit=60000)
+        screenshot = output_dir / f"{file_prefix}_detail.png"
+        page.screenshot(path=str(screenshot), full_page=True)
+        detail_path = output_dir / f"{file_prefix}_detail_text.txt"
+        detail_path.write_text(detail_text, encoding="utf-8")
+        return page, {
+            "api_data": local_data,
+            "detail_text": str(detail_path),
+            "screenshot": str(screenshot),
+            "url": page.url,
+        }
+    finally:
+        try:
+            page.remove_listener("response", collect_response)
+        except Exception:
+            pass
+
+
+def _capture_similar_details(
+    context: BrowserContext,
+    page: Page,
+    similar_kols_data: Optional[dict],
+    output_dir: Path,
+    limit: int,
+) -> tuple[Page, dict]:
+    details: dict = {}
+    kols = ((similar_kols_data or {}).get("data") or {}).get("kols") or []
+    for index, kol in enumerate(kols[:limit], start=1):
+        user_id = kol.get("userId")
+        if not user_id:
+            continue
+        name = kol.get("name") or f"similar_{index}"
+        _progress(f"抓取相似博主详情 {index}/{min(limit, len(kols))}：{name}", "extract_similar_detail")
+        page, detail = _capture_kol_detail(context, page, user_id, output_dir, f"similar_{index:02d}")
+        details[user_id] = detail
+    return page, details
+
+
+def _api_fetch_kol_detail(
+    request: APIRequestContext,
+    user_id: str,
+    include_similar: bool = False,
+    fallback_blogger: Optional[dict] = None,
+) -> dict:
+    api_data: dict = {}
+    attempts_by_key = make_detail_attempts(user_id)
+    key_order = ["data_summary", "core_data", "notes_rate", "fans_summary", "fans_profile", "fans_history", "similar_creators", "blogger_detail"]
+    for key in key_order:
+        attempts = attempts_by_key.get(key) or []
+        if not attempts:
+            continue
+        if key == "similar_creators" and not include_similar:
+            continue
+        try:
+            api_data[key] = first_successful_api_call(request, attempts, timeout_ms=8_000 if key == "blogger_detail" else 15_000)
+            time.sleep(random.uniform(0.35, 1.0))
+        except Exception as exc:
+            api_data[f"{key}_error"] = str(exc)
+    if "blogger_detail" not in api_data:
+        if fallback_blogger:
+            api_data["blogger_detail"] = {"code": 0, "success": True, "data": fallback_blogger}
+        else:
+            raise RuntimeError(api_data.get("blogger_detail_error") or "API 未返回达人基础信息")
+    metric_keys = {"data_summary", "notes_rate", "fans_summary", "fans_profile"}
+    if not metric_keys.intersection(api_data.keys()):
+        raise RuntimeError("API 未返回传播表现/粉丝分析数据")
+    return api_data
+
+
+def action_run_kol_api(args: argparse.Namespace) -> bool:
+    storage_state_path = Path(args.storage_state or DEFAULT_STORAGE_STATE).resolve()
+    if not storage_state_path.exists():
+        message = "没有保存的蒲公英 API 登录态"
+        if not args.api_only:
+            message += "，切换到浏览器兜底模式"
+        _progress(message, "api_storage_missing")
+        return False
+
+    inputs = _prepare_search_inputs(args)
+    target_red_id = inputs["red_id"]
+    search_keyword = target_red_id or inputs["nickname"]
+    with sync_playwright() as playwright:
+        request = playwright.request.new_context(storage_state=str(storage_state_path), base_url=PGY_ORIGIN)
+        try:
+            _progress("API 模式：搜索达人", "api_search_creator")
+            search_payload = first_successful_api_call(request, make_search_attempts(search_keyword), timeout_ms=20_000)
+            candidates = extract_kols_from_payload(search_payload)
+            list_records = [{"data": {"data": {"kols": candidates}}}]
+            kol = find_kol_from_api_records(list_records, inputs["nickname"], target_red_id)
+            user_id = kol.get("userId")
+            if not user_id:
+                raise RuntimeError("API 搜索没有拿到达人 userId")
+            matched_name = kol.get("name") or inputs["nickname"] or search_keyword
+            red_id = kol.get("redId") or target_red_id
+
+            _progress("API 模式：读取目标达人传播表现和粉丝分析", "api_target_detail")
+            detail_data = _api_fetch_kol_detail(request, user_id, include_similar=True, fallback_blogger=kol)
+            similar_kols = latest_similar_kols_from_records([{"data": detail_data.get("similar_creators") or {}}], user_id)
+            if not similar_kols:
+                similar_kols = [item for item in candidates if item.get("userId") != user_id][:20]
+            if similar_kols:
+                detail_data["similar_creators"] = {"code": 0, "success": True, "data": {"kols": similar_kols}}
+
+            similar_details: dict = {}
+            selected_user_ids = {item.strip() for item in (args.similar_user_ids or "").split(",") if item.strip()}
+            similar_to_fetch = filter_similar_kols(similar_kols, selected_user_ids, args.similar_detail_limit)
+            for index, item in enumerate(similar_to_fetch, start=1):
+                similar_user_id = item.get("userId")
+                if not similar_user_id:
+                    continue
+                _progress(f"API 模式：读取相似博主详情 {index}/{len(similar_to_fetch)}：{item.get('name') or similar_user_id}", "api_similar_detail")
+                try:
+                    similar_details[similar_user_id] = {
+                        "api_data": _api_fetch_kol_detail(
+                            request,
+                            similar_user_id,
+                            include_similar=False,
+                            fallback_blogger=item,
+                        )
+                    }
+                except Exception as exc:
+                    similar_details[similar_user_id] = {"api_data": {}, "error": str(exc)}
+                time.sleep(random.uniform(0.8, 2.2))
+            detail_data["similar_details"] = similar_details
+
+            _progress("API 模式：保存本地文件", "api_write_outputs")
+            outputs = write_api_outputs(matched_name, user_id, detail_data, "", None)
+            _progress("达人分析完成", "done")
+            _build_success_result(matched_name, red_id, target_red_id, None, {"api_mode": True, "keyword": search_keyword}, outputs, "")
+            return True
+        finally:
+            request.dispose()
+
+
 def _build_login_required_result(page: Page, nickname: str, red_id: str) -> dict:
     result = {
         "status": "login_required",
@@ -930,7 +1315,7 @@ def _build_success_result(
     matched_name: str,
     red_id: str,
     target_red_id: str,
-    page: Page,
+    page: Optional[Page],
     input_meta: dict,
     outputs: dict,
     detail_text: str,
@@ -941,7 +1326,7 @@ def _build_success_result(
         "nickname": matched_name,
         "red_id": outputs.get("red_id") or red_id,
         "matched_by": "red_id" if target_red_id else "nickname",
-        "url": page.url,
+        "url": page.url if page is not None else "",
         "input": input_meta,
         "outputs": outputs,
         "text_preview": detail_text[:2400],
@@ -951,6 +1336,19 @@ def _build_success_result(
 
 
 def action_run_kol(args: argparse.Namespace) -> None:
+    if args.api_first:
+        try:
+            api_done = action_run_kol_api(args)
+            if api_done:
+                return
+            if args.api_only:
+                raise RuntimeError("没有可用的蒲公英 API 登录态")
+        except Exception as exc:
+            if args.api_only:
+                _progress(f"API 模式失败：{sanitize_log_text(exc)}", "api_failed")
+                raise
+            _progress(f"API 模式失败，切换到浏览器兜底模式：{sanitize_log_text(exc)}", "api_fallback")
+
     inputs = _prepare_search_inputs(args)
     target_red_id = inputs["red_id"]
     search_keyword = target_red_id or inputs["nickname"]
@@ -995,6 +1393,26 @@ def action_run_kol(args: argparse.Namespace) -> None:
         page = _navigate_to_kol_detail(session.context, page, kol_result.user_id)
         _wait_for_detail_data(page, detail_data)
 
+        safe_name = "".join(ch for ch in kol_result.matched_name if ch not in r'\/:*?"<>|').strip() or "kol"
+        output_dir = DEFAULT_OUTPUT_DIR / safe_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        selected_user_ids = {item.strip() for item in (args.similar_user_ids or "").split(",") if item.strip()}
+        if kol_result.similar_kols_data and (args.similar_detail_limit > 0 or selected_user_ids):
+            if selected_user_ids:
+                kols = ((kol_result.similar_kols_data or {}).get("data") or {}).get("kols") or []
+                kol_result.similar_kols_data["data"]["kols"] = filter_similar_kols(kols, selected_user_ids, args.similar_detail_limit)
+            page, similar_details = _capture_similar_details(
+                session.context,
+                page,
+                kol_result.similar_kols_data,
+                output_dir,
+                max(args.similar_detail_limit, len(selected_user_ids)),
+            )
+            detail_data["similar_details"] = similar_details
+            _progress("回到目标达人详情页", "restore_target_detail")
+            page = _navigate_to_kol_detail(session.context, page, kol_result.user_id)
+            _wait_for_detail_data(page, detail_data)
+
         _progress("保存本地文件", "write_outputs")
         detail_text = visible_text(page, limit=60000)
         outputs = write_api_outputs(kol_result.matched_name, kol_result.user_id, detail_data, detail_text, page)
@@ -1018,6 +1436,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default="", help="screenshot 动作使用的 URL")
     parser.add_argument("--nickname", default="", help="run-kol 动作要搜索的达人昵称")
     parser.add_argument("--red-id", default="", help="小红书号；提供后优先用它搜索并精确匹配达人")
+    parser.add_argument("--similar-detail-limit", type=int, default=20, help="逐个抓取相似博主详情页的数量")
+    parser.add_argument("--similar-user-ids", default="", help="只抓取这些相似博主 userId，逗号分隔")
+    parser.add_argument("--storage-state", default=str(DEFAULT_STORAGE_STATE), help="蒲公英 API 模式使用的登录态文件")
+    parser.add_argument("--api-first", action=argparse.BooleanOptionalAction, default=True, help="优先使用无浏览器 API 模式")
+    parser.add_argument("--api-only", action="store_true", help="只使用 API 模式，失败时不回退浏览器")
     parser.add_argument("--login-wait-seconds", type=int, default=300, help="login 动作等待登录完成的秒数")
     parser.add_argument("--detach-hold-open", action="store_true", help="输出登录结果后保持浏览器和进程打开")
     return parser
@@ -1040,7 +1463,7 @@ def main() -> int:
         else:
             parser.error(f"unsupported action: {args.action}")
     except Exception as exc:
-        _json_line({"status": "error", "error": str(exc)})
+        _json_line({"status": "error", "error": sanitize_log_text(exc)})
         return 1
     return 0
 

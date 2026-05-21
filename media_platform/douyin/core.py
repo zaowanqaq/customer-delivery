@@ -14,6 +14,7 @@ from playwright.async_api import (
 )
 
 import config
+from config.runtime_paths import browser_data_dir
 from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import douyin as douyin_store
@@ -306,7 +307,7 @@ class DouYinCrawler(AbstractCrawler):
     ) -> BrowserContext:
         """Launch browser and create browser context"""
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
+            user_data_dir = str(browser_data_dir() / (config.USER_DATA_DIR % config.PLATFORM))  # type: ignore
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

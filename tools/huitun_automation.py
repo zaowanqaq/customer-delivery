@@ -19,6 +19,8 @@ from typing import Optional
 
 from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError, sync_playwright
 
+from config.runtime_paths import browser_data_dir, downloads_dir
+
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -26,9 +28,9 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_USER_DATA_DIR = PROJECT_ROOT / "browser_data" / "huitun_user_data_dir"
-DEFAULT_DOWNLOAD_DIR = PROJECT_ROOT / "downloads" / "huitun"
-DEFAULT_SCREENSHOT = PROJECT_ROOT / "downloads" / "huitun" / "huitun_page.png"
+DEFAULT_USER_DATA_DIR = browser_data_dir() / "huitun_user_data_dir"
+DEFAULT_DOWNLOAD_DIR = downloads_dir() / "huitun"
+DEFAULT_SCREENSHOT = downloads_dir() / "huitun" / "huitun_page.png"
 HUITUN_HOME = "https://xhs.huitun.com/#/"
 HUITUN_ANCHOR_LIST = "https://xhs.huitun.com/#/anchor/anchor_list"
 

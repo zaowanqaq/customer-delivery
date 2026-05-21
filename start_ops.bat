@@ -32,6 +32,6 @@ echo [MediaCrawler] Opening ops page: %URL%
 start "" "%URL%"
 
 echo [MediaCrawler] Starting API server on port %PORT% ...
-"%PY%" -m uvicorn api.main:app --port %PORT% --reload
+"%PY%" -m uvicorn api.main:app --host 127.0.0.1 --port %PORT%
 
 endlocal

@@ -7,10 +7,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from config.runtime_paths import data_dir
+
 router = APIRouter(prefix="/data", tags=["data"])
 
 # Data directory
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+DATA_DIR = data_dir()
 
 
 def get_file_info(file_path: Path) -> dict:

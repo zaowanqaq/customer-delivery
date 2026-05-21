@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from .runtime_paths import data_dir
+
 # Basic configuration
 PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
@@ -58,8 +60,9 @@ AUTO_CLOSE_BROWSER = False
 # Data saving type option configuration, supports: csv, db, json, jsonl, sqlite, excel, postgres. It is best to save to DB, with deduplication function.
 SAVE_DATA_OPTION = "jsonl"  # csv or db or json or jsonl or sqlite or excel or postgres
 
-# Data saving path, if not specified by default, it will be saved to the data folder.
-SAVE_DATA_PATH = ""
+# Data saving path. Defaults to a per-user runtime directory so customer data
+# and login state do not live in the source-code checkout.
+SAVE_DATA_PATH = str(data_dir())
 
 # Browser file configuration cached by the user's browser
 USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
@@ -78,7 +81,7 @@ SLEEP_JITTER = (0.3, 0.8)
 PAGE_GAP_JITTER = (0.8, 1.5)
 
 # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
-ENABLE_GET_MEIDAS = False
+ENABLE_GET_MEIDAS = True
 
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
 ENABLE_GET_COMMENTS = True

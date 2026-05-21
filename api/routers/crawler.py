@@ -2,6 +2,7 @@
 import contextlib
 import json
 import asyncio
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from config.runtime_paths import downloads_dir
 from ..schemas import (
     CrawlerStartRequest,
     CrawlerStatusResponse,
@@ -117,6 +119,13 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"蒲公英自动化启动失败: {exc}") from exc
 
+    def sanitize_pgy_log(value: Any) -> str:
+        text = str(value or "")
+        text = re.sub(r"(?i)(cookie:\s*)(.+?)(\n|$)", r"\1[REDACTED]\3", text)
+        text = re.sub(r"(?i)(access-token-[^=\\s]+)=([^;\\s]+)", r"\1=[REDACTED]", text)
+        text = re.sub(r"(?i)(web_session|customer-sso-sid|solar\\.beaker\\.session\\.id|a1|websectiga|sec_poison_id)=([^;\\s]+)", r"\1=[REDACTED]", text)
+        return text
+
     lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
     payload: Dict[str, Any] = {}
     progress: List[Dict[str, Any]] = []
@@ -136,17 +145,20 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
         except Exception:
             continue
         if isinstance(maybe, dict) and maybe.get("event") == "progress":
+            maybe["message"] = sanitize_pgy_log(maybe.get("message"))
             progress.append(maybe)
     if not payload:
-        payload = {"status": "error", "error": result.stderr or result.stdout or "蒲公英自动化没有返回 JSON"}
+        payload = {"status": "error", "error": sanitize_pgy_log(result.stderr or result.stdout or "蒲公英自动化没有返回 JSON")}
     if progress:
         payload["progress"] = progress
     payload["returncode"] = result.returncode
     if result.stderr:
-        payload["stderr"] = result.stderr[-1200:]
+        payload["stderr"] = sanitize_pgy_log(result.stderr[-1200:])
     if result.returncode != 0 and payload.get("status") != "error":
         payload["status"] = "error"
-        payload["error"] = payload.get("error") or result.stderr or result.stdout
+        payload["error"] = sanitize_pgy_log(payload.get("error") or result.stderr or result.stdout)
+    if payload.get("error"):
+        payload["error"] = sanitize_pgy_log(payload.get("error"))
     return payload
 
 
@@ -195,6 +207,24 @@ def _extract_base_token(value: str) -> str:
 
 async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]:
     project_root = Path(__file__).resolve().parents[2]
+
+    def _decode_cli_output(value: bytes) -> str:
+        if not value:
+            return ""
+        candidates = []
+        for encoding in ("utf-8-sig", "gb18030", "utf-16"):
+            try:
+                decoded = value.decode(encoding, errors="replace")
+            except Exception:
+                continue
+            replacement_count = decoded.count("\ufffd")
+            control_count = sum(1 for ch in decoded if ord(ch) < 32 and ch not in "\r\n\t")
+            candidates.append((replacement_count, control_count, decoded))
+        if not candidates:
+            return value.decode("utf-8", errors="replace")
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2]
+
     def _is_rate_limited(text: str) -> bool:
         t = (text or "").lower()
         return "800004135" in t or " limited" in t or "rate limit" in t
@@ -208,9 +238,6 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
                 subprocess.run,
                 cmd,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
                 timeout=timeout_sec,
                 check=False,
                 cwd=str(project_root),
@@ -222,8 +249,10 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"lark-cli 调用异常: {e}")
 
+        stdout = _decode_cli_output(result.stdout)
+        stderr = _decode_cli_output(result.stderr)
         if result.returncode != 0:
-            err_msg = (result.stderr or result.stdout or "")[:1200]
+            err_msg = (stderr or stdout or f"exit code {result.returncode}")[:1200]
             last_err = err_msg
             if _is_rate_limited(err_msg) and attempt < max_retries:
                 await asyncio.sleep(wait_seconds * (attempt + 1))
@@ -233,9 +262,10 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
             raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {err_msg[:400]}")
 
         try:
-            payload = json.loads(result.stdout)
+            payload = json.loads(stdout)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"lark-cli 返回解析失败: {e}")
+            raw = (stdout or stderr or "")[:400]
+            raise HTTPException(status_code=400, detail=f"lark-cli 返回解析失败: {e}；原始输出: {raw}")
 
         if payload.get("ok"):
             return payload
@@ -250,11 +280,34 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
     raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {last_err[:400]}")
 
 
+@contextlib.contextmanager
+def _lark_json_arg(payload: Dict[str, Any]):
+    project_root = Path(__file__).resolve().parents[2]
+    tmp_json_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            suffix=".json",
+            delete=False,
+            dir=str(project_root),
+            prefix=".lark_payload_",
+        ) as tmp_file:
+            json.dump(payload, tmp_file, ensure_ascii=False)
+            tmp_json_path = tmp_file.name
+        yield f"@.\\{Path(tmp_json_path).name}"
+    finally:
+        if tmp_json_path:
+            with contextlib.suppress(Exception):
+                Path(tmp_json_path).unlink(missing_ok=True)
+
+
 async def _create_table_with_fields(base_token: str, table_name: str, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
     payload = await _run_lark_cli(
         [
             shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
             "base", "+table-create",
+            "--as", "user",
             "--base-token", base_token,
             "--name", table_name,
             "--fields", json.dumps(fields, ensure_ascii=False),
@@ -342,6 +395,7 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
         [
             shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
             "base", "+field-list",
+            "--as", "user",
             "--base-token", base_token,
             "--table-id", table_id,
         ],
@@ -349,6 +403,54 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
     )
     fields = payload.get("data", {}).get("fields", [])
     return [f.get("name") for f in fields if isinstance(f, dict) and f.get("name")]
+
+
+async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    payload = await _run_lark_cli(
+        [
+            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            "base", "+field-list",
+            "--as", "user",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--limit", "200",
+        ],
+        timeout_sec=30,
+    )
+    fields = payload.get("data", {}).get("fields", [])
+    return [f for f in fields if isinstance(f, dict) and f.get("name")]
+
+
+async def _create_base_field(base_token: str, table_id: str, field: Dict[str, Any]) -> None:
+    await _run_lark_cli(
+        [
+            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            "base", "+field-create",
+            "--as", "user",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--json", json.dumps(field, ensure_ascii=False),
+        ],
+        timeout_sec=45,
+    )
+
+
+async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_by_name = {field.get("name"): field for field in existing}
+    wanted = _creator_selection_fields()
+    for field in wanted:
+        name = field["name"]
+        if name not in existing_by_name:
+            await _create_base_field(base_token, table_id, field)
+    # Existing old tables may already have text fields named 截图/详情文本.
+    refreshed = await _read_table_field_defs(base_token, table_id)
+    refreshed_by_name = {field.get("name"): field for field in refreshed}
+    for legacy_name, attachment_name in [("截图", "截图附件"), ("详情文本", "详情文本附件")]:
+        legacy = refreshed_by_name.get(legacy_name)
+        if legacy and legacy.get("type") != "attachment" and attachment_name not in refreshed_by_name:
+            await _create_base_field(base_token, table_id, _attachment_field(attachment_name))
+    return await _read_table_field_defs(base_token, table_id)
 
 
 def _text_field(name: str) -> Dict[str, Any]:
@@ -370,6 +472,10 @@ def _number_field(name: str) -> Dict[str, Any]:
 
 def _datetime_field(name: str) -> Dict[str, Any]:
     return {"name": name, "type": "datetime", "style": {"format": "yyyy/MM/dd"}}
+
+
+def _attachment_field(name: str) -> Dict[str, Any]:
+    return {"name": name, "type": "attachment"}
 
 
 def _viral_monitor_fields() -> List[Dict[str, Any]]:
@@ -416,6 +522,7 @@ def _comments_fields() -> List[Dict[str, Any]]:
 def _creator_selection_fields() -> List[Dict[str, Any]]:
     return [
         _text_field("类型"),
+        _text_field("去重键"),
         _number_field("排名"),
         _text_field("达人昵称"),
         _text_field("小红书号"),
@@ -429,17 +536,40 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
         _number_field("图文报价"),
         _number_field("视频报价"),
         _text_field("标签"),
+        _text_field("博主优势"),
+        _text_field("数据日期"),
+        _number_field("发布笔记数"),
         _number_field("曝光中位数"),
         _number_field("阅读中位数"),
         _number_field("互动中位数"),
+        _number_field("中位点赞量"),
+        _number_field("中位收藏量"),
+        _number_field("中位评论量"),
+        _number_field("中位分享量"),
+        _number_field("中位关注量"),
         _text_field("互动率"),
+        _text_field("视频完播率"),
+        _text_field("图文3秒阅读率"),
+        _text_field("千赞笔记比例"),
+        _text_field("百赞笔记比例"),
+        _number_field("近7日活跃天数"),
+        _number_field("邀约数"),
+        _text_field("响应率"),
         _number_field("粉丝增量"),
+        _text_field("粉丝增长率"),
         _text_field("活跃粉丝占比"),
         _text_field("阅读粉丝占比"),
         _text_field("互动粉丝占比"),
+        _text_field("付费粉丝占比"),
+        _text_field("女性粉丝占比"),
+        _text_field("男性粉丝占比"),
+        _text_field("主要年龄段"),
+        _text_field("省份TOP5"),
+        _text_field("城市TOP5"),
+        _text_field("兴趣TOP8"),
         _text_field("输出目录"),
-        _text_field("截图"),
-        _text_field("详情文本"),
+        _attachment_field("截图"),
+        _attachment_field("详情文本"),
         _text_field("更新时间"),
     ]
 
@@ -672,6 +802,7 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
     alias_map = {
         "类型": ["row_type", "类型"],
         "达人类型": ["row_type", "类型"],
+        "去重键": ["dedupe_key", "去重键"],
         "排名": ["rank", "排名"],
         "达人昵称": ["nickname", "博主昵称", "博主名"],
         "博主昵称": ["nickname", "达人昵称", "博主名"],
@@ -688,21 +819,46 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "图文报价": ["picture_price", "图文报价"],
         "视频报价": ["video_price", "视频报价"],
         "标签": ["tags", "标签"],
+        "博主优势": ["kol_advantage", "博主优势"],
+        "数据日期": ["data_date", "数据日期"],
+        "发布笔记数": ["note_number", "发布笔记数"],
         "曝光中位数": ["imp_median", "曝光中位数"],
         "阅读中位数": ["read_median", "阅读中位数"],
         "互动中位数": ["interaction_median", "互动中位数"],
+        "中位点赞量": ["like_median", "中位点赞量"],
+        "中位收藏量": ["collect_median", "中位收藏量"],
+        "中位评论量": ["comment_median", "中位评论量"],
+        "中位分享量": ["share_median", "中位分享量"],
+        "中位关注量": ["follow_median", "中位关注量"],
         "互动率": ["interaction_rate", "互动率"],
+        "视频完播率": ["video_full_view_rate", "视频完播率"],
+        "图文3秒阅读率": ["picture_3s_view_rate", "图文3秒阅读率"],
+        "千赞笔记比例": ["thousand_like_percent", "千赞笔记比例"],
+        "百赞笔记比例": ["hundred_like_percent", "百赞笔记比例"],
+        "近7日活跃天数": ["active_day_7", "近7日活跃天数"],
+        "邀约数": ["invite_num", "邀约数"],
+        "响应率": ["response_rate", "响应率"],
         "粉丝增量": ["fans_increase", "粉丝增量"],
+        "粉丝增长率": ["fans_growth_rate", "粉丝增长率"],
         "活跃粉丝占比": ["active_fans_rate", "活跃粉丝占比"],
         "阅读粉丝占比": ["read_fans_rate", "阅读粉丝占比"],
         "互动粉丝占比": ["engage_fans_rate", "互动粉丝占比"],
+        "付费粉丝占比": ["pay_fans_rate", "付费粉丝占比"],
+        "女性粉丝占比": ["female_fans_rate", "女性粉丝占比"],
+        "男性粉丝占比": ["male_fans_rate", "男性粉丝占比"],
+        "主要年龄段": ["main_age", "主要年龄段"],
+        "省份TOP5": ["top_provinces", "省份TOP5"],
+        "城市TOP5": ["top_cities", "城市TOP5"],
+        "兴趣TOP8": ["top_interests", "兴趣TOP8"],
         "输出目录": ["output_dir", "输出目录"],
         "截图": ["screenshot", "截图"],
+        "截图附件": ["screenshot", "截图附件"],
         "详情文本": ["detail_text", "详情文本"],
+        "详情文本附件": ["detail_text", "详情文本附件"],
         "更新时间": ["updated_at", "更新时间"],
         "采集时间": ["updated_at", "采集时间"],
     }
-    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "曝光中位数", "阅读中位数", "互动中位数", "粉丝增量"}
+    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "发布笔记数", "曝光中位数", "阅读中位数", "互动中位数", "中位点赞量", "中位收藏量", "中位评论量", "中位分享量", "中位关注量", "近7日活跃天数", "邀约数", "粉丝增量"}
     values: List[Any] = []
     for field_name in table_fields:
         keys = alias_map.get(field_name, [field_name])
@@ -722,12 +878,150 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
     return values
 
 
+def _pgy_dedupe_key(row: Dict[str, Any]) -> str:
+    row_type = str(row.get("row_type") or row.get("类型") or "").strip() or "未知"
+    target = str(
+        row.get("target_red_id")
+        or row.get("目标小红书号")
+        or row.get("target_nickname")
+        or row.get("目标达人昵称")
+        or ""
+    ).strip()
+    identity = str(
+        row.get("red_id")
+        or row.get("小红书号")
+        or row.get("nickname")
+        or row.get("达人昵称")
+        or ""
+    ).strip()
+    return " :: ".join([row_type, target, identity]).lower()
+
+
+def _pgy_row_to_record(row: Dict[str, Any], table_fields: List[str]) -> Dict[str, Any]:
+    values = _pgy_row_to_values(row, table_fields)
+    return {
+        field_name: value
+        for field_name, value in zip(table_fields, values)
+        if value not in ("", None)
+    }
+
+
+async def _read_existing_pgy_records(base_token: str, table_id: str, field_names: List[str]) -> Dict[str, str]:
+    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    existing: Dict[str, str] = {}
+    offset = 0
+    limit = 200
+    requested_fields = [name for name in field_names if name]
+    while True:
+        cmd = [
+            lark_cli_bin,
+            "base",
+            "+record-list",
+            "--as",
+            "user",
+            "--format",
+            "json",
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+            "--offset",
+            str(offset),
+            "--limit",
+            str(limit),
+        ]
+        for field_name in requested_fields:
+            cmd.extend(["--field-id", field_name])
+        payload = await _run_lark_cli(cmd, timeout_sec=60)
+        data = payload.get("data") or {}
+        fields = data.get("fields") or requested_fields
+        rows = data.get("data") or []
+        record_ids = data.get("record_id_list") or []
+        for record_id, values in zip(record_ids, rows):
+            if not isinstance(values, list):
+                continue
+            existing_row = {field_name: value for field_name, value in zip(fields, values)}
+            key = str(existing_row.get("去重键") or "").strip().lower() or _pgy_dedupe_key({
+                "row_type": existing_row.get("类型"),
+                "target_red_id": existing_row.get("目标小红书号"),
+                "target_nickname": existing_row.get("目标达人昵称"),
+                "red_id": existing_row.get("小红书号"),
+                "nickname": existing_row.get("达人昵称"),
+            })
+            if key and key not in existing:
+                existing[key] = str(record_id)
+        if not data.get("has_more"):
+            break
+        offset += limit
+    return existing
+
+
 def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[str, Any]]:
     target = summary.get("blogger_detail") or {}
     propagation = summary.get("propagation_performance") or {}
     notes_rate = propagation.get("notes_rate") or {}
     fans = summary.get("fan_analysis") or {}
     fans_summary = fans.get("fans_summary") or {}
+    target_metrics = summary.get("target_metrics") or {}
+    if not target_metrics:
+        data_summary = propagation.get("data_summary") or {}
+        fans_profile = fans.get("fans_profile") or {}
+        gender = fans_profile.get("gender") or {}
+
+        def top_percent(items: List[Dict[str, Any]], limit: int = 5) -> str:
+            parts: List[str] = []
+            for item in (items or [])[:limit]:
+                name = item.get("name") or item.get("group") or ""
+                percent = item.get("percent")
+                if not name:
+                    continue
+                try:
+                    percent_text = f"{float(percent) * 100:.1f}%" if float(percent) <= 1 else f"{float(percent):.1f}%"
+                    parts.append(f"{name} {percent_text}")
+                except Exception:
+                    parts.append(str(name))
+            return "，".join(parts)
+
+        def dominant(items: List[Dict[str, Any]]) -> str:
+            if not items:
+                return ""
+            best = sorted(items, key=lambda item: item.get("percent") or 0, reverse=True)[0]
+            return str(best.get("name") or best.get("group") or "")
+
+        target_metrics = {
+            "kol_advantage": data_summary.get("kolAdvantage") or "",
+            "data_date": data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
+            "note_number": data_summary.get("noteNumber") or notes_rate.get("noteNumber") or "",
+            "imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or "",
+            "read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or "",
+            "interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
+            "like_median": notes_rate.get("likeMedian") or "",
+            "collect_median": notes_rate.get("collectMedian") or "",
+            "comment_median": notes_rate.get("commentMedian") or "",
+            "share_median": notes_rate.get("shareMedian") or "",
+            "follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
+            "interaction_rate": notes_rate.get("interactionRate") or "",
+            "video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
+            "picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
+            "thousand_like_percent": notes_rate.get("thousandLikePercent") or "",
+            "hundred_like_percent": notes_rate.get("hundredLikePercent") or "",
+            "active_day_7": data_summary.get("activeDayInLast7") or "",
+            "invite_num": data_summary.get("inviteNum") or "",
+            "response_rate": data_summary.get("responseRate") or "",
+            "fans_num": fans_summary.get("fansNum") or target.get("fansCount") or "",
+            "fans_increase": fans_summary.get("fansIncreaseNum") or "",
+            "fans_growth_rate": fans_summary.get("fansGrowthRate") or data_summary.get("fans30GrowthRate") or "",
+            "active_fans_rate": fans_summary.get("activeFansRate") or "",
+            "read_fans_rate": fans_summary.get("readFansRate") or "",
+            "engage_fans_rate": fans_summary.get("engageFansRate") or "",
+            "pay_fans_rate": fans_summary.get("payFansUserRate30d") or "",
+            "female_fans_rate": gender.get("female") or "",
+            "male_fans_rate": gender.get("male") or "",
+            "main_age": dominant(fans_profile.get("ages") or []),
+            "top_provinces": top_percent(fans_profile.get("provinces") or [], limit=5),
+            "top_cities": top_percent(fans_profile.get("cities") or [], limit=5),
+            "top_interests": top_percent(fans_profile.get("interests") or [], limit=8),
+        }
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_tags = []
     for tag in target.get("featureTags") or target.get("contentTags") or []:
@@ -752,19 +1046,13 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
         "picture_price": target.get("picturePrice") or "",
         "video_price": target.get("videoPrice") or "",
         "tags": ",".join(target_tags),
-        "imp_median": notes_rate.get("impMedian") or "",
-        "read_median": notes_rate.get("readMedian") or "",
-        "interaction_median": notes_rate.get("interactionMedian") or "",
-        "interaction_rate": notes_rate.get("interactionRate") or "",
-        "fans_increase": fans_summary.get("fansIncreaseNum") or "",
-        "active_fans_rate": fans_summary.get("activeFansRate") or "",
-        "read_fans_rate": fans_summary.get("readFansRate") or "",
-        "engage_fans_rate": fans_summary.get("engageFansRate") or "",
+        **target_metrics,
         "output_dir": output_dir,
         "screenshot": summary.get("screenshot") or "",
         "detail_text": summary.get("detail_text") or "",
         "updated_at": updated_at,
     }
+    target_row["dedupe_key"] = _pgy_dedupe_key(target_row)
     rows = [target_row]
     for item in summary.get("similar_creators") or []:
         if not isinstance(item, dict):
@@ -774,13 +1062,44 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
             "target_nickname": target_row["nickname"],
             "target_red_id": target_row["red_id"],
             "output_dir": output_dir,
-            "screenshot": summary.get("screenshot") or "",
-            "detail_text": summary.get("detail_text") or "",
+            "screenshot": item.get("screenshot") or "",
+            "detail_text": item.get("detail_text") or "",
             "updated_at": updated_at,
             **item,
         }
+        row["dedupe_key"] = _pgy_dedupe_key(row)
         rows.append(row)
     return rows
+
+
+async def _upload_base_attachment(base_token: str, table_id: str, record_id: str, field_name: str, file_path: str) -> None:
+    if not file_path:
+        return
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[2] / path
+    path = path.resolve()
+    if not path.exists() or not path.is_file():
+        return
+    project_root = Path(__file__).resolve().parents[2]
+    try:
+        cli_file = str(path.relative_to(project_root))
+    except ValueError:
+        cli_file = str(path)
+    await _run_lark_cli(
+        [
+            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            "base", "+record-upload-attachment",
+            "--as", "user",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--record-id", record_id,
+            "--field-id", field_name,
+            "--file", cli_file,
+            "--name", path.name,
+        ],
+        timeout_sec=60,
+    )
 
 
 async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any]:
@@ -792,36 +1111,98 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"读取蒲公英 summary.json 失败: {exc}") from exc
 
-    table_fields = await _read_table_fields(request.base_token, request.table_id)
-    if not table_fields:
+    field_defs = await _ensure_creator_selection_fields(request.base_token, request.table_id)
+    if not field_defs:
         raise HTTPException(status_code=400, detail="目标表没有字段，无法同步")
+    table_fields = [field.get("name") for field in field_defs if field.get("name")]
+    field_types = {field.get("name"): field.get("type") for field in field_defs}
+    writable_fields = [name for name in table_fields if field_types.get(name) != "attachment"]
     output_dir = str(summary_path.parent)
     rows = _pgy_summary_to_rows(summary, output_dir)
-    table_rows = [_pgy_row_to_values(row, table_fields) for row in rows]
+    dedupe_fields = [name for name in ["去重键", "类型", "达人昵称", "小红书号", "目标达人昵称", "目标小红书号"] if name in table_fields]
+    existing_records = await _read_existing_pgy_records(request.base_token, request.table_id, dedupe_fields)
     lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
     created = 0
+    updated = 0
+    skipped = 0
+    record_ids: List[str] = []
+    rows_for_attachments: List[Dict[str, Any]] = []
+    new_rows: List[Dict[str, Any]] = []
+    seen_new_keys: set[str] = set()
+    for row in rows:
+        key = str(row.get("dedupe_key") or _pgy_dedupe_key(row)).lower()
+        if key in seen_new_keys:
+            skipped += 1
+            continue
+        record_id = existing_records.get(key)
+        if record_id:
+            payload = _pgy_row_to_record(row, writable_fields)
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [
+                        lark_cli_bin,
+                        "base",
+                        "+record-upsert",
+                        "--as",
+                        "user",
+                        "--base-token",
+                        request.base_token,
+                        "--table-id",
+                        request.table_id,
+                        "--record-id",
+                        record_id,
+                        "--json",
+                        json_arg,
+                    ],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            new_rows.append(row)
+            seen_new_keys.add(key)
+
+    table_rows = [_pgy_row_to_values(row, writable_fields) for row in new_rows]
     for i in range(0, len(table_rows), 200):
-        payload = {"fields": table_fields, "rows": table_rows[i:i + 200]}
-        await _run_lark_cli(
-            [
-                lark_cli_bin,
-                "base",
-                "+record-batch-create",
-                "--as",
-                "user",
-                "--base-token",
-                request.base_token,
-                "--table-id",
-                request.table_id,
-                "--json",
-                json.dumps(payload, ensure_ascii=False),
-            ],
-            timeout_sec=60,
-        )
-        created += len(table_rows[i:i + 200])
+        payload = {"fields": writable_fields, "rows": table_rows[i:i + 200]}
+        with _lark_json_arg(payload) as json_arg:
+            created_payload = await _run_lark_cli(
+                [
+                    lark_cli_bin,
+                    "base",
+                    "+record-batch-create",
+                    "--as",
+                    "user",
+                    "--base-token",
+                    request.base_token,
+                    "--table-id",
+                    request.table_id,
+                    "--json",
+                    json_arg,
+                ],
+                timeout_sec=60,
+            )
+        batch_ids = (created_payload.get("data") or {}).get("record_id_list") or []
+        record_ids.extend([str(record_id) for record_id in batch_ids if record_id])
+        batch_rows = new_rows[i:i + 200]
+        rows_for_attachments.extend(batch_rows)
+        created += len(batch_rows)
+    screenshot_field = "截图" if field_types.get("截图") == "attachment" else "截图附件"
+    attachment_uploads = 0
+    attachment_errors: List[str] = []
+    for record_id, row in zip(record_ids, rows_for_attachments):
+        if field_types.get(screenshot_field) == "attachment" and row.get("screenshot"):
+            try:
+                await _upload_base_attachment(request.base_token, request.table_id, record_id, screenshot_field, row.get("screenshot") or "")
+                attachment_uploads += 1
+            except Exception as exc:
+                attachment_errors.append(str(exc)[:300])
     return {
         "status": "success",
         "created": created,
+        "updated": updated,
+        "skipped_duplicates": skipped,
+        "attachment_uploads": attachment_uploads,
+        "attachment_errors": attachment_errors,
         "base_token": request.base_token,
         "table_id": request.table_id,
         "summary": str(summary_path),
@@ -834,7 +1215,7 @@ async def _read_rule_table(base_token: str, table_id: str) -> List[Dict]:
     if not base_token or not table_id:
         raise HTTPException(status_code=400, detail="缺少 base_token 或 table_id")
     lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
-    cmd = [lark_cli_bin, "base", "+record-list", "--base-token", base_token, "--table-id", table_id, "--limit", "200"]
+    cmd = [lark_cli_bin, "base", "+record-list", "--as", "user", "--format", "json", "--base-token", base_token, "--table-id", table_id, "--limit", "200"]
     result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=20, check=False)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"读取规则表失败: {(result.stderr or result.stdout)[:400]}")
@@ -916,10 +1297,11 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
     created = 0
     for i in range(0, len(rows), 200):
         payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        await _run_lark_cli(
-            [lark_cli_bin, "base", "+record-batch-create", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json.dumps(payload, ensure_ascii=False)],
-            timeout_sec=60,
-        )
+        with _lark_json_arg(payload) as json_arg:
+            await _run_lark_cli(
+                [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                timeout_sec=60,
+            )
         created += len(payload["rows"])
     return {"created": created, "file": str(file_path)}
 
@@ -1118,16 +1500,19 @@ async def huitun_export_anchor_list(request: HuitunExportAnchorListRequest):
 
 @router.post("/pgy/run-kol")
 async def pgy_run_kol(request: PgyKolRunRequest):
-    if not request.nickname.strip() and not request.red_id.strip():
-        raise HTTPException(status_code=400, detail="请至少填写达人昵称或小红书号")
-    args = ["run-kol"]
+    if not request.nickname.strip():
+        raise HTTPException(status_code=400, detail="请填写达人昵称；小红书号仅用于重名时精确匹配")
+    args = ["run-kol", "--api-only"]
     if request.nickname.strip():
         args.extend(["--nickname", request.nickname.strip()])
     if request.red_id.strip():
         args.extend(["--red-id", request.red_id.strip()])
+    args.extend(["--similar-detail-limit", str(max(0, min(20, request.similar_detail_limit)))])
+    if request.similar_user_ids.strip():
+        args.extend(["--similar-user-ids", request.similar_user_ids.strip()])
     if request.keep_open:
         args.append("--keep-open")
-    result = await _run_pgy_automation(args, timeout_sec=180)
+    result = await _run_pgy_automation(args, timeout_sec=900)
     if result.get("status") == "login_required":
         raise HTTPException(status_code=401, detail=result.get("error") or "蒲公英需要登录")
     if result.get("status") == "error" or result.get("returncode"):
@@ -1203,10 +1588,10 @@ async def pgy_status():
 @router.get("/pgy/file")
 async def pgy_file(path: str):
     project_root = Path(__file__).resolve().parents[2]
-    downloads_root = (project_root / "downloads").resolve()
+    downloads_root = downloads_dir().resolve()
     file_path = Path(path)
     if not file_path.is_absolute():
-        file_path = project_root / file_path
+        file_path = downloads_root / file_path
     file_path = file_path.resolve()
     try:
         file_path.relative_to(downloads_root)
@@ -1345,21 +1730,7 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
     created = 0
     for i in range(0, len(rows), 200):
         payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        tmp_json_path = ""
-        project_root = Path(__file__).resolve().parents[2]
-        try:
-            # lark-cli requires --json @file to be a relative path under current working dir.
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                suffix=".json",
-                delete=False,
-                dir=str(project_root),
-                prefix=".lark_payload_",
-            ) as tmp_file:
-                json.dump(payload, tmp_file, ensure_ascii=False)
-                tmp_json_path = tmp_file.name
-            tmp_json_rel = f".\\{Path(tmp_json_path).name}"
+        with _lark_json_arg(payload) as json_arg:
             await _run_lark_cli(
                 [
                     lark_cli_bin,
@@ -1370,14 +1741,10 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
                     "--table-id",
                     request.table_id,
                     "--json",
-                    f"@{tmp_json_rel}",
+                    json_arg,
                 ],
                 timeout_sec=60,
             )
-        finally:
-            if tmp_json_path:
-                with contextlib.suppress(Exception):
-                    Path(tmp_json_path).unlink(missing_ok=True)
         created += len(payload["rows"])
     target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
     return {

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 MediaCrawler WebUI API Server
-Start command: uvicorn api.main:app --port 8080 --reload
+Start command: uvicorn api.main:app --port 8081
 Or: python -m api.main
 """
 import asyncio
@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from config.runtime_paths import ensure_runtime_dirs, ops_config_path
 from .routers import crawler_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
@@ -28,7 +29,9 @@ app = FastAPI(
 # Get webui static files directory
 WEBUI_DIR = os.path.join(os.path.dirname(__file__), "webui")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OPS_CONFIG_PATH = PROJECT_ROOT / "config" / "ops_config.json"
+OPS_CONFIG_PATH = ops_config_path()
+LEGACY_OPS_CONFIG_PATH = PROJECT_ROOT / "config" / "ops_config.json"
+ensure_runtime_dirs()
 
 OPS_CONFIG_DEFAULT = {
     "platform": "xhs",
@@ -40,7 +43,7 @@ OPS_CONFIG_DEFAULT = {
     "max_comments_count_singlenotes": 10,
     "enable_comments": True,
     "enable_sub_comments": False,
-    "enable_media": False,
+    "enable_media": True,
     "save_option": "csv",
     "cookies": "",
     "headless": False,
@@ -78,7 +81,7 @@ OPS_CONFIG_DEFAULT = {
     "pgy_nickname": "",
     "pgy_red_id": "",
     "pgy_table_id": "",
-    "pgy_sync_after_run": "false",
+    "pgy_sync_after_run": "true",
     "project_name": "",
     "current_project_key": "",
     "project_profiles": {},
@@ -105,8 +108,6 @@ PROJECT_BOUND_FIELDS = {
     "collab_notes_per_creator",
     "collab_interval_hours",
     "collab_sync_limit",
-    "pgy_nickname",
-    "pgy_red_id",
     "pgy_table_id",
     "pgy_sync_after_run",
 }
@@ -122,7 +123,7 @@ class OpsConfigPayload(BaseModel):
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
-    enable_media: bool = False
+    enable_media: bool = True
     save_option: str = "csv"
     cookies: str = ""
     headless: bool = False
@@ -160,7 +161,7 @@ class OpsConfigPayload(BaseModel):
     pgy_nickname: str = ""
     pgy_red_id: str = ""
     pgy_table_id: str = ""
-    pgy_sync_after_run: str = "false"
+    pgy_sync_after_run: str = "true"
     project_name: str = ""
     current_project_key: str = ""
     project_profiles: Dict[str, Dict[str, Any]] = {}
@@ -168,9 +169,10 @@ class OpsConfigPayload(BaseModel):
 
 def _load_ops_config() -> dict:
     config = dict(OPS_CONFIG_DEFAULT)
-    if OPS_CONFIG_PATH.exists():
+    source_path = OPS_CONFIG_PATH if OPS_CONFIG_PATH.exists() else LEGACY_OPS_CONFIG_PATH
+    if source_path.exists():
         try:
-            with open(OPS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(source_path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 config.update(loaded)
@@ -384,4 +386,4 @@ if os.path.exists(WEBUI_DIR):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="127.0.0.1", port=8081)
