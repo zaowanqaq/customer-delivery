@@ -1,9 +1,9 @@
+from pathlib import Path
 import re
-import os
 
-filepath = r"D:\trae international\MediaCrawler\api\webui\ops_config.html"
+filepath = Path(__file__).resolve().parent / "api" / "webui" / "ops_config.html"
 
-with open(filepath, "r", encoding="utf-8") as f:
+with filepath.open("r", encoding="utf-8") as f:
     content = f.read()
 
 # 1. Replace the <style> block completely
@@ -212,7 +212,7 @@ js_injection = """
 
 content = content.replace("</script>", js_injection + "\n  </script>")
 
-with open("api/webui/ops_config_new.html", "w", encoding="utf-8") as f:
+with (filepath.parent / "ops_config_new.html").open("w", encoding="utf-8") as f:
     f.write(content)
 
 print("ops_config_new.html written successfully!")

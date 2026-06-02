@@ -204,7 +204,7 @@ class TestSingletonPattern:
         """Test that different parameters return different instances"""
         instance1 = ExcelStoreBase.get_instance("xhs", "search")
         instance2 = ExcelStoreBase.get_instance("xhs", "detail")
-        instance3 = ExcelStoreBase.get_instance("douyin", "search")
+        instance3 = ExcelStoreBase.get_instance("xhs", "creator")
 
         assert instance1 is not instance2
         assert instance1 is not instance3

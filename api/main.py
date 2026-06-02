@@ -5,9 +5,12 @@ Start command: uvicorn api.main:app --port 8081
 Or: python -m api.main
 """
 import asyncio
+import importlib
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict
 import uvicorn
@@ -17,7 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import config
 from config.runtime_paths import ensure_runtime_dirs, ops_config_path
+from tools.browser_launcher import BrowserLauncher
 from .routers import crawler_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
@@ -37,7 +42,7 @@ OPS_CONFIG_DEFAULT = {
     "platform": "xhs",
     "login_type": "qrcode",
     "crawler_type": "search",
-    "keywords": "AI运营",
+    "keywords": "",
     "start_page": 1,
     "max_notes_count": 20,
     "max_comments_count_singlenotes": 10,
@@ -55,12 +60,14 @@ OPS_CONFIG_DEFAULT = {
     "rule_base_token": "",
     "rule_table_id": "",
     "rule_name": "",
+    "folder_token": "",
     "template_base_token": "",
     "sync_base_token": "",
     "account_filter_table_id": "",
     "sync_notes_table_id": "",
     "sync_comments_table_id": "",
     "sync_limit": 0,
+    "sync_file_path": "",
     "sample_creator_ids": "",
     "notes_per_creator": 20,
     "scenario_base_token": "",
@@ -112,6 +119,17 @@ PROJECT_BOUND_FIELDS = {
     "pgy_sync_after_run",
 }
 
+REQUIRED_RUNTIME_IMPORTS = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "playwright": "playwright",
+    "pandas": "pandas",
+    "openpyxl": "openpyxl",
+    "websockets": "websockets",
+    "xhshow": "xhshow",
+    "cv2": "opencv-python",
+}
+
 
 class OpsConfigPayload(BaseModel):
     platform: str = "xhs"
@@ -135,12 +153,14 @@ class OpsConfigPayload(BaseModel):
     rule_base_token: str = ""
     rule_table_id: str = ""
     rule_name: str = ""
+    folder_token: str = ""
     template_base_token: str = ""
     sync_base_token: str = ""
     account_filter_table_id: str = ""
     sync_notes_table_id: str = ""
     sync_comments_table_id: str = ""
     sync_limit: int = 0
+    sync_file_path: str = ""
     sample_creator_ids: str = ""
     notes_per_creator: int = 20
     scenario_base_token: str = ""
@@ -186,6 +206,39 @@ def _save_ops_config(config_data: dict) -> None:
     with open(OPS_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config_data, f, ensure_ascii=False, indent=2)
 
+
+def _missing_runtime_dependencies() -> list[str]:
+    missing = []
+    for module_name, package_name in REQUIRED_RUNTIME_IMPORTS.items():
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing.append(package_name)
+    return missing
+
+
+def _check_cdp_browser_configuration() -> tuple[bool, str, str, bool]:
+    if not config.ENABLE_CDP_MODE:
+        return True, "CDP 模式未启用", "", False
+
+    custom_path = (config.CUSTOM_BROWSER_PATH or "").strip()
+    if custom_path:
+        custom_browser = Path(custom_path).expanduser()
+        ok = custom_browser.is_file()
+        message = "已找到自定义浏览器" if ok else "CUSTOM_BROWSER_PATH 指向的浏览器不存在"
+        return ok, message, str(custom_browser), True
+
+    browser_paths = BrowserLauncher().detect_browser_paths()
+    if browser_paths:
+        return True, "已找到系统 Chrome/Edge，可用于 CDP 模式", browser_paths[0], True
+
+    return (
+        False,
+        "当前配置启用 ENABLE_CDP_MODE，但未找到系统 Chrome/Edge；请安装浏览器或设置 CUSTOM_BROWSER_PATH",
+        f"CUSTOM_BROWSER_PATH={config.CUSTOM_BROWSER_PATH!r}",
+        True,
+    )
+
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
     CORSMiddleware,
@@ -230,6 +283,15 @@ async def serve_ops_config():
     return {"message": "ops_config.html not found", "path": page_path}
 
 
+@app.get("/favicon.ico")
+async def serve_favicon():
+    """Return a favicon so browser checks do not produce a noisy 404."""
+    favicon_path = os.path.join(WEBUI_DIR, "vite.svg")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/svg+xml")
+    return {"message": "favicon not found"}
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
@@ -237,65 +299,100 @@ async def health_check():
 
 @app.get("/api/env/check")
 async def check_environment():
-    """Check if MediaCrawler environment is configured correctly"""
+    """Check whether the customer workstation can run the ops workbench."""
+    checks = []
+
+    def add_check(name: str, ok: bool, message: str, required: bool = True, detail: str = "") -> None:
+        checks.append({
+            "name": name,
+            "ok": ok,
+            "required": required,
+            "message": message,
+            "detail": detail[:500] if detail else "",
+        })
+
+    add_check(
+        "Python",
+        sys.version_info >= (3, 11),
+        f"{sys.version.split()[0]}（要求 3.11 或更高）",
+    )
+
+    missing_packages = _missing_runtime_dependencies()
+    if missing_packages:
+        add_check(
+            "Python 依赖",
+            False,
+            "依赖未安装完整，请重新运行启动脚本安装 requirements.txt",
+            detail=", ".join(missing_packages),
+        )
+    else:
+        add_check("Python 依赖", True, "运行期 Python 依赖已安装")
+
     try:
-        # Run uv run main.py --help command to check environment
+        script = (
+            "from pathlib import Path; "
+            "from playwright.sync_api import sync_playwright; "
+            "p=sync_playwright().start(); "
+            "path=p.chromium.executable_path; "
+            "p.stop(); "
+            "print(path); "
+            "raise SystemExit(0 if Path(path).exists() else 1)"
+        )
         process = await asyncio.create_subprocess_exec(
-            "uv", "run", "main.py", "--help",
+            sys.executable,
+            "-c",
+            script,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd="."  # Project root directory
+            cwd=str(PROJECT_ROOT),
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=30.0  # 30 seconds timeout
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15.0)
+        browser_path = stdout.decode("utf-8", errors="ignore").strip()
+        err = stderr.decode("utf-8", errors="ignore").strip()
+        add_check(
+            "Playwright 浏览器",
+            process.returncode == 0,
+            "Chromium 已安装" if process.returncode == 0 else "Chromium 未安装，请运行 python -m playwright install chromium",
+            detail=browser_path or err,
+        )
+    except Exception as exc:
+        add_check("Playwright 浏览器", False, "Chromium 检查失败，请运行 python -m playwright install chromium", detail=str(exc))
+
+    try:
+        ok, message, detail, required = _check_cdp_browser_configuration()
+        add_check("CDP 浏览器", ok, message, required=required, detail=detail)
+    except Exception as exc:
+        add_check(
+            "CDP 浏览器",
+            False,
+            "CDP 浏览器配置检查失败；请确认 Chrome/Edge 安装或 CUSTOM_BROWSER_PATH 配置",
+            detail=str(exc),
         )
 
-        if process.returncode == 0:
-            return {
-                "success": True,
-                "message": "MediaCrawler environment configured correctly",
-                "output": stdout.decode("utf-8", errors="ignore")[:500]  # Truncate to first 500 characters
-            }
-        else:
-            error_msg = stderr.decode("utf-8", errors="ignore") or stdout.decode("utf-8", errors="ignore")
-            return {
-                "success": False,
-                "message": "Environment check failed",
-                "error": error_msg[:500]
-            }
-    except asyncio.TimeoutError:
-        return {
-            "success": False,
-            "message": "Environment check timeout",
-            "error": "Command execution exceeded 30 seconds"
-        }
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "message": "uv command not found",
-            "error": "Please ensure uv is installed and configured in system PATH"
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": "Environment check error",
-            "error": str(e)
-        }
+    lark_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
+    if lark_bin:
+        add_check("飞书 CLI", True, "已找到 lark-cli；请确认已用客户飞书账号完成授权", detail=lark_bin)
+    else:
+        add_check("飞书 CLI", False, "未找到 lark-cli；初始化 Base 和同步多维表前必须安装并授权")
+
+    ensure_runtime_dirs()
+    add_check("工作台配置目录", True, "已就绪", detail=str(OPS_CONFIG_PATH))
+    add_check("运行数据目录", True, "已就绪", detail=str(OPS_CONFIG_PATH.parent.parent))
+
+    success = all(item["ok"] for item in checks if item["required"])
+    return {
+        "success": success,
+        "message": "环境检查通过" if success else "环境检查未通过，请按提示处理",
+        "checks": checks,
+    }
 
 
 @app.get("/api/config/platforms")
 async def get_platforms():
-    """Get list of supported platforms"""
+    """Get list of supported platforms."""
     return {
         "platforms": [
             {"value": "xhs", "label": "Xiaohongshu", "icon": "book-open"},
-            {"value": "dy", "label": "Douyin", "icon": "music"},
-            {"value": "ks", "label": "Kuaishou", "icon": "video"},
-            {"value": "bili", "label": "Bilibili", "icon": "tv"},
-            {"value": "wb", "label": "Weibo", "icon": "message-circle"},
-            {"value": "tieba", "label": "Baidu Tieba", "icon": "messages-square"},
-            {"value": "zhihu", "label": "Zhihu", "icon": "help-circle"},
         ]
     }
 

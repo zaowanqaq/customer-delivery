@@ -18,15 +18,9 @@ EnumT = TypeVar("EnumT", bound=Enum)
 
 
 class PlatformEnum(str, Enum):
-    """Supported media platform enumeration"""
+    """Supported media platform enumeration."""
 
     XHS = "xhs"
-    DOUYIN = "dy"
-    KUAISHOU = "ks"
-    BILIBILI = "bili"
-    WEIBO = "wb"
-    TIEBA = "tieba"
-    ZHIHU = "zhihu"
 
 
 class LoginTypeEnum(str, Enum):
@@ -127,7 +121,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             PlatformEnum,
             typer.Option(
                 "--platform",
-                help="Media platform selection (xhs=XiaoHongShu | dy=Douyin | ks=Kuaishou | bili=Bilibili | wb=Weibo | tieba=Baidu Tieba | zhihu=Zhihu)",
+                help="Media platform selection (xhs=XiaoHongShu)",
                 rich_help_panel="Basic Configuration",
             ),
         ] = _coerce_enum(PlatformEnum, config.PLATFORM, PlatformEnum.XHS),
@@ -380,28 +374,10 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:
-            if platform == PlatformEnum.XHS:
-                config.XHS_SPECIFIED_NOTE_URL_LIST = specified_id_list
-            elif platform == PlatformEnum.BILIBILI:
-                config.BILI_SPECIFIED_ID_LIST = specified_id_list
-            elif platform == PlatformEnum.DOUYIN:
-                config.DY_SPECIFIED_ID_LIST = specified_id_list
-            elif platform == PlatformEnum.WEIBO:
-                config.WEIBO_SPECIFIED_ID_LIST = specified_id_list
-            elif platform == PlatformEnum.KUAISHOU:
-                config.KS_SPECIFIED_ID_LIST = specified_id_list
+            config.XHS_SPECIFIED_NOTE_URL_LIST = specified_id_list
 
         if creator_id_list:
-            if platform == PlatformEnum.XHS:
-                config.XHS_CREATOR_ID_LIST = creator_id_list
-            elif platform == PlatformEnum.BILIBILI:
-                config.BILI_CREATOR_ID_LIST = creator_id_list
-            elif platform == PlatformEnum.DOUYIN:
-                config.DY_CREATOR_ID_LIST = creator_id_list
-            elif platform == PlatformEnum.WEIBO:
-                config.WEIBO_CREATOR_ID_LIST = creator_id_list
-            elif platform == PlatformEnum.KUAISHOU:
-                config.KS_CREATOR_ID_LIST = creator_id_list
+            config.XHS_CREATOR_ID_LIST = creator_id_list
 
         return SimpleNamespace(
             platform=config.PLATFORM,

@@ -83,16 +83,14 @@ class AbstractStore(ABC):
 
 
 class AbstractStoreImage(ABC):
-    # TODO: support all platform
-    # only weibo is supported
+    # Optional image persistence hook.
     # @abstractmethod
     async def store_image(self, image_content_item: Dict):
         pass
 
 
 class AbstractStoreVideo(ABC):
-    # TODO: support all platform
-    # only weibo is supported
+    # Optional video persistence hook.
     # @abstractmethod
     async def store_video(self, video_content_item: Dict):
         pass

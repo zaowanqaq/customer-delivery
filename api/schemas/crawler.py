@@ -5,14 +5,9 @@ from pydantic import BaseModel
 
 
 class PlatformEnum(str, Enum):
-    """Supported media platforms"""
+    """Supported media platforms."""
+
     XHS = "xhs"
-    DOUYIN = "dy"
-    KUAISHOU = "ks"
-    BILIBILI = "bili"
-    WEIBO = "wb"
-    TIEBA = "tieba"
-    ZHIHU = "zhihu"
 
 
 class LoginTypeEnum(str, Enum):

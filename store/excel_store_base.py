@@ -40,7 +40,7 @@ class ExcelStoreBase(AbstractStore):
         Get or create a singleton instance for the given platform and crawler type
 
         Args:
-            platform: Platform name (xhs, dy, ks, etc.)
+            platform: Platform name.
             crawler_type: Type of crawler (search, detail, creator)
 
         Returns:
@@ -72,7 +72,7 @@ class ExcelStoreBase(AbstractStore):
         Initialize Excel store
 
         Args:
-            platform: Platform name (xhs, dy, ks, etc.)
+            platform: Platform name.
             crawler_type: Type of crawler (search, detail, creator)
         """
         if not EXCEL_AVAILABLE:
@@ -108,7 +108,7 @@ class ExcelStoreBase(AbstractStore):
         self.contacts_headers_written = False
         self.dynamics_headers_written = False
 
-        # Optional sheets for platforms that need them (e.g., Bilibili)
+        # Optional sheets for data types that need a dedicated worksheet.
         self.contacts_sheet = None
         self.dynamics_sheet = None
 
@@ -272,7 +272,7 @@ class ExcelStoreBase(AbstractStore):
 
     async def store_contact(self, contact_item: Dict):
         """
-        Store contact data to Excel (for platforms like Bilibili)
+        Store contact data to Excel.
 
         Args:
             contact_item: Contact data dictionary
@@ -296,7 +296,7 @@ class ExcelStoreBase(AbstractStore):
 
     async def store_dynamic(self, dynamic_item: Dict):
         """
-        Store dynamic data to Excel (for platforms like Bilibili)
+        Store dynamic data to Excel.
 
         Args:
             dynamic_item: Dynamic data dictionary

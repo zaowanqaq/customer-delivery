@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from config.runtime_paths import downloads_dir
+from config.runtime_paths import data_dir, downloads_dir
 from ..schemas import (
     CrawlerStartRequest,
     CrawlerStatusResponse,
@@ -577,7 +577,10 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
 def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     project_root = Path(__file__).resolve().parents[2]
     suffix = "contents" if data_type == "notes" else "comments"
-    data_root = project_root / "data" / "xhs"
+    data_roots = [data_dir() / "xhs"]
+    legacy_data_root = project_root / "data" / "xhs"
+    if legacy_data_root.resolve() != data_roots[0].resolve():
+        data_roots.append(legacy_data_root)
     mode = (crawler_type_hint or "").strip()
     patterns: List[tuple[str, str]] = []
     if mode:
@@ -598,11 +601,12 @@ def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
     ])
 
     candidates: List[Path] = []
-    for folder, pattern in patterns:
-        dir_path = data_root / folder
-        if not dir_path.exists():
-            continue
-        candidates.extend(dir_path.glob(pattern))
+    for data_root in data_roots:
+        for folder, pattern in patterns:
+            dir_path = data_root / folder
+            if not dir_path.exists():
+                continue
+            candidates.extend(dir_path.glob(pattern))
     candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         raise HTTPException(status_code=404, detail=f"未找到本地 {data_type} 数据文件（jsonl/csv/json/xlsx/xls）")
@@ -1310,6 +1314,7 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
     interval_seconds = request.interval_hours * 3600
     monitor_tag = f"{request.interval_hours}h"
     while True:
+        await asyncio.sleep(interval_seconds)
         job = collaboration_monitor_jobs.get(job_id)
         if not job:
             return
@@ -1320,7 +1325,6 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
             job["last_error"] = ""
         except Exception as e:
             job["last_error"] = str(e)
-        await asyncio.sleep(interval_seconds)
 
 
 @router.get("/preflight")
@@ -1332,6 +1336,7 @@ async def preflight_check(keyword: str = "测试"):
     """
     import httpx as _httpx
     from tools import utils as t_utils
+    from tools.crawler_util import get_platform_user_agent
 
     cdp_port = getattr(config, "CDP_DEBUG_PORT", 9222)
     cdp_base = f"http://127.0.0.1:{cdp_port}"
@@ -1388,7 +1393,7 @@ async def preflight_check(keyword: str = "测试"):
             "content-type": "application/json;charset=UTF-8",
             "origin": "https://www.xiaohongshu.com",
             "referer": "https://www.xiaohongshu.com/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "user-agent": get_platform_user_agent(),
             "Cookie": cookie_str,
         }
 
@@ -1777,7 +1782,7 @@ async def stop_collaboration_monitor(request: CollaborationMonitorStopRequest):
     task = job.get("task")
     if task:
         task.cancel()
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(asyncio.CancelledError):
             await task
     collaboration_monitor_jobs.pop(request.job_id, None)
     return {"status": "ok", "message": "合作笔记监控已停止", "job_id": request.job_id}

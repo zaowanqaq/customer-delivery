@@ -1,4 +1,4 @@
-# 数据保存指南 / Data Storage Guide
+# 数据保存指南
 
 
 ### 💾 数据保存
@@ -66,6 +66,6 @@ uv run main.py --platform xhs --lt qrcode --type search --save_data_option jsonl
 #### 详细文档
 
 - **Excel 导出详细指南**：查看 [Excel 导出指南](excel_export_guide.md)
-- **数据库配置**：参考 [常见问题](常见问题.md)
+- **数据库配置**：检查 `config/db_config.py` 中的连接参数，并确保对应数据库服务可访问。
 
 ---
