@@ -1336,6 +1336,7 @@ async def preflight_check(keyword: str = "测试"):
     """
     import httpx as _httpx
     from tools import utils as t_utils
+    from tools.crawler_util import get_platform_user_agent
 
     cdp_port = getattr(config, "CDP_DEBUG_PORT", 9222)
     cdp_base = f"http://127.0.0.1:{cdp_port}"
@@ -1392,7 +1393,7 @@ async def preflight_check(keyword: str = "测试"):
             "content-type": "application/json;charset=UTF-8",
             "origin": "https://www.xiaohongshu.com",
             "referer": "https://www.xiaohongshu.com/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "user-agent": get_platform_user_agent(),
             "Cookie": cookie_str,
         }
 

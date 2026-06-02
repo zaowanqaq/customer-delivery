@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 from playwright.sync_api import APIRequestContext, Browser, BrowserContext, Page, TimeoutError, sync_playwright
 
 from config.runtime_paths import browser_data_dir, downloads_dir
+from tools.crawler_util import get_platform_user_agent
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -630,7 +631,7 @@ def api_request_json(request: APIRequestContext, method: str, path: str, **kwarg
         "accept": "application/json, text/plain, */*",
         "referer": PGY_KOL_NOTE_URL,
         "origin": PGY_ORIGIN,
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        "user-agent": get_platform_user_agent(),
     }
     timeout_ms = int(kwargs.get("timeout_ms") or 15_000)
     if method.upper() == "GET":

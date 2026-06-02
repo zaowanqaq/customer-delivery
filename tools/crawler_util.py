@@ -6,6 +6,7 @@
 
 import base64
 import json
+import platform
 import random
 import re
 import urllib
@@ -107,6 +108,26 @@ def get_user_agent() -> str:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5112.79 Safari/537.36"
     ]
     return random.choice(ua_list)
+
+
+def get_platform_user_agent() -> str:
+    sys_name = platform.system()
+    if sys_name == "Darwin":
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+    elif sys_name == "Linux":
+        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+    else:
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+
+
+def get_platform_sec_ch_ua() -> str:
+    sys_name = platform.system()
+    if sys_name == "Darwin":
+        return '"macOS"'
+    elif sys_name == "Linux":
+        return '"Linux"'
+    else:
+        return '"Windows"'
 
 
 def get_mobile_user_agent() -> str:
