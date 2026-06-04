@@ -80,8 +80,8 @@ if ! "$PY" -c "$REQUIRED_IMPORTS" >/dev/null 2>&1; then
   elif [ -n "${PIP_INDEX_URL:-}" ]; then
     PIP_INDEX_ARGS=(-i "$PIP_INDEX_URL")
   fi
-  "$PY" -m pip install "${PIP_INDEX_ARGS[@]}" --upgrade pip
-  "$PY" -m pip install "${PIP_INDEX_ARGS[@]}" -r requirements.txt
+  "$PY" -m pip install ${PIP_INDEX_ARGS[@]+"${PIP_INDEX_ARGS[@]}"} --upgrade pip
+  "$PY" -m pip install ${PIP_INDEX_ARGS[@]+"${PIP_INDEX_ARGS[@]}"} -r requirements.txt
 fi
 
 echo "[MediaCrawler] Checking Playwright browser..."

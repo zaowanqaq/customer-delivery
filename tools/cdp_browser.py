@@ -54,8 +54,11 @@ class CDPBrowserManager:
         def sync_cleanup():
             """Synchronous cleanup function for atexit"""
             if self.launcher and self.launcher.browser_process:
-                utils.logger.info("[CDPBrowserManager] atexit: Cleaning up browser process")
-                self.launcher.cleanup()
+                if config.AUTO_CLOSE_BROWSER:
+                    utils.logger.info("[CDPBrowserManager] atexit: Cleaning up browser process")
+                    self.launcher.cleanup()
+                else:
+                    utils.logger.info("[CDPBrowserManager] atexit: Keeping browser online (AUTO_CLOSE_BROWSER=False)")
 
         # Register atexit cleanup
         atexit.register(sync_cleanup)
@@ -66,9 +69,20 @@ class CDPBrowserManager:
 
         def signal_handler(signum, frame):
             """Signal handler"""
-            utils.logger.info(f"[CDPBrowserManager] Received signal {signum}, cleaning up browser process")
+            utils.logger.info(f"[CDPBrowserManager] Received signal {signum}, cleaning up")
             if self.launcher and self.launcher.browser_process:
-                self.launcher.cleanup()
+                if config.AUTO_CLOSE_BROWSER:
+                    self.launcher.cleanup()
+                else:
+                    try:
+                        if self.browser and self.browser.is_connected():
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.create_task(self.browser.close())
+                            else:
+                                loop.run_until_complete(self.browser.close())
+                    except Exception:
+                        pass
 
             if signum == signal.SIGINT:
                 if prev_sigint == signal.default_int_handler:

@@ -737,6 +737,16 @@
         </div>
         <div id="tab-monitor" class="tab-pane">
           <section class="card">
+      <h2>一键操作</h2>
+      <p class="hint">快速检测环境状态、回传数据或重启抓取进程。</p>
+      <div class="btns">
+        <button class="ghost" onclick="healthCheck()">一键检测</button>
+        <button class="ghost" onclick="oneClickSync()">一键回传</button>
+        <button class="danger" onclick="restartCrawler()">重启进程</button>
+      </div>
+      <div id="oneclick_result" class="monitor-log">点击按钮查看结果</div>
+    </section>
+          <section class="card">
       <h2>抓取进度监控</h2>
       <p class="hint">支持手动刷新与自动轮询（默认2秒），用于查看运行状态与最新日志。</p>
       <div class="monitor-grid">
@@ -1392,11 +1402,11 @@
         view.innerHTML += `<div class="meta-row"><span class="meta-key">表信息</span><span class="meta-val">解析失败：${escapeHtml(tableError)}</span></div>`;
       }
 
-      const accountLabel = accountMeta && accountMeta.name ? accountMeta.name : (accountTableId || "未配置");
-      const noteLabel = notesMeta && notesMeta.name ? notesMeta.name : (payload.sync_notes_table_id || "未配置");
-      const commentLabel = commentsMeta && commentsMeta.name ? commentsMeta.name : (payload.sync_comments_table_id || "未配置");
-      const pgyLabel = pgyMeta && pgyMeta.name ? pgyMeta.name : (pgyTableId || "未配置");
-      syncTargetHint.textContent = `当前写入目标：步骤2 -> ${accountLabel}；步骤3 -> ${noteLabel}；步骤4 -> ${pgyLabel}；comments -> ${commentLabel}`;
+      const accountLabel = accountMeta && accountMeta.name ? `${accountMeta.name} (${accountTableId})` : (accountTableId || "未配置");
+      const noteLabel = notesMeta && notesMeta.name ? `${notesMeta.name} (${payload.sync_notes_table_id})` : (payload.sync_notes_table_id || "未配置");
+      const commentLabel = commentsMeta && commentsMeta.name ? `${commentsMeta.name} (${payload.sync_comments_table_id})` : (payload.sync_comments_table_id || "未配置");
+      const pgyLabel = pgyMeta && pgyMeta.name ? `${pgyMeta.name} (${pgyTableId})` : (pgyTableId || "未配置");
+      syncTargetHint.textContent = `当前写入目标：步骤2样本账号 -> ${accountLabel}；步骤3爆款结果 -> ${noteLabel}；步骤4达人圈选 -> ${pgyLabel}；comments -> ${commentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -2032,6 +2042,16 @@
 
     function waitCrawlerIdleThenAutoSync(scene) {
       clearAutoSyncTimer(scene);
+      const payload = resolveProjectPayload(getFormData());
+      const isComments = scene === "comments";
+      const tableId = scene === "sample"
+        ? payload.account_filter_table_id
+        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+      if (!tableId) {
+        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
+        log(`${stepLabel}的同步目标表ID未配置，跳过自动同步，请先完成项目初始化`);
+        return;
+      }
       const startedAt = Date.now();
       let sawRunning = true;
       autoSyncTimers[scene] = setInterval(async () => {
@@ -2116,8 +2136,9 @@
         ? "步骤2样本账号"
         : (scene === "viral" ? "步骤3爆款结果" : "comments");
       if (!tableId) {
+        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
         const name = scene === "sample" ? "账号筛选表" : (isComments ? "comments 表" : "爆款监控表");
-        log(`请先完成步骤1，回填 ${name} 的表ID`);
+        log(`${stepLabel}的同步目标表ID未配置（${name}），请先完成项目初始化`);
         return;
       }
       await saveConfig();
@@ -2218,6 +2239,43 @@
     async function stopCrawler() {
       const res = await fetch("/api/crawler/stop", { method: "POST" });
       log("停止抓取结果: " + JSON.stringify(await res.json()));
+      await refreshProgressMonitor();
+    }
+
+    async function healthCheck() {
+      const resultEl = document.getElementById("oneclick_result");
+      resultEl.textContent = "检测中…";
+      try {
+        const res = await fetch("/api/crawler/health");
+        const data = await res.json();
+        const lines = data.checks.map(c => `${c.ok ? "✅" : "❌"} ${c.name}: ${c.message}`);
+        resultEl.textContent = lines.join("\n");
+      } catch (e) {
+        resultEl.textContent = "检测失败: " + e.message;
+      }
+    }
+
+    async function oneClickSync() {
+      const resultEl = document.getElementById("oneclick_result");
+      resultEl.textContent = "回传爆款数据中…";
+      await syncToBaseByScene("viral");
+      resultEl.textContent = "爆款数据回传完成，开始回传评论数据…";
+      await syncToBaseByScene("comments");
+      resultEl.textContent = "全部回传完成";
+    }
+
+    async function restartCrawler() {
+      if (!confirm("确定要重启抓取进程吗？")) return;
+      const resultEl = document.getElementById("oneclick_result");
+      resultEl.textContent = "重启中…";
+      try {
+        const res = await fetch("/api/crawler/restart", { method: "POST" });
+        const data = await res.json();
+        resultEl.textContent = data.message || "重启完成";
+        log("重启进程结果: " + JSON.stringify(data));
+      } catch (e) {
+        resultEl.textContent = "重启失败: " + e.message;
+      }
       await refreshProgressMonitor();
     }
 
