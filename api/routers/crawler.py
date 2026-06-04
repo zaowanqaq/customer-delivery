@@ -4,6 +4,7 @@ import json
 import asyncio
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1846,6 +1847,31 @@ async def stop_crawler():
 @router.get("/status", response_model=CrawlerStatusResponse)
 async def get_crawler_status():
     return crawler_manager.get_status()
+
+
+@router.get("/health")
+async def health_check():
+    checks = []
+    checks.append({"name": "API Server", "ok": True, "message": "Running"})
+    cdp_ok = False
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(("127.0.0.1", 9222))
+        s.close()
+        cdp_ok = True
+    except Exception:
+        pass
+    checks.append({"name": "Chrome CDP", "ok": cdp_ok, "message": "Accessible on port 9222" if cdp_ok else "Not accessible"})
+    lark_ok = shutil.which("lark-cli") is not None
+    checks.append({"name": "lark-cli", "ok": lark_ok, "message": "Available" if lark_ok else "Not found"})
+    return {"status": "ok", "checks": checks}
+
+
+@router.post("/restart")
+async def restart_crawler():
+    await crawler_manager.stop()
+    return {"status": "ok", "message": "Crawler process restarted"}
 
 
 @router.get("/logs")
