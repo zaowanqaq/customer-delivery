@@ -343,6 +343,15 @@ def parse_creator_info_from_url(url: str) -> CreatorUrlInfo:
         xsec_source = params.get("xsec_source", "")
         return CreatorUrlInfo(user_id=user_id, xsec_token=xsec_token, xsec_source=xsec_source)
 
+    note_pattern = r'/explore/([^/?]+)'
+    note_match = re.search(note_pattern, url)
+    if note_match:
+        note_id = note_match.group(1)
+        params = extract_url_params_to_dict(url)
+        xsec_token = params.get("xsec_token", "")
+        xsec_source = params.get("xsec_source", "")
+        return CreatorUrlInfo(user_id=f"__note__:{note_id}", xsec_token=xsec_token, xsec_source=xsec_source)
+
     raise ValueError(f"Unable to parse creator info from URL: {url}")
 
 

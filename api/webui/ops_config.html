@@ -1455,7 +1455,15 @@
       if (!profile) return payload;
       const resolved = { ...payload };
       projectBoundFields.forEach((k) => {
-        if (k in profile) resolved[k] = profile[k] ?? "";
+        if (k in profile) {
+          const rawValue = payload[k];
+          const profileValue = profile[k] ?? "";
+          if (rawValue !== undefined && rawValue !== null && rawValue !== "") {
+            resolved[k] = rawValue;
+          } else {
+            resolved[k] = profileValue;
+          }
+        }
       });
       resolved.current_project_key = currentProjectKey;
       resolved.project_profiles = projectProfiles;

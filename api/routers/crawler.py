@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import csv
+import os
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -206,6 +207,21 @@ def _extract_base_token(value: str) -> str:
     return text.rstrip("/").split("/")[-1].split("?")[0]
 
 
+def _find_lark_cli() -> str:
+    found = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (
+        home / "nodejs" / "bin" / "lark-cli",
+        home / "nodejs" / "bin" / "lark-cli.cmd",
+        Path("/usr/local/bin/lark-cli"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return "lark-cli"
+
+
 async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]:
     project_root = Path(__file__).resolve().parents[2]
 
@@ -233,6 +249,10 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
     max_retries = 3
     wait_seconds = 2
     last_err = ""
+    _lark_env = None
+    _node_bin = str(Path.home() / "nodejs" / "bin")
+    if Path(_node_bin).is_dir():
+        _lark_env = {**os.environ, "PATH": _node_bin + os.pathsep + os.environ.get("PATH", "")}
     for attempt in range(max_retries + 1):
         try:
             result = await asyncio.to_thread(
@@ -242,6 +262,7 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
                 timeout=timeout_sec,
                 check=False,
                 cwd=str(project_root),
+                env=_lark_env,
             )
         except FileNotFoundError:
             raise HTTPException(status_code=400, detail="未找到 lark-cli，请先安装并完成授权")
@@ -296,7 +317,7 @@ def _lark_json_arg(payload: Dict[str, Any]):
         ) as tmp_file:
             json.dump(payload, tmp_file, ensure_ascii=False)
             tmp_json_path = tmp_file.name
-        yield f"@.\\{Path(tmp_json_path).name}"
+        yield f"@./{Path(tmp_json_path).name}"
     finally:
         if tmp_json_path:
             with contextlib.suppress(Exception):
@@ -306,7 +327,7 @@ def _lark_json_arg(payload: Dict[str, Any]):
 async def _create_table_with_fields(base_token: str, table_name: str, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+table-create",
             "--as", "user",
             "--base-token", base_token,
@@ -320,7 +341,7 @@ async def _create_table_with_fields(base_token: str, table_name: str, fields: Li
 
 async def _create_base(project_name: str, folder_token: str = "", time_zone: str = "Asia/Shanghai") -> Dict[str, Any]:
     cmd = [
-        shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+        _find_lark_cli(),
         "base", "+base-create",
         "--as", "user",
         "--name", project_name,
@@ -348,7 +369,7 @@ async def _copy_base(template_base_token: str, project_name: str, folder_token: 
     if not source_token:
         raise HTTPException(status_code=400, detail="缺少母版 Base Token 或链接")
     cmd = [
-        shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+        _find_lark_cli(),
         "base", "+base-copy",
         "--as", "user",
         "--base-token", source_token,
@@ -376,7 +397,7 @@ async def _copy_base(template_base_token: str, project_name: str, folder_token: 
 async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+table-list",
             "--as", "user",
             "--base-token", base_token,
@@ -394,7 +415,7 @@ async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
 async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-list",
             "--as", "user",
             "--base-token", base_token,
@@ -409,7 +430,7 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
 async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[str, Any]]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-list",
             "--as", "user",
             "--base-token", base_token,
@@ -425,7 +446,7 @@ async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[st
 async def _create_base_field(base_token: str, table_id: str, field: Dict[str, Any]) -> None:
     await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-create",
             "--as", "user",
             "--base-token", base_token,
@@ -766,14 +787,21 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
             try:
                 timestamp = int(float(str(value)))
                 if timestamp > 10_000_000_000:
-                    value = timestamp
-                else:
-                    value = timestamp * 1000
+                    timestamp = timestamp // 1000
+                value = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 pass
         if field_name in numeric_fields:
             try:
-                value = int(str(value))
+                text = str(value).strip()
+                multiplier = 1
+                if text.endswith("万"):
+                    multiplier = 10000
+                    text = text[:-1]
+                elif text.endswith("亿"):
+                    multiplier = 100000000
+                    text = text[:-1]
+                value = int(float(text) * multiplier)
             except Exception:
                 value = 0
         values.append(value)
@@ -912,7 +940,7 @@ def _pgy_row_to_record(row: Dict[str, Any], table_fields: List[str]) -> Dict[str
 
 
 async def _read_existing_pgy_records(base_token: str, table_id: str, field_names: List[str]) -> Dict[str, str]:
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     existing: Dict[str, str] = {}
     offset = 0
     limit = 200
@@ -1093,7 +1121,7 @@ async def _upload_base_attachment(base_token: str, table_id: str, record_id: str
         cli_file = str(path)
     await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+record-upload-attachment",
             "--as", "user",
             "--base-token", base_token,
@@ -1126,7 +1154,7 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
     rows = _pgy_summary_to_rows(summary, output_dir)
     dedupe_fields = [name for name in ["去重键", "类型", "达人昵称", "小红书号", "目标达人昵称", "目标小红书号"] if name in table_fields]
     existing_records = await _read_existing_pgy_records(request.base_token, request.table_id, dedupe_fields)
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     created = 0
     updated = 0
     skipped = 0
@@ -1219,7 +1247,7 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
 async def _read_rule_table(base_token: str, table_id: str) -> List[Dict]:
     if not base_token or not table_id:
         raise HTTPException(status_code=400, detail="缺少 base_token 或 table_id")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     cmd = [lark_cli_bin, "base", "+record-list", "--as", "user", "--format", "json", "--base-token", base_token, "--table-id", table_id, "--limit", "200"]
     result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=20, check=False)
     if result.returncode != 0:
@@ -1258,11 +1286,28 @@ async def _refresh_collab_creator_notes(request: CollaborationMonitorStartReques
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
         enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
+    _clear_creator_data_files()
     success = await crawler_manager.start(start_request)
     if not success:
         raise HTTPException(status_code=500, detail="合作监控抓取任务启动失败")
     if not await _wait_crawler_idle(timeout_sec=1800):
         raise HTTPException(status_code=504, detail="合作监控抓取超时（30分钟）")
+
+
+def _clear_creator_data_files() -> None:
+    data_roots = [data_dir() / "xhs"]
+    project_root = Path(__file__).resolve().parents[2]
+    legacy_data_root = project_root / "data" / "xhs"
+    if legacy_data_root.resolve() != data_roots[0].resolve():
+        data_roots.append(legacy_data_root)
+    for data_root in data_roots:
+        for suffix_dir in ("csv", "jsonl", "json"):
+            dir_path = data_root / suffix_dir
+            if not dir_path.exists():
+                continue
+            for f in dir_path.glob("creator_contents_*.*"):
+                with contextlib.suppress(Exception):
+                    f.unlink()
 
 
 async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
@@ -1272,13 +1317,15 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
     file_path = Path(request.file_path) if request.file_path else _latest_local_file("notes", "creator")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
-    all_rows = _read_jsonl_rows(file_path)
+    all_rows = _read_local_rows(file_path)
     creator_filters = set()
     for cid in _split_creator_inputs(request.creator_ids):
         if "/user/profile/" in cid:
             creator_filters.add(cid.split("/user/profile/")[-1].split("?")[0].strip())
         else:
-            creator_filters.add(cid.strip())
+            cid_stripped = cid.strip()
+            if not cid_stripped.startswith("__note__:"):
+                creator_filters.add(cid_stripped)
     rows: List[List[Any]] = []
     for row in all_rows:
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
@@ -1298,7 +1345,7 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
         rows = rows[:request.sync_limit]
     if not rows:
         raise HTTPException(status_code=400, detail="合作监控未命中可同步数据")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     created = 0
     for i in range(0, len(rows), 200):
         payload = {"fields": table_fields, "rows": rows[i:i + 200]}
@@ -1464,6 +1511,7 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
         enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
+    _clear_creator_data_files()
     success = await crawler_manager.start(start_request)
     if not success:
         if crawler_manager.process and crawler_manager.process.poll() is None:
@@ -1732,7 +1780,7 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         rows = rows[:request.limit]
     if not rows:
         raise HTTPException(status_code=400, detail="未找到可同步的数据（请检查关键词/文件类型）")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     created = 0
     for i in range(0, len(rows), 200):
         payload = {"fields": table_fields, "rows": rows[i:i + 200]}

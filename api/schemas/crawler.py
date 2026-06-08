@@ -147,7 +147,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     enable_media: bool = True
     cookies: str = ""
     headless: bool = False
-    sync_limit: int = 20
+    sync_limit: int = 0
     file_path: str = ""
 
 
