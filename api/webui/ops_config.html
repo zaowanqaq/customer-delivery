@@ -729,6 +729,7 @@
       <input id="collab_project_name" class="v1-hidden" value="">
       <input id="collab_source_keyword" class="v1-hidden" value="">
       <div class="btns">
+        <button class="ghost" onclick="crawlOnceAndSync()">抓取并同步</button>
         <button class="primary" onclick="startCollabMonitor()">启动合作监控</button>
         <button class="ghost" onclick="queryCollabStatus()">查询监控状态</button>
         <button class="danger" onclick="stopLatestCollabJob()">停止最新监控任务</button>
@@ -2179,6 +2180,47 @@
     async function syncSampleToAccountFilter() { await syncToBaseByScene("sample"); }
     async function syncViralToMonitor() { await syncToBaseByScene("viral"); }
     async function syncCommentsToBase() { await syncToBaseByScene("comments"); }
+
+    async function crawlOnceAndSync() {
+      if (!ensureReady()) return;
+      const payload = resolveProjectPayload(getFormData());
+      if (!payload.collab_table_id) {
+        log("请先完成步骤1，回填合作监控表ID");
+        return;
+      }
+      if (!payload.collab_creator_ids) {
+        log("请先填写合作博主账号名单");
+        return;
+      }
+      await saveConfig();
+      const body = {
+        base_token: payload.sync_base_token,
+        table_id: payload.collab_table_id,
+        interval_hours: payload.collab_interval_hours,
+        project_name: payload.project_name,
+        source_keyword: payload.collab_source_keyword || payload.keywords,
+        creator_ids: payload.collab_creator_ids,
+        notes_per_creator: payload.collab_notes_per_creator,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        login_type: payload.login_type,
+        save_option: payload.save_option,
+        enable_comments: payload.enable_comments,
+        enable_sub_comments: payload.enable_sub_comments,
+        enable_media: payload.enable_media,
+        cookies: payload.cookies,
+        headless: payload.headless,
+        sync_limit: payload.collab_sync_limit,
+        comments_table_id: payload.sync_comments_table_id
+      };
+      log("开始抓取并同步（单次）...");
+      const res = await fetch("/api/crawler/collaboration-monitor/crawl-once", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      log("抓取并同步结果: " + JSON.stringify(data));
+    }
 
     async function startCollabMonitor() {
       if (!ensureReady()) return;

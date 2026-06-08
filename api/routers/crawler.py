@@ -1369,7 +1369,9 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
         job["last_run_at"] = datetime.now().isoformat()
         try:
             await _refresh_collab_creator_notes(request)
-            job["last_result"] = await _sync_collaboration_snapshot(request, monitor_tag)
+            notes_result = await _sync_collaboration_snapshot(request, monitor_tag)
+            comments_result = await _sync_collaboration_comments(request, monitor_tag)
+            job["last_result"] = {"notes": notes_result, "comments": comments_result}
             job["last_error"] = ""
         except Exception as e:
             job["last_error"] = str(e)

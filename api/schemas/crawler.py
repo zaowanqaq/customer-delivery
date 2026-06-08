@@ -149,6 +149,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     headless: bool = False
     sync_limit: int = 0
     file_path: str = ""
+    comments_table_id: str = ""
 
 
 class CollaborationMonitorStopRequest(BaseModel):
