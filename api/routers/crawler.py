@@ -989,6 +989,35 @@ async def _read_existing_pgy_records(base_token: str, table_id: str, field_names
     return existing
 
 
+async def _read_existing_base_records(base_token: str, table_id: str, dedupe_field: str = "note_id") -> Dict[str, str]:
+    lark_cli_bin = _find_lark_cli()
+    existing: Dict[str, str] = {}
+    offset = 0
+    limit = 200
+    while True:
+        cmd = [
+            lark_cli_bin, "base", "+record-list", "--as", "user", "--format", "json",
+            "--base-token", base_token, "--table-id", table_id,
+            "--offset", str(offset), "--limit", str(limit),
+        ]
+        payload = await _run_lark_cli(cmd, timeout_sec=60)
+        data = payload.get("data") or {}
+        fields = data.get("fields") or []
+        rows = data.get("data") or []
+        record_ids = data.get("record_id_list") or []
+        for record_id, values in zip(record_ids, rows):
+            if not isinstance(values, list):
+                continue
+            existing_row = {field_name: str(value).strip() for field_name, value in zip(fields, values) if value}
+            key = existing_row.get(dedupe_field, "")
+            if key and key not in existing:
+                existing[key] = str(record_id)
+        if not data.get("has_more"):
+            break
+        offset += limit
+    return existing
+
+
 def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[str, Any]]:
     target = summary.get("blogger_detail") or {}
     propagation = summary.get("propagation_performance") or {}
@@ -1346,16 +1375,93 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
     if not rows:
         raise HTTPException(status_code=400, detail="合作监控未命中可同步数据")
     lark_cli_bin = _find_lark_cli()
+    existing = await _read_existing_base_records(request.base_token, request.table_id, "note_id")
     created = 0
-    for i in range(0, len(rows), 200):
-        payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        with _lark_json_arg(payload) as json_arg:
-            await _run_lark_cli(
-                [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
-                timeout_sec=60,
-            )
-        created += len(payload["rows"])
-    return {"created": created, "file": str(file_path)}
+    updated = 0
+    note_id_idx = table_fields.index("note_id") if "note_id" in table_fields else -1
+    for row_values in rows:
+        note_id = str(row_values[note_id_idx]).strip() if note_id_idx >= 0 and row_values[note_id_idx] else ""
+        record_id = existing.get(note_id) if note_id else None
+        if record_id:
+            payload = {"fields": table_fields, "values": row_values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [row_values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
+    return {"created": created, "updated": updated, "file": str(file_path)}
+
+
+async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
+    if not request.comments_table_id:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "comments_table_id not configured"}
+    table_fields = await _read_table_fields(request.base_token, request.comments_table_id)
+    if not table_fields:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "comments table has no fields"}
+    try:
+        file_path = _latest_local_file("comments", "creator")
+    except HTTPException:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "no local comments file found"}
+    if not file_path.exists():
+        return {"created": 0, "updated": 0, "skipped": True, "reason": f"comments file not found: {file_path}"}
+    all_rows = _read_local_rows(file_path)
+    creator_filters = set()
+    for cid in _split_creator_inputs(request.creator_ids):
+        if "/user/profile/" in cid:
+            creator_filters.add(cid.split("/user/profile/")[-1].split("?")[0].strip())
+        else:
+            cid_stripped = cid.strip()
+            if not cid_stripped.startswith("__note__:"):
+                creator_filters.add(cid_stripped)
+    rows_to_sync: List[Dict[str, Any]] = []
+    for row in all_rows:
+        if creator_filters:
+            author_id = str(row.get("comment_user_id") or row.get("user_id") or "").strip()
+            note_author_id = str(row.get("author_user_id") or "").strip()
+            if author_id not in creator_filters and note_author_id not in creator_filters:
+                continue
+        row["项目名"] = request.project_name
+        row["所属项目"] = request.project_name
+        row["监控周期"] = monitor_tag
+        rows_to_sync.append(row)
+    if request.sync_limit and request.sync_limit > 0:
+        rows_to_sync = rows_to_sync[:request.sync_limit]
+    if not rows_to_sync:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "no matching comment rows"}
+    lark_cli_bin = _find_lark_cli()
+    existing = await _read_existing_base_records(request.base_token, request.comments_table_id, "comment_id")
+    created = 0
+    updated = 0
+    for row in rows_to_sync:
+        comment_id = str(row.get("comment_id") or "").strip()
+        values = _row_to_table_values(row, table_fields, "comments")
+        record_id = existing.get(comment_id) if comment_id else None
+        if record_id:
+            payload = {"fields": table_fields, "values": values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.comments_table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.comments_table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
+    return {"created": created, "updated": updated, "file": str(file_path)}
 
 
 async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStartRequest) -> None:
@@ -1783,25 +1889,30 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
     if not rows:
         raise HTTPException(status_code=400, detail="未找到可同步的数据（请检查关键词/文件类型）")
     lark_cli_bin = _find_lark_cli()
+    dedupe_field = "note_id" if request.data_type == "notes" else "comment_id"
+    existing = await _read_existing_base_records(request.base_token, request.table_id, dedupe_field)
     created = 0
-    for i in range(0, len(rows), 200):
-        payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        with _lark_json_arg(payload) as json_arg:
-            await _run_lark_cli(
-                [
-                    lark_cli_bin,
-                    "base",
-                    "+record-batch-create",
-                    "--base-token",
-                    request.base_token,
-                    "--table-id",
-                    request.table_id,
-                    "--json",
-                    json_arg,
-                ],
-                timeout_sec=60,
-            )
-        created += len(payload["rows"])
+    updated = 0
+    dedupe_idx = table_fields.index(dedupe_field) if dedupe_field in table_fields else -1
+    for row_values in rows:
+        dedupe_key = str(row_values[dedupe_idx]).strip() if dedupe_idx >= 0 and row_values[dedupe_idx] else ""
+        record_id = existing.get(dedupe_key) if dedupe_key else None
+        if record_id:
+            payload = {"fields": table_fields, "values": row_values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [row_values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
     target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
     return {
         "status": "ok",
@@ -1812,17 +1923,27 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         "file": str(file_path),
         "fields": table_fields,
         "created": created,
+        "updated": updated,
     }
 
 
 @router.post("/collaboration-monitor/start")
 async def start_collaboration_monitor(request: CollaborationMonitorStartRequest):
     await _refresh_collab_creator_notes(request)
-    await _sync_collaboration_snapshot(request, f"{request.interval_hours}h")
+    notes_result = await _sync_collaboration_snapshot(request, f"{request.interval_hours}h")
+    comments_result = await _sync_collaboration_comments(request, f"{request.interval_hours}h")
     job_id = f"collab-{uuid4().hex[:8]}"
     task = asyncio.create_task(_collaboration_job_loop(job_id, request))
-    collaboration_monitor_jobs[job_id] = {"job_id": job_id, "interval_hours": request.interval_hours, "started_at": datetime.now().isoformat(), "last_run_at": "", "last_result": {"created": 0}, "last_error": "", "project_name": request.project_name, "source_keyword": request.source_keyword, "table_id": request.table_id, "task": task}
-    return {"status": "ok", "message": "合作笔记监控已启动", "job_id": job_id}
+    collaboration_monitor_jobs[job_id] = {"job_id": job_id, "interval_hours": request.interval_hours, "started_at": datetime.now().isoformat(), "last_run_at": "", "last_result": {"notes": notes_result, "comments": comments_result}, "last_error": "", "project_name": request.project_name, "source_keyword": request.source_keyword, "table_id": request.table_id, "task": task}
+    return {"status": "ok", "message": "合作笔记监控已启动", "job_id": job_id, "notes": notes_result, "comments": comments_result}
+
+
+@router.post("/collaboration-monitor/crawl-once")
+async def collaboration_monitor_crawl_once(request: CollaborationMonitorStartRequest):
+    await _refresh_collab_creator_notes(request)
+    notes_result = await _sync_collaboration_snapshot(request, "manual")
+    comments_result = await _sync_collaboration_comments(request, "manual")
+    return {"status": "ok", "message": "合作笔记抓取同步完成", "notes": notes_result, "comments": comments_result}
 
 
 @router.post("/collaboration-monitor/stop")
