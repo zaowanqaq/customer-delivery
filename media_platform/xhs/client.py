@@ -486,9 +486,10 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         """
         result = []
+        first_level_count = 0
         comments_has_more = True
         comments_cursor = ""
-        while comments_has_more and len(result) < max_count:
+        while comments_has_more and first_level_count < max_count:
             comments_res = await self.get_note_comments(
                 note_id=note_id, xsec_token=xsec_token, cursor=comments_cursor
             )
@@ -500,13 +501,14 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 )
                 break
             comments = comments_res["comments"]
-            if len(result) + len(comments) > max_count:
-                comments = comments[: max_count - len(result)]
+            if first_level_count + len(comments) > max_count:
+                comments = comments[: max_count - first_level_count]
             if callback:
                 await callback(note_id, comments)
             if crawl_interval > 0:
                 await asyncio.sleep(crawl_interval)
             result.extend(comments)
+            first_level_count += len(comments)
             sub_comments = await self.get_comments_all_sub_comments(
                 comments=comments,
                 xsec_token=xsec_token,
