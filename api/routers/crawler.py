@@ -1414,21 +1414,8 @@ async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest
     if not file_path.exists():
         return {"created": 0, "updated": 0, "skipped": True, "reason": f"comments file not found: {file_path}"}
     all_rows = _read_local_rows(file_path)
-    creator_filters = set()
-    for cid in _split_creator_inputs(request.creator_ids):
-        if "/user/profile/" in cid:
-            creator_filters.add(cid.split("/user/profile/")[-1].split("?")[0].strip())
-        else:
-            cid_stripped = cid.strip()
-            if not cid_stripped.startswith("__note__:"):
-                creator_filters.add(cid_stripped)
     rows_to_sync: List[Dict[str, Any]] = []
     for row in all_rows:
-        if creator_filters:
-            author_id = str(row.get("comment_user_id") or row.get("user_id") or "").strip()
-            note_author_id = str(row.get("author_user_id") or "").strip()
-            if author_id not in creator_filters and note_author_id not in creator_filters:
-                continue
         row["项目名"] = request.project_name
         row["所属项目"] = request.project_name
         row["监控周期"] = monitor_tag
