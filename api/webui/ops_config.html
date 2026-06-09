@@ -411,6 +411,7 @@
       <input id="note_recreation_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="collab_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="pgy_table_id" class="v1-hidden" placeholder="tbl...">
       <div class="btns">
         <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键初始化项目（复制母版）</button>
@@ -810,7 +811,7 @@
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
       "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "creator_selection_table_name",
-      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id",
+      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
       "sample_creator_ids", "notes_per_creator",
@@ -824,7 +825,7 @@
     const projectBoundFields = [
       "project_name", "template_base_token", "sync_base_token",
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id",
-      "sync_comments_table_id", "collab_table_id", "keywords", "xhs_sort_by",
+      "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords", "xhs_sort_by",
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
       "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator",
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
@@ -849,6 +850,7 @@
       note_recreation_table_id: "",
       sync_comments_table_id: "",
       collab_table_id: "",
+      collab_comments_table_id: "",
       login_type: "qrcode",
       save_option: "csv",
       headless: false,
@@ -1376,6 +1378,7 @@
       const recreationMeta = findTableMeta(tables, payload.note_recreation_table_id);
       const commentsMeta = findTableMeta(tables, payload.sync_comments_table_id);
       const collabMeta = findTableMeta(tables, payload.collab_table_id);
+      const collabCommentsMeta = findTableMeta(tables, payload.collab_comments_table_id);
       let pgyTableId = payload.pgy_table_id || "";
       if (!pgyTableId) {
         const matched = findTableMetaByName(tables, payload.creator_selection_table_name || "达人智能圈选表");
@@ -1395,8 +1398,9 @@
         <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 爆款监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_notes_table_id, notesMeta && notesMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">笔记二创表</span><span class="meta-val">${renderTableValue(baseToken, payload.note_recreation_table_id, recreationMeta && recreationMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤4达人智能圈选 -> 达人智能圈选表</span><span class="meta-val">${renderTableValue(baseToken, pgyTableId, pgyMeta && pgyMeta.name)}</span></div>
-        <div class="meta-row"><span class="meta-key">comments 同步目标（可选）</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
-        <div class="meta-row"><span class="meta-key">合作监控目标</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">爆款评论表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤5合作笔记 -> 合作监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤5合作评论 -> 合作评论表</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_comments_table_id, collabCommentsMeta && collabCommentsMeta.name)}</span></div>
       `;
 
       if (tableError) {
@@ -1406,8 +1410,10 @@
       const accountLabel = accountMeta && accountMeta.name ? `${accountMeta.name} (${accountTableId})` : (accountTableId || "未配置");
       const noteLabel = notesMeta && notesMeta.name ? `${notesMeta.name} (${payload.sync_notes_table_id})` : (payload.sync_notes_table_id || "未配置");
       const commentLabel = commentsMeta && commentsMeta.name ? `${commentsMeta.name} (${payload.sync_comments_table_id})` : (payload.sync_comments_table_id || "未配置");
+      const collabLabel = collabMeta && collabMeta.name ? `${collabMeta.name} (${payload.collab_table_id})` : (payload.collab_table_id || "未配置");
+      const collabCommentLabel = collabCommentsMeta && collabCommentsMeta.name ? `${collabCommentsMeta.name} (${payload.collab_comments_table_id})` : (payload.collab_comments_table_id || "未配置");
       const pgyLabel = pgyMeta && pgyMeta.name ? `${pgyMeta.name} (${pgyTableId})` : (pgyTableId || "未配置");
-      syncTargetHint.textContent = `当前写入目标：步骤2样本账号 -> ${accountLabel}；步骤3爆款结果 -> ${noteLabel}；步骤4达人圈选 -> ${pgyLabel}；comments -> ${commentLabel}`;
+      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；爆款评论 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；步骤5合作笔记 -> ${collabLabel}；步骤5合作评论 -> ${collabCommentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -1420,6 +1426,7 @@
         note_recreation_table_id: payload.note_recreation_table_id,
         sync_comments_table_id: payload.sync_comments_table_id,
         collab_table_id: payload.collab_table_id,
+        collab_comments_table_id: payload.collab_comments_table_id,
         pgy_table_id: payload.pgy_table_id,
         keywords: payload.keywords,
         xhs_sort_by: payload.xhs_sort_by,
@@ -1541,6 +1548,7 @@
         note_recreation_table_id: document.getElementById("note_recreation_table_id").value.trim(),
         sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
         collab_table_id: document.getElementById("collab_table_id").value.trim(),
+        collab_comments_table_id: document.getElementById("collab_comments_table_id").value.trim(),
         login_type: document.getElementById("login_type").value,
         save_option: document.getElementById("save_option").value,
         headless: document.getElementById("headless").value === "true",
@@ -1726,8 +1734,9 @@
           if (tableName.includes("账号筛选")) document.getElementById("account_filter_table_id").value = tableId;
           if (tableName.includes("爆款")) document.getElementById("sync_notes_table_id").value = tableId;
           if (tableName.includes("二创")) document.getElementById("note_recreation_table_id").value = tableId;
-          if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
-          if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
+          if (tableName.includes("合作") && tableName.includes("评论")) document.getElementById("collab_comments_table_id").value = tableId;
+          else if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
+          if (tableName.includes("合作") && !tableName.includes("评论")) document.getElementById("collab_table_id").value = tableId;
           if (tableName.includes("达人智能圈选")) document.getElementById("pgy_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
@@ -2211,7 +2220,7 @@
         cookies: payload.cookies,
         headless: payload.headless,
         sync_limit: payload.collab_sync_limit,
-        comments_table_id: payload.sync_comments_table_id
+        comments_table_id: payload.collab_comments_table_id
       };
       log("开始抓取并同步（单次）...");
       const res = await fetch("/api/crawler/collaboration-monitor/crawl-once", {
@@ -2330,7 +2339,7 @@
       await refreshProgressMonitor();
     }
 
-    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "keywords"]
+    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords"]
       .forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
