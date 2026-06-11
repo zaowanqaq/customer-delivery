@@ -246,6 +246,10 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
         t = (text or "").lower()
         return "800004135" in t or " limited" in t or "rate limit" in t
 
+    def _is_base_copying(text: str) -> bool:
+        t = (text or "").lower()
+        return "800004046" in t or "base is copying" in t
+
     max_retries = 3
     wait_seconds = 2
     last_err = ""
@@ -253,7 +257,7 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
     _node_bin = str(Path.home() / "nodejs" / "bin")
     if Path(_node_bin).is_dir():
         _lark_env = {**os.environ, "PATH": _node_bin + os.pathsep + os.environ.get("PATH", "")}
-    for attempt in range(max_retries + 1):
+    for attempt in range(13):
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -279,8 +283,13 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
             if _is_rate_limited(err_msg) and attempt < max_retries:
                 await asyncio.sleep(wait_seconds * (attempt + 1))
                 continue
+            if _is_base_copying(err_msg) and attempt < 12:
+                await asyncio.sleep(5)
+                continue
             if _is_rate_limited(err_msg):
                 raise HTTPException(status_code=429, detail=f"飞书接口限流（800004135），请稍后重试。原始信息: {err_msg[:400]}")
+            if _is_base_copying(err_msg):
+                raise HTTPException(status_code=503, detail=f"飞书 Base 正在复制中，请稍后重试。原始信息: {err_msg[:400]}")
             raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {err_msg[:400]}")
 
         try:
@@ -296,8 +305,13 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
         if _is_rate_limited(payload_text) and attempt < max_retries:
             await asyncio.sleep(wait_seconds * (attempt + 1))
             continue
+        if _is_base_copying(payload_text) and attempt < 12:
+            await asyncio.sleep(5)
+            continue
         if _is_rate_limited(payload_text):
             raise HTTPException(status_code=429, detail=f"飞书接口限流（800004135），请稍后重试。原始信息: {payload_text[:400]}")
+        if _is_base_copying(payload_text):
+            raise HTTPException(status_code=503, detail=f"飞书 Base 正在复制中，请稍后重试。原始信息: {payload_text[:400]}")
         raise HTTPException(status_code=400, detail=f"lark-cli 返回失败: {payload}")
     raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {last_err[:400]}")
 
