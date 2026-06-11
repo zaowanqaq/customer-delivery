@@ -391,6 +391,17 @@ async def _copy_base(template_base_token: str, project_name: str, folder_token: 
     )
     if not token:
         raise HTTPException(status_code=500, detail=f"复制 Base 成功但未返回 token: {data}")
+    for attempt in range(12):
+        try:
+            await _run_lark_cli(
+                [_find_lark_cli(), "base", "+table-list", "--as", "user", "--base-token", token],
+                timeout_sec=15,
+            )
+            break
+        except Exception:
+            await asyncio.sleep(5)
+    else:
+        raise HTTPException(status_code=504, detail="复制 Base 后等待就绪超时（60秒）")
     return {"base_token": token, "template_base_token": source_token, "raw": data}
 
 
@@ -1782,6 +1793,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
         await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
         await create_or_reuse(request.comments_table_name, comments_fields),
         await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
+        await create_or_reuse(request.collab_comments_table_name, comments_fields),
         await create_or_reuse(request.creator_selection_table_name, creator_selection_fields),
     ]
     return {"status": "ok", "tables": tables}
@@ -1816,6 +1828,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
                 note_recreation_table_name=request.note_recreation_table_name,
                 comments_table_name=request.comments_table_name,
                 collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+                collab_comments_table_name=request.collab_comments_table_name,
                 creator_selection_table_name=request.creator_selection_table_name,
             )
         )
@@ -1839,6 +1852,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             viral_monitor_table_name=request.viral_monitor_table_name,
             note_recreation_table_name=request.note_recreation_table_name,
             collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+            collab_comments_table_name=request.collab_comments_table_name,
         )
     )
     return {"status": "ok", "project_name": request.project_name.strip(), "base_token": base_token, "root_table": root_table, "tables": scenario.get("tables", []), "base_raw": base_info.get("raw", {})}
