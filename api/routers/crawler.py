@@ -1729,14 +1729,23 @@ async def pgy_login(request: PgyLoginRequest):
             "--detach-hold-open",
         ]
         try:
-            subprocess.Popen(
+            pgy_log = project_root / "tmp_logs_pgy_automation.txt"
+            pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(project_root),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=open(pgy_log, "w"),
+                stderr=open(pgy_log, "a"),
                 stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                env=pgy_env,
             )
+            await asyncio.sleep(2)
+            if proc.poll() is not None:
+                err = pgy_log.read_text(encoding="utf-8", errors="replace")[:800] if pgy_log.exists() else ""
+                raise HTTPException(status_code=500, detail=f"蒲公英登录进程启动后立即退出(code={proc.returncode}): {err}")
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"蒲公英登录窗口启动失败: {exc}") from exc
         return {
