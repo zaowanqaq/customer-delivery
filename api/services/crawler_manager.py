@@ -137,7 +137,7 @@ class CrawlerManager:
                     encoding='utf-8',
                     bufsize=1,
                     cwd=str(self._project_root),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"}
+                    env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONPATH": str(self._project_root)}
                 )
 
                 self.status = "running"

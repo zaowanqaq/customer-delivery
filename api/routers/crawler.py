@@ -104,6 +104,7 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
     if "--cdp" not in final_args and _pgy_cdp_available():
         final_args.extend(["--cdp", PGY_CDP_ENDPOINT])
     cmd = [sys.executable, str(script_path), *final_args]
+    pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -115,6 +116,7 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
             timeout=timeout_sec,
             check=False,
             cwd=str(project_root),
+            env=pgy_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail=f"蒲公英自动化超时（{timeout_sec}s）") from exc
