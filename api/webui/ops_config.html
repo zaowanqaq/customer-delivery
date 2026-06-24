@@ -1409,11 +1409,12 @@
 
       const accountLabel = accountMeta && accountMeta.name ? `${accountMeta.name} (${accountTableId})` : (accountTableId || "未配置");
       const noteLabel = notesMeta && notesMeta.name ? `${notesMeta.name} (${payload.sync_notes_table_id})` : (payload.sync_notes_table_id || "未配置");
+      const recreationLabel = recreationMeta && recreationMeta.name ? `${recreationMeta.name} (${payload.note_recreation_table_id})` : (payload.note_recreation_table_id || "未配置");
       const commentLabel = commentsMeta && commentsMeta.name ? `${commentsMeta.name} (${payload.sync_comments_table_id})` : (payload.sync_comments_table_id || "未配置");
       const collabLabel = collabMeta && collabMeta.name ? `${collabMeta.name} (${payload.collab_table_id})` : (payload.collab_table_id || "未配置");
       const collabCommentLabel = collabCommentsMeta && collabCommentsMeta.name ? `${collabCommentsMeta.name} (${payload.collab_comments_table_id})` : (payload.collab_comments_table_id || "未配置");
       const pgyLabel = pgyMeta && pgyMeta.name ? `${pgyMeta.name} (${pgyTableId})` : (pgyTableId || "未配置");
-      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；爆款评论 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；步骤5合作笔记 -> ${collabLabel}；步骤5合作评论 -> ${collabCommentLabel}`;
+      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；笔记二创 -> ${recreationLabel}；爆款评论 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；步骤5合作笔记 -> ${collabLabel}；步骤5合作评论 -> ${collabCommentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -2055,18 +2056,22 @@
     }
 
     function autoSyncLabel(scene) {
-      return scene === "sample" ? "步骤2样本账号" : "步骤3爆款结果";
+      if (scene === "sample") return "步骤2样本账号";
+      if (scene === "comments") return "爆款评论";
+      if (scene === "recreation") return "笔记二创";
+      return "步骤3爆款结果";
     }
 
     function waitCrawlerIdleThenAutoSync(scene) {
       clearAutoSyncTimer(scene);
       const payload = resolveProjectPayload(getFormData());
       const isComments = scene === "comments";
+      const isRecreation = scene === "recreation";
       const tableId = scene === "sample"
         ? payload.account_filter_table_id
-        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+        : (isComments ? payload.sync_comments_table_id : (isRecreation ? payload.note_recreation_table_id : payload.sync_notes_table_id));
       if (!tableId) {
-        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
+        const stepLabel = autoSyncLabel(scene);
         log(`${stepLabel}的同步目标表ID未配置，跳过自动同步，请先完成项目初始化`);
         return;
       }
@@ -2137,6 +2142,7 @@
         startProgressMonitor();
         startNotesAutoRefresh();
         waitCrawlerIdleThenAutoSync("viral");
+        waitCrawlerIdleThenAutoSync("recreation");
         waitCrawlerIdleThenAutoSync("comments");
       }
     }
@@ -2145,18 +2151,19 @@
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
       const isComments = scene === "comments";
+      const isRecreation = scene === "recreation";
       const dataType = isComments ? "comments" : "notes";
       const tableId = scene === "sample"
         ? payload.account_filter_table_id
-        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+        : (isComments ? payload.sync_comments_table_id : (isRecreation ? payload.note_recreation_table_id : payload.sync_notes_table_id));
       const crawlerTypeHint = scene === "sample" ? "creator" : "search";
       const sourceKeyword = scene === "sample" ? "" : payload.keywords;
       const sceneLabel = scene === "sample"
         ? "步骤2样本账号"
-        : (scene === "viral" ? "步骤3爆款结果" : "comments");
+        : (scene === "viral" ? "步骤3爆款结果" : (isComments ? "爆款评论" : (isRecreation ? "笔记二创" : "步骤3爆款结果")));
       if (!tableId) {
-        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
-        const name = scene === "sample" ? "账号筛选表" : (isComments ? "comments 表" : "爆款监控表");
+        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "评论" : (isRecreation ? "二创" : "步骤3"));
+        const name = scene === "sample" ? "账号筛选表" : (isComments ? "评论表" : (isRecreation ? "笔记二创表" : "爆款监控表"));
         log(`${stepLabel}的同步目标表ID未配置（${name}），请先完成项目初始化`);
         return;
       }
