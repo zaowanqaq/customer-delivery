@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+import base64
 import contextlib
+import io
 import json
 import asyncio
 import re
@@ -28,6 +30,7 @@ from ..schemas import (
     RuleTableStartRequest,
     LocalToBaseSyncRequest,
     SampleCreatorStartRequest,
+    SampleAccountImportRequest,
     ScenarioTableSetupRequest,
     ScenarioBootstrapRequest,
     CollaborationMonitorStartRequest,
@@ -203,6 +206,89 @@ def _split_creator_inputs(raw: str) -> List[str]:
         return []
     normalized = raw.replace("\n", ",").replace("，", ",")
     return [item.strip() for item in normalized.split(",") if item.strip()]
+
+
+SAMPLE_ACCOUNT_HEADER_WORDS = {
+    "账号",
+    "账号id",
+    "小红书号",
+    "小红书id",
+    "主页",
+    "主页链接",
+    "链接",
+    "达人",
+    "达人链接",
+    "样本账号",
+    "样本账号列表",
+    "url",
+    "link",
+}
+
+
+def _looks_like_sample_account(value: str) -> bool:
+    text = value.strip().strip("\"'“”‘’")
+    if not text:
+        return False
+    if text.lower() in SAMPLE_ACCOUNT_HEADER_WORDS:
+        return False
+    lower = text.lower()
+    if any(marker in lower for marker in ("xiaohongshu.com", "xhslink.com", "xhs.cn", "/user/profile/")):
+        return True
+    if re.search(r"\s", text):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]{4,80}", text))
+
+
+def _dedupe_sample_accounts(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        text = value.strip().strip("\"'“”‘’")
+        if not _looks_like_sample_account(text):
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _sample_accounts_from_text(text: str) -> List[str]:
+    raw_items = re.split(r"[\n\r,，;；\t]+", text or "")
+    return _dedupe_sample_accounts([item.strip() for item in raw_items])
+
+
+def _sample_accounts_from_excel(content: bytes, suffix: str) -> List[str]:
+    try:
+        import pandas as pd  # type: ignore
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取 Excel 失败：缺少 pandas/openpyxl 依赖。{exc}") from exc
+
+    try:
+        if suffix == ".csv":
+            frame = pd.read_csv(io.BytesIO(content), header=None, dtype=str, keep_default_na=False)
+        else:
+            frame = pd.read_excel(io.BytesIO(content), header=None, dtype=str, keep_default_na=False)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"文件解析失败：{exc}") from exc
+
+    values = [str(item).strip() for item in frame.to_numpy().flatten().tolist()]
+    return _dedupe_sample_accounts(values)
+
+
+def _parse_sample_account_file(filename: str, content: bytes) -> List[str]:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in {".xlsx", ".xls", ".csv"}:
+        return _sample_accounts_from_excel(content, suffix)
+    if suffix in {".txt", ".text", ""}:
+        for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                return _sample_accounts_from_text(content.decode(encoding))
+            except UnicodeDecodeError:
+                continue
+        raise HTTPException(status_code=400, detail="文本文件编码无法识别，请使用 UTF-8 或 GB18030")
+    raise HTTPException(status_code=400, detail="仅支持 txt、csv、xlsx、xls 文件")
 
 
 def _extract_table_id(payload: Dict[str, Any]) -> str:
@@ -1761,6 +1847,30 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
             raise HTTPException(status_code=400, detail="Crawler is already running")
         raise HTTPException(status_code=500, detail="Failed to start sample creator crawler")
     return {"status": "ok", "message": "样本账号抓取任务已启动", "creator_count": len(creator_id_list), "notes_per_creator": start_request.max_notes_count}
+
+
+@router.post("/import-sample-accounts")
+async def import_sample_accounts(request: SampleAccountImportRequest):
+    filename = (request.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    try:
+        content = base64.b64decode(request.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="文件内容不是有效 base64") from exc
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件过大，请控制在 10MB 以内")
+
+    accounts = _parse_sample_account_file(filename, content)
+    if not accounts:
+        raise HTTPException(status_code=400, detail="未从文件中识别到小红书主页链接或账号 ID")
+    return {
+        "status": "ok",
+        "filename": filename,
+        "count": len(accounts),
+        "accounts": accounts,
+        "text": "\n".join(accounts),
+    }
 
 
 @router.post("/huitun/login")

@@ -485,8 +485,15 @@
         <div id="tab-step2" class="tab-pane">
           <section class="card">
       <h2>账号内容监测（样本账号抓取）</h2>
-      <p class="hint">输入客户提供的样本账号主页链接或账号 ID，每行一个；系统不会预置任何账号。</p>
+      <p class="hint">输入客户提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。</p>
       <div class="grid">
+        <div class="row full">
+          <label>导入样本账号文件（txt / csv / excel）</label>
+          <input id="sample_accounts_file" type="file" accept=".txt,.csv,.xlsx,.xls">
+          <div class="btns">
+            <button class="ghost" onclick="importSampleAccountsFile()">导入文件到账号列表</button>
+          </div>
+        </div>
         <div class="row full">
           <label>样本账号列表（逗号或换行）</label>
           <textarea id="sample_creator_ids" placeholder="每行一个小红书主页链接或账号 ID"></textarea>
@@ -1851,6 +1858,65 @@
           btn.disabled = false;
           btn.textContent = "一键新建项目";
         }
+      }
+    }
+
+    function splitSampleAccountsText(text) {
+      return String(text || "")
+        .split(/[\n\r,，;；\t]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function mergeSampleAccounts(existingText, importedAccounts) {
+      const merged = [];
+      const seen = new Set();
+      [...splitSampleAccountsText(existingText), ...(importedAccounts || [])].forEach((item) => {
+        const value = String(item || "").trim();
+        if (!value) return;
+        const key = value.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(value);
+      });
+      return merged.join("\n");
+    }
+
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      return btoa(binary);
+    }
+
+    async function importSampleAccountsFile() {
+      const input = document.getElementById("sample_accounts_file");
+      const file = input && input.files ? input.files[0] : null;
+      if (!file) {
+        log("请先选择 txt、csv 或 Excel 文件");
+        return;
+      }
+      try {
+        const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+        const res = await fetch("/api/crawler/import-sample-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, content_base64: contentBase64 })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+          log("样本账号文件导入失败: " + (data.detail || JSON.stringify(data)));
+          return;
+        }
+        const target = document.getElementById("sample_creator_ids");
+        target.value = mergeSampleAccounts(target.value, data.accounts || []);
+        await saveConfig();
+        log(`已从 ${file.name} 导入 ${data.count || 0} 个样本账号`);
+      } catch (e) {
+        log("样本账号文件导入失败: " + (e.message || e));
       }
     }
 

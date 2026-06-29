@@ -104,6 +104,12 @@ class SampleCreatorStartRequest(BaseModel):
     headless: bool = False
 
 
+class SampleAccountImportRequest(BaseModel):
+    """Import sample creator accounts from txt/csv/excel content."""
+    filename: str
+    content_base64: str
+
+
 class ScenarioTableSetupRequest(BaseModel):
     """Create scenario tables for account filtering / viral monitor / note rewrite / collaboration monitor."""
     base_token: str

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import base64
+
 import pytest
 
 from api.main import OPS_CONFIG_DEFAULT, PROJECT_BOUND_FIELDS, OpsConfigPayload
@@ -51,3 +53,24 @@ async def test_base_info_endpoint_reads_base_name(monkeypatch):
     assert result["name"] == "个人小红书测试"
     assert "+base-get" in captured_cmd
     assert "app123" in captured_cmd
+
+
+def test_parse_sample_account_txt_file_dedupes_and_ignores_headers():
+    content = "账号ID\nabc_123\nhttps://www.xiaohongshu.com/user/profile/abc\nabc_123\n".encode("utf-8")
+
+    accounts = crawler._parse_sample_account_file("accounts.txt", content)
+
+    assert accounts == ["abc_123", "https://www.xiaohongshu.com/user/profile/abc"]
+
+
+@pytest.mark.asyncio
+async def test_import_sample_accounts_endpoint_accepts_base64_txt():
+    content = base64.b64encode("账号ID\nabc_123\nxhs-user-99\n".encode("utf-8")).decode("ascii")
+
+    result = await crawler.import_sample_accounts(
+        crawler.SampleAccountImportRequest(filename="accounts.txt", content_base64=content)
+    )
+
+    assert result["status"] == "ok"
+    assert result["count"] == 2
+    assert result["text"] == "abc_123\nxhs-user-99"
