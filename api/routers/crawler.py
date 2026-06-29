@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import csv
+import os
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from config.runtime_paths import data_dir, downloads_dir
+from tools.browser_launcher import BrowserLauncher
 from ..schemas import (
     CrawlerStartRequest,
     CrawlerStatusResponse,
@@ -52,6 +54,28 @@ def _pgy_cdp_available() -> bool:
             return response.status == 200
     except Exception:
         return False
+
+
+def _has_cli_option(args: List[str], option: str) -> bool:
+    return option in args or any(arg.startswith(f"{option}=") for arg in args)
+
+
+def _pgy_browser_args(args: List[str]) -> List[str]:
+    """Resolve a concrete browser for Pugongying instead of hard-coding Playwright channel=chrome."""
+    if any(_has_cli_option(args, option) for option in ("--cdp", "--executable-path", "--channel")):
+        return []
+
+    custom_browser = (config.CUSTOM_BROWSER_PATH or "").strip()
+    if custom_browser:
+        custom_path = Path(custom_browser).expanduser()
+        if custom_path.is_file():
+            return ["--executable-path", str(custom_path)]
+
+    for browser_path in BrowserLauncher().detect_browser_paths():
+        if Path(browser_path).is_file():
+            return ["--executable-path", browser_path]
+
+    return ["--channel", ""]
 
 
 async def _run_huitun_automation(args: List[str], timeout_sec: int = 180) -> Dict[str, Any]:
@@ -102,7 +126,10 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
     final_args = list(args)
     if "--cdp" not in final_args and _pgy_cdp_available():
         final_args.extend(["--cdp", PGY_CDP_ENDPOINT])
+    elif "--cdp" not in final_args:
+        final_args.extend(_pgy_browser_args(final_args))
     cmd = [sys.executable, str(script_path), *final_args]
+    pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -114,6 +141,7 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
             timeout=timeout_sec,
             check=False,
             cwd=str(project_root),
+            env=pgy_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail=f"蒲公英自动化超时（{timeout_sec}s）") from exc
@@ -206,6 +234,21 @@ def _extract_base_token(value: str) -> str:
     return text.rstrip("/").split("/")[-1].split("?")[0]
 
 
+def _find_lark_cli() -> str:
+    found = shutil.which("lark-cli") or shutil.which("lark-cli.cmd")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (
+        home / "nodejs" / "bin" / "lark-cli",
+        home / "nodejs" / "bin" / "lark-cli.cmd",
+        Path("/usr/local/bin/lark-cli"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return "lark-cli"
+
+
 async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]:
     project_root = Path(__file__).resolve().parents[2]
 
@@ -230,10 +273,18 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
         t = (text or "").lower()
         return "800004135" in t or " limited" in t or "rate limit" in t
 
+    def _is_base_copying(text: str) -> bool:
+        t = (text or "").lower()
+        return "800004046" in t or "base is copying" in t
+
     max_retries = 3
     wait_seconds = 2
     last_err = ""
-    for attempt in range(max_retries + 1):
+    _lark_env = None
+    _node_bin = str(Path.home() / "nodejs" / "bin")
+    if Path(_node_bin).is_dir():
+        _lark_env = {**os.environ, "PATH": _node_bin + os.pathsep + os.environ.get("PATH", "")}
+    for attempt in range(13):
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -242,6 +293,7 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
                 timeout=timeout_sec,
                 check=False,
                 cwd=str(project_root),
+                env=_lark_env,
             )
         except FileNotFoundError:
             raise HTTPException(status_code=400, detail="未找到 lark-cli，请先安装并完成授权")
@@ -258,8 +310,13 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
             if _is_rate_limited(err_msg) and attempt < max_retries:
                 await asyncio.sleep(wait_seconds * (attempt + 1))
                 continue
+            if _is_base_copying(err_msg) and attempt < 12:
+                await asyncio.sleep(5)
+                continue
             if _is_rate_limited(err_msg):
                 raise HTTPException(status_code=429, detail=f"飞书接口限流（800004135），请稍后重试。原始信息: {err_msg[:400]}")
+            if _is_base_copying(err_msg):
+                raise HTTPException(status_code=503, detail=f"飞书 Base 正在复制中，请稍后重试。原始信息: {err_msg[:400]}")
             raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {err_msg[:400]}")
 
         try:
@@ -275,8 +332,13 @@ async def _run_lark_cli(cmd: List[str], timeout_sec: int = 30) -> Dict[str, Any]
         if _is_rate_limited(payload_text) and attempt < max_retries:
             await asyncio.sleep(wait_seconds * (attempt + 1))
             continue
+        if _is_base_copying(payload_text) and attempt < 12:
+            await asyncio.sleep(5)
+            continue
         if _is_rate_limited(payload_text):
             raise HTTPException(status_code=429, detail=f"飞书接口限流（800004135），请稍后重试。原始信息: {payload_text[:400]}")
+        if _is_base_copying(payload_text):
+            raise HTTPException(status_code=503, detail=f"飞书 Base 正在复制中，请稍后重试。原始信息: {payload_text[:400]}")
         raise HTTPException(status_code=400, detail=f"lark-cli 返回失败: {payload}")
     raise HTTPException(status_code=400, detail=f"lark-cli 调用失败: {last_err[:400]}")
 
@@ -296,7 +358,7 @@ def _lark_json_arg(payload: Dict[str, Any]):
         ) as tmp_file:
             json.dump(payload, tmp_file, ensure_ascii=False)
             tmp_json_path = tmp_file.name
-        yield f"@.\\{Path(tmp_json_path).name}"
+        yield f"@./{Path(tmp_json_path).name}"
     finally:
         if tmp_json_path:
             with contextlib.suppress(Exception):
@@ -306,7 +368,7 @@ def _lark_json_arg(payload: Dict[str, Any]):
 async def _create_table_with_fields(base_token: str, table_name: str, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+table-create",
             "--as", "user",
             "--base-token", base_token,
@@ -320,7 +382,7 @@ async def _create_table_with_fields(base_token: str, table_name: str, fields: Li
 
 async def _create_base(project_name: str, folder_token: str = "", time_zone: str = "Asia/Shanghai") -> Dict[str, Any]:
     cmd = [
-        shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+        _find_lark_cli(),
         "base", "+base-create",
         "--as", "user",
         "--name", project_name,
@@ -348,7 +410,7 @@ async def _copy_base(template_base_token: str, project_name: str, folder_token: 
     if not source_token:
         raise HTTPException(status_code=400, detail="缺少母版 Base Token 或链接")
     cmd = [
-        shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+        _find_lark_cli(),
         "base", "+base-copy",
         "--as", "user",
         "--base-token", source_token,
@@ -370,13 +432,24 @@ async def _copy_base(template_base_token: str, project_name: str, folder_token: 
     )
     if not token:
         raise HTTPException(status_code=500, detail=f"复制 Base 成功但未返回 token: {data}")
+    for attempt in range(12):
+        try:
+            await _run_lark_cli(
+                [_find_lark_cli(), "base", "+table-list", "--as", "user", "--base-token", token],
+                timeout_sec=15,
+            )
+            break
+        except Exception:
+            await asyncio.sleep(5)
+    else:
+        raise HTTPException(status_code=504, detail="复制 Base 后等待就绪超时（60秒）")
     return {"base_token": token, "template_base_token": source_token, "raw": data}
 
 
 async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+table-list",
             "--as", "user",
             "--base-token", base_token,
@@ -394,7 +467,7 @@ async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
 async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-list",
             "--as", "user",
             "--base-token", base_token,
@@ -409,7 +482,7 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
 async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[str, Any]]:
     payload = await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-list",
             "--as", "user",
             "--base-token", base_token,
@@ -425,7 +498,7 @@ async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[st
 async def _create_base_field(base_token: str, table_id: str, field: Dict[str, Any]) -> None:
     await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+field-create",
             "--as", "user",
             "--base-token", base_token,
@@ -766,14 +839,21 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
             try:
                 timestamp = int(float(str(value)))
                 if timestamp > 10_000_000_000:
-                    value = timestamp
-                else:
-                    value = timestamp * 1000
+                    timestamp = timestamp // 1000
+                value = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 pass
         if field_name in numeric_fields:
             try:
-                value = int(str(value))
+                text = str(value).strip()
+                multiplier = 1
+                if text.endswith("万"):
+                    multiplier = 10000
+                    text = text[:-1]
+                elif text.endswith("亿"):
+                    multiplier = 100000000
+                    text = text[:-1]
+                value = int(float(text) * multiplier)
             except Exception:
                 value = 0
         values.append(value)
@@ -912,7 +992,7 @@ def _pgy_row_to_record(row: Dict[str, Any], table_fields: List[str]) -> Dict[str
 
 
 async def _read_existing_pgy_records(base_token: str, table_id: str, field_names: List[str]) -> Dict[str, str]:
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     existing: Dict[str, str] = {}
     offset = 0
     limit = 200
@@ -953,6 +1033,35 @@ async def _read_existing_pgy_records(base_token: str, table_id: str, field_names
                 "red_id": existing_row.get("小红书号"),
                 "nickname": existing_row.get("达人昵称"),
             })
+            if key and key not in existing:
+                existing[key] = str(record_id)
+        if not data.get("has_more"):
+            break
+        offset += limit
+    return existing
+
+
+async def _read_existing_base_records(base_token: str, table_id: str, dedupe_field: str = "note_id") -> Dict[str, str]:
+    lark_cli_bin = _find_lark_cli()
+    existing: Dict[str, str] = {}
+    offset = 0
+    limit = 200
+    while True:
+        cmd = [
+            lark_cli_bin, "base", "+record-list", "--as", "user", "--format", "json",
+            "--base-token", base_token, "--table-id", table_id,
+            "--offset", str(offset), "--limit", str(limit),
+        ]
+        payload = await _run_lark_cli(cmd, timeout_sec=60)
+        data = payload.get("data") or {}
+        fields = data.get("fields") or []
+        rows = data.get("data") or []
+        record_ids = data.get("record_id_list") or []
+        for record_id, values in zip(record_ids, rows):
+            if not isinstance(values, list):
+                continue
+            existing_row = {field_name: str(value).strip() for field_name, value in zip(fields, values) if value}
+            key = existing_row.get(dedupe_field, "")
             if key and key not in existing:
                 existing[key] = str(record_id)
         if not data.get("has_more"):
@@ -1093,7 +1202,7 @@ async def _upload_base_attachment(base_token: str, table_id: str, record_id: str
         cli_file = str(path)
     await _run_lark_cli(
         [
-            shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli",
+            _find_lark_cli(),
             "base", "+record-upload-attachment",
             "--as", "user",
             "--base-token", base_token,
@@ -1126,7 +1235,7 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
     rows = _pgy_summary_to_rows(summary, output_dir)
     dedupe_fields = [name for name in ["去重键", "类型", "达人昵称", "小红书号", "目标达人昵称", "目标小红书号"] if name in table_fields]
     existing_records = await _read_existing_pgy_records(request.base_token, request.table_id, dedupe_fields)
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     created = 0
     updated = 0
     skipped = 0
@@ -1219,7 +1328,7 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
 async def _read_rule_table(base_token: str, table_id: str) -> List[Dict]:
     if not base_token or not table_id:
         raise HTTPException(status_code=400, detail="缺少 base_token 或 table_id")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
     cmd = [lark_cli_bin, "base", "+record-list", "--as", "user", "--format", "json", "--base-token", base_token, "--table-id", table_id, "--limit", "200"]
     result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=20, check=False)
     if result.returncode != 0:
@@ -1258,11 +1367,28 @@ async def _refresh_collab_creator_notes(request: CollaborationMonitorStartReques
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
         enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
+    _clear_creator_data_files()
     success = await crawler_manager.start(start_request)
     if not success:
         raise HTTPException(status_code=500, detail="合作监控抓取任务启动失败")
     if not await _wait_crawler_idle(timeout_sec=1800):
         raise HTTPException(status_code=504, detail="合作监控抓取超时（30分钟）")
+
+
+def _clear_creator_data_files() -> None:
+    data_roots = [data_dir() / "xhs"]
+    project_root = Path(__file__).resolve().parents[2]
+    legacy_data_root = project_root / "data" / "xhs"
+    if legacy_data_root.resolve() != data_roots[0].resolve():
+        data_roots.append(legacy_data_root)
+    for data_root in data_roots:
+        for suffix_dir in ("csv", "jsonl", "json"):
+            dir_path = data_root / suffix_dir
+            if not dir_path.exists():
+                continue
+            for f in dir_path.glob("creator_contents_*.*"):
+                with contextlib.suppress(Exception):
+                    f.unlink()
 
 
 async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
@@ -1272,13 +1398,15 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
     file_path = Path(request.file_path) if request.file_path else _latest_local_file("notes", "creator")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
-    all_rows = _read_jsonl_rows(file_path)
+    all_rows = _read_local_rows(file_path)
     creator_filters = set()
     for cid in _split_creator_inputs(request.creator_ids):
         if "/user/profile/" in cid:
             creator_filters.add(cid.split("/user/profile/")[-1].split("?")[0].strip())
         else:
-            creator_filters.add(cid.strip())
+            cid_stripped = cid.strip()
+            if not cid_stripped.startswith("__note__:"):
+                creator_filters.add(cid_stripped)
     rows: List[List[Any]] = []
     for row in all_rows:
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
@@ -1298,17 +1426,81 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
         rows = rows[:request.sync_limit]
     if not rows:
         raise HTTPException(status_code=400, detail="合作监控未命中可同步数据")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
+    existing = await _read_existing_base_records(request.base_token, request.table_id, "note_id")
     created = 0
-    for i in range(0, len(rows), 200):
-        payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        with _lark_json_arg(payload) as json_arg:
-            await _run_lark_cli(
-                [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
-                timeout_sec=60,
-            )
-        created += len(payload["rows"])
-    return {"created": created, "file": str(file_path)}
+    updated = 0
+    note_id_idx = table_fields.index("note_id") if "note_id" in table_fields else -1
+    for row_values in rows:
+        note_id = str(row_values[note_id_idx]).strip() if note_id_idx >= 0 and row_values[note_id_idx] else ""
+        record_id = existing.get(note_id) if note_id else None
+        if record_id:
+            payload = {"fields": table_fields, "values": row_values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [row_values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
+    return {"created": created, "updated": updated, "file": str(file_path)}
+
+
+async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
+    if not request.comments_table_id:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "comments_table_id not configured"}
+    table_fields = await _read_table_fields(request.base_token, request.comments_table_id)
+    if not table_fields:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "comments table has no fields"}
+    try:
+        file_path = _latest_local_file("comments", "creator")
+    except HTTPException:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "no local comments file found"}
+    if not file_path.exists():
+        return {"created": 0, "updated": 0, "skipped": True, "reason": f"comments file not found: {file_path}"}
+    all_rows = _read_local_rows(file_path)
+    rows_to_sync: List[Dict[str, Any]] = []
+    for row in all_rows:
+        row["项目名"] = request.project_name
+        row["所属项目"] = request.project_name
+        row["监控周期"] = monitor_tag
+        rows_to_sync.append(row)
+    if request.sync_limit and request.sync_limit > 0:
+        rows_to_sync = rows_to_sync[:request.sync_limit]
+    if not rows_to_sync:
+        return {"created": 0, "updated": 0, "skipped": True, "reason": "no matching comment rows"}
+    lark_cli_bin = _find_lark_cli()
+    existing = await _read_existing_base_records(request.base_token, request.comments_table_id, "comment_id")
+    created = 0
+    updated = 0
+    for row in rows_to_sync:
+        comment_id = str(row.get("comment_id") or "").strip()
+        values = _row_to_table_values(row, table_fields, "comments")
+        record_id = existing.get(comment_id) if comment_id else None
+        if record_id:
+            payload = {"fields": table_fields, "values": values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.comments_table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.comments_table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
+    return {"created": created, "updated": updated, "file": str(file_path)}
 
 
 async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStartRequest) -> None:
@@ -1322,7 +1514,9 @@ async def _collaboration_job_loop(job_id: str, request: CollaborationMonitorStar
         job["last_run_at"] = datetime.now().isoformat()
         try:
             await _refresh_collab_creator_notes(request)
-            job["last_result"] = await _sync_collaboration_snapshot(request, monitor_tag)
+            notes_result = await _sync_collaboration_snapshot(request, monitor_tag)
+            comments_result = await _sync_collaboration_comments(request, monitor_tag)
+            job["last_result"] = {"notes": notes_result, "comments": comments_result}
             job["last_error"] = ""
         except Exception as e:
             job["last_error"] = str(e)
@@ -1464,6 +1658,7 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
         enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
         enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
     )
+    _clear_creator_data_files()
     success = await crawler_manager.start(start_request)
     if not success:
         if crawler_manager.process and crawler_manager.process.poll() is None:
@@ -1556,19 +1751,29 @@ async def pgy_login(request: PgyLoginRequest):
             sys.executable,
             str(script_path),
             *args,
+            *_pgy_browser_args(args),
             "--remote-debugging-port",
             str(PGY_CDP_PORT),
             "--detach-hold-open",
         ]
         try:
-            subprocess.Popen(
+            pgy_log = project_root / "tmp_logs_pgy_automation.txt"
+            pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(project_root),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=open(pgy_log, "w"),
+                stderr=open(pgy_log, "a"),
                 stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                env=pgy_env,
             )
+            await asyncio.sleep(2)
+            if proc.poll() is not None:
+                err = pgy_log.read_text(encoding="utf-8", errors="replace")[:800] if pgy_log.exists() else ""
+                raise HTTPException(status_code=500, detail=f"蒲公英登录进程启动后立即退出(code={proc.returncode}): {err}")
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"蒲公英登录窗口启动失败: {exc}") from exc
         return {
@@ -1639,6 +1844,7 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
         await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
         await create_or_reuse(request.comments_table_name, comments_fields),
         await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
+        await create_or_reuse(request.collab_comments_table_name, comments_fields),
         await create_or_reuse(request.creator_selection_table_name, creator_selection_fields),
     ]
     return {"status": "ok", "tables": tables}
@@ -1673,6 +1879,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
                 note_recreation_table_name=request.note_recreation_table_name,
                 comments_table_name=request.comments_table_name,
                 collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+                collab_comments_table_name=request.collab_comments_table_name,
                 creator_selection_table_name=request.creator_selection_table_name,
             )
         )
@@ -1696,6 +1903,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             viral_monitor_table_name=request.viral_monitor_table_name,
             note_recreation_table_name=request.note_recreation_table_name,
             collaboration_monitor_table_name=request.collaboration_monitor_table_name,
+            collab_comments_table_name=request.collab_comments_table_name,
         )
     )
     return {"status": "ok", "project_name": request.project_name.strip(), "base_token": base_token, "root_table": root_table, "tables": scenario.get("tables", []), "base_raw": base_info.get("raw", {})}
@@ -1732,26 +1940,31 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         rows = rows[:request.limit]
     if not rows:
         raise HTTPException(status_code=400, detail="未找到可同步的数据（请检查关键词/文件类型）")
-    lark_cli_bin = shutil.which("lark-cli") or shutil.which("lark-cli.cmd") or "lark-cli"
+    lark_cli_bin = _find_lark_cli()
+    dedupe_field = "note_id" if request.data_type == "notes" else "comment_id"
+    existing = await _read_existing_base_records(request.base_token, request.table_id, dedupe_field)
     created = 0
-    for i in range(0, len(rows), 200):
-        payload = {"fields": table_fields, "rows": rows[i:i + 200]}
-        with _lark_json_arg(payload) as json_arg:
-            await _run_lark_cli(
-                [
-                    lark_cli_bin,
-                    "base",
-                    "+record-batch-create",
-                    "--base-token",
-                    request.base_token,
-                    "--table-id",
-                    request.table_id,
-                    "--json",
-                    json_arg,
-                ],
-                timeout_sec=60,
-            )
-        created += len(payload["rows"])
+    updated = 0
+    dedupe_idx = table_fields.index(dedupe_field) if dedupe_field in table_fields else -1
+    for row_values in rows:
+        dedupe_key = str(row_values[dedupe_idx]).strip() if dedupe_idx >= 0 and row_values[dedupe_idx] else ""
+        record_id = existing.get(dedupe_key) if dedupe_key else None
+        if record_id:
+            payload = {"fields": table_fields, "values": row_values}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            updated += 1
+        else:
+            payload = {"fields": table_fields, "rows": [row_values]}
+            with _lark_json_arg(payload) as json_arg:
+                await _run_lark_cli(
+                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                    timeout_sec=60,
+                )
+            created += 1
     target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
     return {
         "status": "ok",
@@ -1762,17 +1975,27 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         "file": str(file_path),
         "fields": table_fields,
         "created": created,
+        "updated": updated,
     }
 
 
 @router.post("/collaboration-monitor/start")
 async def start_collaboration_monitor(request: CollaborationMonitorStartRequest):
     await _refresh_collab_creator_notes(request)
-    await _sync_collaboration_snapshot(request, f"{request.interval_hours}h")
+    notes_result = await _sync_collaboration_snapshot(request, f"{request.interval_hours}h")
+    comments_result = await _sync_collaboration_comments(request, f"{request.interval_hours}h")
     job_id = f"collab-{uuid4().hex[:8]}"
     task = asyncio.create_task(_collaboration_job_loop(job_id, request))
-    collaboration_monitor_jobs[job_id] = {"job_id": job_id, "interval_hours": request.interval_hours, "started_at": datetime.now().isoformat(), "last_run_at": "", "last_result": {"created": 0}, "last_error": "", "project_name": request.project_name, "source_keyword": request.source_keyword, "table_id": request.table_id, "task": task}
-    return {"status": "ok", "message": "合作笔记监控已启动", "job_id": job_id}
+    collaboration_monitor_jobs[job_id] = {"job_id": job_id, "interval_hours": request.interval_hours, "started_at": datetime.now().isoformat(), "last_run_at": "", "last_result": {"notes": notes_result, "comments": comments_result}, "last_error": "", "project_name": request.project_name, "source_keyword": request.source_keyword, "table_id": request.table_id, "task": task}
+    return {"status": "ok", "message": "合作笔记监控已启动", "job_id": job_id, "notes": notes_result, "comments": comments_result}
+
+
+@router.post("/collaboration-monitor/crawl-once")
+async def collaboration_monitor_crawl_once(request: CollaborationMonitorStartRequest):
+    await _refresh_collab_creator_notes(request)
+    notes_result = await _sync_collaboration_snapshot(request, "manual")
+    comments_result = await _sync_collaboration_comments(request, "manual")
+    return {"status": "ok", "message": "合作笔记抓取同步完成", "notes": notes_result, "comments": comments_result}
 
 
 @router.post("/collaboration-monitor/stop")

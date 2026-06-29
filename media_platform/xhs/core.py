@@ -376,12 +376,26 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes] Begin get Xiaohongshu creators")
         for creator_url in config.XHS_CREATOR_ID_LIST:
             try:
-                # Parse creator URL to get user_id and security tokens
                 creator_info: CreatorUrlInfo = parse_creator_info_from_url(creator_url)
                 utils.logger.info(f"[XiaoHongShuCrawler.get_creators_and_notes] Parse creator URL info: {creator_info}")
                 user_id = creator_info.user_id
 
-                # get creator detail info from web html content
+                if user_id.startswith("__note__:"):
+                    note_id = user_id[len("__note__:"):]
+                    utils.logger.info(f"[XiaoHongShuCrawler.get_creators_and_notes] Note link detected, fetching note {note_id} to extract creator")
+                    note_detail = await self.xhs_client.get_note_by_id(note_id, creator_info.xsec_source, creator_info.xsec_token)
+                    if not note_detail:
+                        note_detail = await self.xhs_client.get_note_by_id_from_html(note_id, creator_info.xsec_source, creator_info.xsec_token, enable_cookie=True)
+                    if not note_detail:
+                        utils.logger.error(f"[XiaoHongShuCrawler.get_creators_and_notes] Failed to get note detail for note_id={note_id}")
+                        continue
+                    user_id = note_detail.get("user", {}).get("userid", "") or note_detail.get("author_user_id", "")
+                    if not user_id:
+                        utils.logger.error(f"[XiaoHongShuCrawler.get_creators_and_notes] No user_id found in note detail for note_id={note_id}")
+                        continue
+                    creator_info = CreatorUrlInfo(user_id=user_id, xsec_token=creator_info.xsec_token, xsec_source=creator_info.xsec_source)
+                    utils.logger.info(f"[XiaoHongShuCrawler.get_creators_and_notes] Resolved note to creator: user_id={user_id}")
+
                 createor_info: Dict = await self.xhs_client.get_creator_info(
                     user_id=user_id,
                     xsec_token=creator_info.xsec_token,

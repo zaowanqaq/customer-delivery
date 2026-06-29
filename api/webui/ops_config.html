@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>艾莉芬特 - 小红书全域营销项目工作台</title>
+  <title>艾莉芬特 - 小红书营销项目一体化平台</title>
     <style>
     :root {
       --ink: #171412;
@@ -76,12 +76,14 @@
     .cap-item { padding: 8px 12px; border-radius: 999px; background: #f4ece4; border: 1px solid #ddcfc2; color: #40372f; font-size: 12px; font-weight: 700; }
     .workflow-mini { display: grid; gap: 14px; }
     .workflow-step { display: grid; grid-template-columns: 38px 1fr; gap: 12px; align-items: start; padding: 12px; border: 1px solid #eadfd4; border-radius: 8px; background: #fffaf5; }
+    .workflow-step.no-index { grid-template-columns: 1fr; }
     .workflow-step b { width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center; color: #fff; background: var(--navy); font-size: 13px; }
     .workflow-step:nth-child(2) b { background: var(--teal); }
     .workflow-step:nth-child(3) b { background: var(--gold); }
     .workflow-step strong { display: block; font-size: 14px; color: var(--ink); }
     .workflow-step span { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
     .showcase-band { display: grid; grid-template-columns: 1.05fr .95fr; gap: 20px; margin-bottom: 20px; }
+    .showcase-band.single { grid-template-columns: 1fr; }
     .showcase-panel { background: #261f1a; color: #f9efe5; border-radius: 8px; padding: 24px; min-height: 226px; position: relative; overflow: hidden; }
     .showcase-panel::after { content: ""; position: absolute; inset: auto -32px -48px auto; width: 180px; height: 180px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); }
     .showcase-panel p { margin: 0; color: rgba(249,239,229,.72); font-size: 13px; line-height: 1.7; }
@@ -256,15 +258,15 @@
       </div>
     </div>
     <div class="nav">
-      <div class="nav-item active" data-step="01" data-tab="tab-project">项目管理</div>
-      <div class="nav-item" data-step="02" data-tab="tab-config">公共配置</div>
-      <div class="nav-item" data-step="03" data-tab="tab-step2">样本账号抓取</div>
-      <div class="nav-item" data-step="04" data-tab="tab-huitun">达人智能圈选</div>
-      <div class="nav-item" data-step="05" data-tab="tab-step3">爆款内容检索</div>
+      <div class="nav-item active" data-step="01" data-tab="tab-project">项目大盘</div>
+      <div class="nav-item" data-step="02" data-tab="tab-step3">平台爆款检索</div>
+      <div class="nav-item" data-step="03" data-tab="tab-huitun">达人智能圈选</div>
+      <div class="nav-item" data-step="04" data-tab="tab-step2">账号内容监测</div>
+      <div class="nav-item" data-step="05" data-tab="tab-step5">笔记数据监控</div>
+      <div class="nav-item" data-step="06" data-tab="tab-config">笔记舆情监控</div>
       <!-- 客户交付版默认自动同步，保留手动同步中心供内部排障使用但不在 UI 中展示。 -->
-      <div class="nav-item v1-hidden" data-step="06" data-tab="tab-step4" data-internal-manual-sync="true">数据同步中心</div>
-      <div class="nav-item" data-step="07" data-tab="tab-step5">合作笔记监控</div>
-      <div class="nav-item" data-step="08" data-tab="tab-monitor">终端运行日志</div>
+      <div class="nav-item v1-hidden" data-step="07" data-tab="tab-step4" data-internal-manual-sync="true">数据同步中心</div>
+      <div class="nav-item" data-step="07" data-tab="tab-monitor">交付环境与运行日志</div>
     </div>
   </div>
 
@@ -272,8 +274,8 @@
   <div class="main-content">
     <div class="header">
       <div class="page-title">
-        <strong id="page_header">项目管理</strong>
-        <span>小红书营销项目的一体化作战台</span>
+        <strong id="page_header">项目大盘</strong>
+        <span>小红书营销项目一体化平台</span>
       </div>
       <div class="header-badge">ALIAFANT LIVE WORKSPACE</div>
     </div>
@@ -284,7 +286,7 @@
             <div class="overview-main">
               <div>
                 <p class="overview-kicker">ALIAFANT CONTENT OPERATIONS</p>
-                <h2>把选题、选号、抓取、同步、监控连成一条可讲清楚的项目链路</h2>
+                <h2>小红书营销项目一体化平台</h2>
                 <p class="overview-copy">这是一套围绕项目执行打造的营销工作台，用于串联策略判断、内容检索、达人筛选、数据同步与持续监控，承接艾莉芬特在小红书整合营销、AI 内容营销、流量助推、KOC 与达人投放上的组合能力。</p>
                 <div class="cap-list">
                   <span class="cap-item">小红书整合营销</span>
@@ -309,37 +311,22 @@
                 </div>
               </div>
               <div class="hero-actions">
-                <button class="hero-button primary" onclick="activateTabById('tab-step3', '爆款内容检索')">进入爆款内容检索</button>
-                <button class="hero-button secondary" onclick="activateTabById('tab-monitor', '终端运行日志')">查看运行监控</button>
+                <button class="hero-button primary" onclick="activateTabById('tab-step3', '平台爆款检索')">进入平台爆款检索</button>
+                <button class="hero-button secondary" onclick="activateTabById('tab-monitor', '交付环境与运行日志')">查看运行监控</button>
               </div>
             </div>
             <div class="overview-side">
               <div class="workflow-mini">
-                <div class="workflow-step">
-                  <b>01</b>
+                <div class="workflow-step no-index">
                   <div>
                     <strong>选号罗盘</strong>
                     <span>先确定项目、账号与筛选标准，再进入执行。</span>
                   </div>
                 </div>
-                <div class="workflow-step">
-                  <b>02</b>
-                  <div>
-                    <strong>内容 MAP</strong>
-                    <span>围绕需求、流量、决策、心智和情绪做内容检索。</span>
-                  </div>
-                </div>
-                <div class="workflow-step">
-                  <b>03</b>
-                  <div>
-                    <strong>执行闭环</strong>
-                    <span>同步飞书表，再做合作笔记和过程监控。</span>
-                  </div>
-                </div>
               </div>
             </div>
           </section>
-          <section class="showcase-band">
+          <section class="showcase-band single">
             <div class="showcase-panel">
               <p>ALIAFANT PROJECT METHOD</p>
               <h3>从策略识别到项目落地，把内容营销能力沉淀成可执行、可追踪、可复盘的工作流。</h3>
@@ -358,43 +345,39 @@
                 </div>
               </div>
             </div>
-            <div class="quote-panel">
-              <blockquote>不仅是流量的追逐者，更是品牌的造浪者。</blockquote>
-              <small>以内容洞察、执行协同与过程监控支撑品牌项目持续推进。</small>
-            </div>
           </section>
           <div class="project-grid">
           <section class="card">
-      <h2>项目切换器</h2>
-      <p class="hint">用于保存客户自己的项目配置。新交付环境默认不会带出旧项目、旧 Token 或开发机路径。</p>
+      <h2>工作台</h2>
+      <p class="hint">工作台汇总，用于保存项目配置，新旧项目不重合，独立项目独自运营。</p>
       <div class="grid">
         <div class="row">
           <label>已保存项目</label>
           <select id="project_selector"></select>
         </div>
         <div class="row">
-          <label>项目槽位名（用于下次快速切换）</label>
+          <label>项目检索栏（用于下次快速切换）</label>
           <input id="project_slot_name" placeholder="例如：新品上市项目">
         </div>
       </div>
       <div class="btns">
         <button class="ghost" onclick="applySelectedProject()">切换到所选项目</button>
-        <button class="ghost" onclick="saveCurrentProjectProfile()">保存当前为项目槽位</button>
+        <button class="ghost" onclick="saveCurrentProjectProfile()">保存当前为项目配置</button>
         <button class="danger" onclick="deleteSelectedProject()">删除所选项目配置</button>
         <button class="ghost" onclick="resetWorkbenchConfig()">清空工作台配置</button>
       </div>
     </section>
           <section class="card">
-      <h2>步骤1：初始化项目</h2>
-      <p class="hint">填写客户项目名和客户可访问的母版 Base 链接/Token。初始化后系统会回填本项目 Base 与各业务表 ID。</p>
+      <h2>步骤1：新建项目</h2>
+      <p class="hint">填写项目名和客户可访问的 Base 链接/Token。新建后系统会回填本项目 Base 与各业务表 ID。</p>
       <div class="grid">
         <div class="row">
           <label>所属项目名（必填）</label>
           <input id="project_name" placeholder="例如：客户品牌新品上市">
         </div>
         <div class="row">
-          <label>母版 Base 链接 / Token（必填）</label>
-          <input id="template_base_token" placeholder="粘贴客户母版 Base 链接，或只填 Base Token">
+          <label>Base 链接 / Token（必填）</label>
+          <input id="template_base_token" placeholder="粘贴客户 Base 链接，或只填 Base Token">
         </div>
       </div>
       <input id="folder_token" class="v1-hidden" placeholder="fld...">
@@ -405,15 +388,17 @@
       <input id="note_recreation_table_name" class="v1-hidden" value="笔记二创表">
       <input id="comments_table_name" class="v1-hidden" value="笔记评论表">
       <input id="collaboration_monitor_table_name" class="v1-hidden" value="合作笔记监控表">
+      <input id="collab_comments_table_name" class="v1-hidden" value="合作笔记评论表">
       <input id="creator_selection_table_name" class="v1-hidden" value="达人智能圈选表">
       <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="note_recreation_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="collab_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="pgy_table_id" class="v1-hidden" placeholder="tbl...">
       <div class="btns">
-        <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键初始化项目（复制母版）</button>
+        <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键新建项目</button>
       </div>
     </section>
           </div>
@@ -423,13 +408,13 @@
       <div id="project_binding_view" class="meta-panel">
         <div class="meta-row">
           <span class="meta-key">状态</span>
-          <span class="meta-val">请先初始化项目或切换到已有项目</span>
+          <span class="meta-val">请先新建项目或切换到已有项目</span>
         </div>
       </div>
     </section>
           <section class="card">
       <h2>交付环境检测</h2>
-      <p class="hint">首次部署或功能异常时先运行检测，确认 Python、Playwright 浏览器、飞书 CLI 和本机数据目录状态。</p>
+      <p class="hint">首次部署或功能异常时先运行检测。需处理表示该项会影响对应功能，需要按右侧处理办法优先处理；处理后重新检测即可。</p>
       <div class="btns">
         <button class="ghost" onclick="checkDeliveryEnvironment()">检测当前电脑环境</button>
       </div>
@@ -443,8 +428,8 @@
         </div>
         <div id="tab-config" class="tab-pane">
           <section class="card">
-      <h2>公共抓取配置（步骤2/3/5共用）</h2>
-      <p class="hint">所有抓取任务共用同一套登录、评论和媒体下载参数。推荐先使用扫码登录；Cookie 只填写客户自己的 Cookie。</p>
+      <h2>笔记舆情监控（公共配置）</h2>
+      <p class="hint">所有抓取任务共用同一套登录、评论和媒体下载参数。二级评论就是楼中楼评论；打不开浏览器时先切换为“显示浏览器窗口”，再运行交付环境检测。</p>
       <div class="grid">
         <div class="row">
           <label>登录方式</label>
@@ -510,7 +495,7 @@
         </div>
         <div id="tab-step2" class="tab-pane">
           <section class="card">
-      <h2>步骤2：样本账号抓取（3-5账号）</h2>
+      <h2>账号内容监测（样本账号抓取）</h2>
       <p class="hint">输入客户提供的样本账号主页链接或账号 ID，每行一个；系统不会预置任何账号。</p>
       <div class="grid">
         <div class="row full">
@@ -530,7 +515,7 @@
         <div id="tab-huitun" class="tab-pane">
           <section class="card">
             <h2>达人智能圈选</h2>
-            <p class="hint">通过小红书蒲公英搜索达人，保存传播表现、粉丝分析，并抓取“相似博主推荐”前 20 个达人。</p>
+            <p class="hint">通过小红书蒲公英搜索达人，保存传播表现、粉丝分析，并抓取“相似博主推荐”前 20 个达人。Mac 上会自动使用已安装的 Chrome/Edge；如果窗口没有弹出，先点“打开蒲公英登录窗口”，再看执行结果中的错误提示。</p>
             <div class="huitun-console">
               <div>
                 <div class="grid">
@@ -570,7 +555,7 @@
         <div id="tab-step3" class="tab-pane">
           <div class="workbench-split">
           <section class="card">
-      <h2>步骤3：爆款抓取（关键词）</h2>
+      <h2>平台爆款检索（爆款内容检索）</h2>
       <p class="hint">用于项目关键词爆款检索，抓取后在步骤4写入多维表。</p>
       <div class="grid">
         <div class="row">
@@ -702,7 +687,7 @@
         </div>
         <div id="tab-step5" class="tab-pane">
           <section class="card">
-      <h2>步骤5：合作博主监控（4/8/24h）</h2>
+      <h2>笔记数据监控</h2>
       <p class="hint">按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。</p>
       <div class="grid">
         <div class="row full">
@@ -729,6 +714,7 @@
       <input id="collab_project_name" class="v1-hidden" value="">
       <input id="collab_source_keyword" class="v1-hidden" value="">
       <div class="btns">
+        <button class="ghost" onclick="crawlOnceAndSync()">抓取并同步</button>
         <button class="primary" onclick="startCollabMonitor()">启动合作监控</button>
         <button class="ghost" onclick="queryCollabStatus()">查询监控状态</button>
         <button class="danger" onclick="stopLatestCollabJob()">停止最新监控任务</button>
@@ -808,8 +794,8 @@
 
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
-      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "creator_selection_table_name",
-      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id",
+      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "collab_comments_table_name", "creator_selection_table_name",
+      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
       "sample_creator_ids", "notes_per_creator",
@@ -823,7 +809,7 @@
     const projectBoundFields = [
       "project_name", "template_base_token", "sync_base_token",
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id",
-      "sync_comments_table_id", "collab_table_id", "keywords", "xhs_sort_by",
+      "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords", "xhs_sort_by",
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
       "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator",
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
@@ -842,12 +828,14 @@
       note_recreation_table_name: "笔记二创表",
       comments_table_name: "笔记评论表",
       collaboration_monitor_table_name: "合作笔记监控表",
+      collab_comments_table_name: "合作笔记评论表",
       creator_selection_table_name: "达人智能圈选表",
       account_filter_table_id: "",
       sync_notes_table_id: "",
       note_recreation_table_id: "",
       sync_comments_table_id: "",
       collab_table_id: "",
+      collab_comments_table_id: "",
       login_type: "qrcode",
       save_option: "csv",
       headless: false,
@@ -954,9 +942,19 @@
           </div>`;
         return;
       }
+      function envCheckAction(item) {
+        const name = String(item.name || "");
+        if (item.ok) return "无需处理";
+        if (name.includes("Python 依赖")) return "处理办法：关闭工作台后重新运行 start_ops 启动脚本，等待依赖安装完成";
+        if (name.includes("Playwright")) return "处理办法：重新运行 start_ops；仍失败时执行 python -m playwright install chromium";
+        if (name.includes("CDP") || name.includes("Chrome")) return "处理办法：安装 Chrome/Edge，或在 config/base_config.py 设置 CUSTOM_BROWSER_PATH";
+        if (name.includes("飞书")) return "处理办法：安装 lark-cli，并执行 lark-cli auth login 完成客户飞书账号授权";
+        if (name.includes("目录")) return "处理办法：确认当前用户有读写权限，再重新打开工作台";
+        return "处理办法：把这一行错误复制给 AI，说明是在客户 Mac 交付环境检测中出现";
+      }
       box.innerHTML = checks.map((item) => {
         const state = item.ok ? "通过" : (item.required ? "需处理" : "提示");
-        const message = [state, item.message, item.detail ? `(${displayLocalPath(item.detail)})` : ""]
+        const message = [state, item.message, envCheckAction(item), item.detail ? `(${displayLocalPath(item.detail)})` : ""]
           .filter(Boolean)
           .join(" - ");
         return `
@@ -1346,10 +1344,10 @@
 
       if (!baseToken) {
         view.innerHTML = `
-          <div class="meta-row"><span class="meta-key">状态</span><span class="meta-val">请先初始化项目或切换到已有项目</span></div>
+          <div class="meta-row"><span class="meta-key">状态</span><span class="meta-val">请先新建项目或切换到已有项目</span></div>
           <div class="meta-row"><span class="meta-key">当前项目</span><span class="meta-val">${escapeHtml(payload.project_name || "未填写")}</span></div>
         `;
-        syncTargetHint.textContent = "当前写入目标：未解析（请先初始化项目）。";
+        syncTargetHint.textContent = "当前写入目标：未解析（请先新建项目）。";
         return;
       }
 
@@ -1375,6 +1373,7 @@
       const recreationMeta = findTableMeta(tables, payload.note_recreation_table_id);
       const commentsMeta = findTableMeta(tables, payload.sync_comments_table_id);
       const collabMeta = findTableMeta(tables, payload.collab_table_id);
+      const collabCommentsMeta = findTableMeta(tables, payload.collab_comments_table_id);
       let pgyTableId = payload.pgy_table_id || "";
       if (!pgyTableId) {
         const matched = findTableMetaByName(tables, payload.creator_selection_table_name || "达人智能圈选表");
@@ -1394,8 +1393,9 @@
         <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 爆款监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_notes_table_id, notesMeta && notesMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">笔记二创表</span><span class="meta-val">${renderTableValue(baseToken, payload.note_recreation_table_id, recreationMeta && recreationMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤4达人智能圈选 -> 达人智能圈选表</span><span class="meta-val">${renderTableValue(baseToken, pgyTableId, pgyMeta && pgyMeta.name)}</span></div>
-        <div class="meta-row"><span class="meta-key">comments 同步目标（可选）</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
-        <div class="meta-row"><span class="meta-key">合作监控目标</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">爆款评论表</span><span class="meta-val">${renderTableValue(baseToken, payload.sync_comments_table_id, commentsMeta && commentsMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤5合作笔记 -> 合作监控表</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_table_id, collabMeta && collabMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤5合作评论 -> 合作评论表</span><span class="meta-val">${renderTableValue(baseToken, payload.collab_comments_table_id, collabCommentsMeta && collabCommentsMeta.name)}</span></div>
       `;
 
       if (tableError) {
@@ -1404,9 +1404,12 @@
 
       const accountLabel = accountMeta && accountMeta.name ? `${accountMeta.name} (${accountTableId})` : (accountTableId || "未配置");
       const noteLabel = notesMeta && notesMeta.name ? `${notesMeta.name} (${payload.sync_notes_table_id})` : (payload.sync_notes_table_id || "未配置");
+      const recreationLabel = recreationMeta && recreationMeta.name ? `${recreationMeta.name} (${payload.note_recreation_table_id})` : (payload.note_recreation_table_id || "未配置");
       const commentLabel = commentsMeta && commentsMeta.name ? `${commentsMeta.name} (${payload.sync_comments_table_id})` : (payload.sync_comments_table_id || "未配置");
+      const collabLabel = collabMeta && collabMeta.name ? `${collabMeta.name} (${payload.collab_table_id})` : (payload.collab_table_id || "未配置");
+      const collabCommentLabel = collabCommentsMeta && collabCommentsMeta.name ? `${collabCommentsMeta.name} (${payload.collab_comments_table_id})` : (payload.collab_comments_table_id || "未配置");
       const pgyLabel = pgyMeta && pgyMeta.name ? `${pgyMeta.name} (${pgyTableId})` : (pgyTableId || "未配置");
-      syncTargetHint.textContent = `当前写入目标：步骤2样本账号 -> ${accountLabel}；步骤3爆款结果 -> ${noteLabel}；步骤4达人圈选 -> ${pgyLabel}；comments -> ${commentLabel}`;
+      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；笔记二创 -> ${recreationLabel}；爆款评论 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；步骤5合作笔记 -> ${collabLabel}；步骤5合作评论 -> ${collabCommentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -1419,6 +1422,7 @@
         note_recreation_table_id: payload.note_recreation_table_id,
         sync_comments_table_id: payload.sync_comments_table_id,
         collab_table_id: payload.collab_table_id,
+        collab_comments_table_id: payload.collab_comments_table_id,
         pgy_table_id: payload.pgy_table_id,
         keywords: payload.keywords,
         xhs_sort_by: payload.xhs_sort_by,
@@ -1455,7 +1459,15 @@
       if (!profile) return payload;
       const resolved = { ...payload };
       projectBoundFields.forEach((k) => {
-        if (k in profile) resolved[k] = profile[k] ?? "";
+        if (k in profile) {
+          const rawValue = payload[k];
+          const profileValue = profile[k] ?? "";
+          if (rawValue !== undefined && rawValue !== null && rawValue !== "") {
+            resolved[k] = rawValue;
+          } else {
+            resolved[k] = profileValue;
+          }
+        }
       });
       resolved.current_project_key = currentProjectKey;
       resolved.project_profiles = projectProfiles;
@@ -1532,6 +1544,7 @@
         note_recreation_table_id: document.getElementById("note_recreation_table_id").value.trim(),
         sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
         collab_table_id: document.getElementById("collab_table_id").value.trim(),
+        collab_comments_table_id: document.getElementById("collab_comments_table_id").value.trim(),
         login_type: document.getElementById("login_type").value,
         save_option: document.getElementById("save_option").value,
         headless: document.getElementById("headless").value === "true",
@@ -1621,14 +1634,14 @@
       }
       fillForm(data.config || payload);
       document.getElementById("project_slot_name").value = "";
-      log("工作台配置已清空，请填写客户项目名和客户母版 Base 后开始初始化");
+      log("工作台配置已清空，请填写客户项目名和客户 Base 后新建项目");
     }
 
     async function saveCurrentProjectProfile() {
       const payload = getFormData();
       const key = document.getElementById("project_slot_name").value.trim() || payload.project_name.trim();
       if (!key) {
-        log("请先填写项目槽位名或项目名");
+        log("请先填写项目检索栏或项目名");
         return;
       }
       projectProfiles[key] = getProjectProfileSnapshot(payload);
@@ -1636,7 +1649,7 @@
       refreshProjectSelector();
       await saveConfig();
       await refreshProjectBindings();
-      log(`项目配置已保存到槽位：${key}`);
+      log(`项目配置已保存：${key}`);
     }
 
     async function applySelectedProject() {
@@ -1666,7 +1679,7 @@
       refreshProjectSelector();
       await saveConfig();
       await refreshProjectBindings();
-      log(`已删除项目槽位：${key}`);
+        log(`已删除项目配置：${key}`);
     }
 
     async function bootstrapProject() {
@@ -1676,7 +1689,7 @@
         return;
       }
       if (!payload.template_base_token) {
-        log("请先填写【母版 Base 链接 / Token】");
+        log("请先填写【Base 链接 / Token】");
         return;
       }
       const btn = document.getElementById("btn_bootstrap_project");
@@ -1695,6 +1708,7 @@
           note_recreation_table_name: payload.note_recreation_table_name,
           comments_table_name: payload.comments_table_name,
           collaboration_monitor_table_name: payload.collaboration_monitor_table_name,
+          collab_comments_table_name: payload.collab_comments_table_name || "合作笔记评论表",
           creator_selection_table_name: payload.creator_selection_table_name || "达人智能圈选表"
         };
         const res = await fetch("/api/crawler/bootstrap-project", {
@@ -1704,7 +1718,7 @@
         });
         const data = await res.json();
         if (!res.ok || data.status !== "ok") {
-          log("项目初始化失败: " + JSON.stringify(data));
+          log("项目新建失败: " + JSON.stringify(data));
           return;
         }
         document.getElementById("scenario_base_token").value = data.base_token || "";
@@ -1717,8 +1731,9 @@
           if (tableName.includes("账号筛选")) document.getElementById("account_filter_table_id").value = tableId;
           if (tableName.includes("爆款")) document.getElementById("sync_notes_table_id").value = tableId;
           if (tableName.includes("二创")) document.getElementById("note_recreation_table_id").value = tableId;
-          if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
-          if (tableName.includes("合作")) document.getElementById("collab_table_id").value = tableId;
+          if (tableName.includes("合作") && tableName.includes("评论")) document.getElementById("collab_comments_table_id").value = tableId;
+          else if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
+          if (tableName.includes("合作") && !tableName.includes("评论")) document.getElementById("collab_table_id").value = tableId;
           if (tableName.includes("达人智能圈选")) document.getElementById("pgy_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
@@ -1729,11 +1744,11 @@
         refreshProjectSelector();
         await saveConfig();
         await refreshProjectBindings();
-        log("项目初始化成功，已从母版复制并自动回填关键ID");
+        log("项目新建成功，已自动回填关键 ID");
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = "一键初始化项目（复制母版）";
+          btn.textContent = "一键新建项目";
         }
       }
     }
@@ -1916,7 +1931,7 @@
         return;
       }
       if (syncAfterRun && (!baseToken || !tableId)) {
-        log("自动同步需要先在项目管理中初始化/配置达人智能圈选表");
+        log("自动同步需要先在项目大盘中新建项目/配置达人智能圈选表");
         return;
       }
       await saveConfig();
@@ -1957,7 +1972,7 @@
         return;
       }
       if (syncAfterRun && (!baseToken || !tableId)) {
-        log("自动同步需要先在项目管理中初始化/配置达人智能圈选表");
+        log("自动同步需要先在项目大盘中新建项目/配置达人智能圈选表");
         return;
       }
       await saveConfig();
@@ -2005,7 +2020,7 @@
       const nickname = document.getElementById("pgy_nickname").value.trim();
       const redId = document.getElementById("pgy_red_id").value.trim();
       if (!baseToken || !tableId) {
-        log("请先在项目管理中初始化/配置达人智能圈选表");
+        log("请先在项目大盘中新建项目/配置达人智能圈选表");
         return;
       }
       if ((!latestPgyOutput || !latestPgyOutput.summary) && !nickname && !redId) {
@@ -2037,18 +2052,22 @@
     }
 
     function autoSyncLabel(scene) {
-      return scene === "sample" ? "步骤2样本账号" : "步骤3爆款结果";
+      if (scene === "sample") return "步骤2样本账号";
+      if (scene === "comments") return "爆款评论";
+      if (scene === "recreation") return "笔记二创";
+      return "步骤3爆款结果";
     }
 
     function waitCrawlerIdleThenAutoSync(scene) {
       clearAutoSyncTimer(scene);
       const payload = resolveProjectPayload(getFormData());
       const isComments = scene === "comments";
+      const isRecreation = scene === "recreation";
       const tableId = scene === "sample"
         ? payload.account_filter_table_id
-        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+        : (isComments ? payload.sync_comments_table_id : (isRecreation ? payload.note_recreation_table_id : payload.sync_notes_table_id));
       if (!tableId) {
-        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
+        const stepLabel = autoSyncLabel(scene);
         log(`${stepLabel}的同步目标表ID未配置，跳过自动同步，请先完成项目初始化`);
         return;
       }
@@ -2071,7 +2090,7 @@
           }
           if (Date.now() - startedAt > AUTO_SYNC_MAX_WAIT_MS) {
             clearAutoSyncTimer(scene);
-            log(`${autoSyncLabel(scene)}自动同步等待超时，请检查终端运行日志`);
+            log(`${autoSyncLabel(scene)}自动同步等待超时，请检查交付环境与运行日志`);
           }
         } catch (e) {
           clearAutoSyncTimer(scene);
@@ -2119,6 +2138,8 @@
         startProgressMonitor();
         startNotesAutoRefresh();
         waitCrawlerIdleThenAutoSync("viral");
+        waitCrawlerIdleThenAutoSync("recreation");
+        waitCrawlerIdleThenAutoSync("comments");
       }
     }
 
@@ -2126,18 +2147,19 @@
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
       const isComments = scene === "comments";
+      const isRecreation = scene === "recreation";
       const dataType = isComments ? "comments" : "notes";
       const tableId = scene === "sample"
         ? payload.account_filter_table_id
-        : (isComments ? payload.sync_comments_table_id : payload.sync_notes_table_id);
+        : (isComments ? payload.sync_comments_table_id : (isRecreation ? payload.note_recreation_table_id : payload.sync_notes_table_id));
       const crawlerTypeHint = scene === "sample" ? "creator" : "search";
       const sourceKeyword = scene === "sample" ? "" : payload.keywords;
       const sceneLabel = scene === "sample"
         ? "步骤2样本账号"
-        : (scene === "viral" ? "步骤3爆款结果" : "comments");
+        : (scene === "viral" ? "步骤3爆款结果" : (isComments ? "爆款评论" : (isRecreation ? "笔记二创" : "步骤3爆款结果")));
       if (!tableId) {
-        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "comments" : "步骤3");
-        const name = scene === "sample" ? "账号筛选表" : (isComments ? "comments 表" : "爆款监控表");
+        const stepLabel = scene === "sample" ? "步骤2" : (isComments ? "评论" : (isRecreation ? "二创" : "步骤3"));
+        const name = scene === "sample" ? "账号筛选表" : (isComments ? "评论表" : (isRecreation ? "笔记二创表" : "爆款监控表"));
         log(`${stepLabel}的同步目标表ID未配置（${name}），请先完成项目初始化`);
         return;
       }
@@ -2171,6 +2193,47 @@
     async function syncSampleToAccountFilter() { await syncToBaseByScene("sample"); }
     async function syncViralToMonitor() { await syncToBaseByScene("viral"); }
     async function syncCommentsToBase() { await syncToBaseByScene("comments"); }
+
+    async function crawlOnceAndSync() {
+      if (!ensureReady()) return;
+      const payload = resolveProjectPayload(getFormData());
+      if (!payload.collab_table_id) {
+        log("请先完成步骤1，回填合作监控表ID");
+        return;
+      }
+      if (!payload.collab_creator_ids) {
+        log("请先填写合作博主账号名单");
+        return;
+      }
+      await saveConfig();
+      const body = {
+        base_token: payload.sync_base_token,
+        table_id: payload.collab_table_id,
+        interval_hours: payload.collab_interval_hours,
+        project_name: payload.project_name,
+        source_keyword: payload.collab_source_keyword || payload.keywords,
+        creator_ids: payload.collab_creator_ids,
+        notes_per_creator: payload.collab_notes_per_creator,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        login_type: payload.login_type,
+        save_option: payload.save_option,
+        enable_comments: payload.enable_comments,
+        enable_sub_comments: payload.enable_sub_comments,
+        enable_media: payload.enable_media,
+        cookies: payload.cookies,
+        headless: payload.headless,
+        sync_limit: payload.collab_sync_limit,
+        comments_table_id: payload.collab_comments_table_id
+      };
+      log("开始抓取并同步（单次）...");
+      const res = await fetch("/api/crawler/collaboration-monitor/crawl-once", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      log("抓取并同步结果: " + JSON.stringify(data));
+    }
 
     async function startCollabMonitor() {
       if (!ensureReady()) return;
@@ -2279,7 +2342,7 @@
       await refreshProgressMonitor();
     }
 
-    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "keywords"]
+    ["project_selector", "project_name", "sync_base_token", "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords"]
       .forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;

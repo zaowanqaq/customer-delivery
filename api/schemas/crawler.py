@@ -112,6 +112,7 @@ class ScenarioTableSetupRequest(BaseModel):
     note_recreation_table_name: str = "笔记二创表"
     comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    collab_comments_table_name: str = "合作笔记评论表"
     creator_selection_table_name: str = "达人智能圈选表"
 
 
@@ -125,6 +126,7 @@ class ScenarioBootstrapRequest(BaseModel):
     note_recreation_table_name: str = "笔记二创表"
     comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    collab_comments_table_name: str = "合作笔记评论表"
     creator_selection_table_name: str = "达人智能圈选表"
     folder_token: str = ""
     time_zone: str = "Asia/Shanghai"
@@ -147,8 +149,9 @@ class CollaborationMonitorStartRequest(BaseModel):
     enable_media: bool = True
     cookies: str = ""
     headless: bool = False
-    sync_limit: int = 20
+    sync_limit: int = 0
     file_path: str = ""
+    comments_table_id: str = ""
 
 
 class CollaborationMonitorStopRequest(BaseModel):

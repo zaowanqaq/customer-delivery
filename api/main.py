@@ -76,6 +76,7 @@ OPS_CONFIG_DEFAULT = {
     "note_recreation_table_name": "笔记二创表",
     "comments_table_name": "笔记评论表",
     "collaboration_monitor_table_name": "合作笔记监控表",
+    "collab_comments_table_name": "合作笔记评论表",
     "creator_selection_table_name": "达人智能圈选表",
     "collab_project_name": "",
     "collab_source_keyword": "",
@@ -83,6 +84,7 @@ OPS_CONFIG_DEFAULT = {
     "collab_notes_per_creator": 20,
     "note_recreation_table_id": "",
     "collab_table_id": "",
+    "collab_comments_table_id": "",
     "collab_interval_hours": 4,
     "collab_sync_limit": 20,
     "pgy_nickname": "",
@@ -103,6 +105,7 @@ PROJECT_BOUND_FIELDS = {
     "note_recreation_table_id",
     "sync_comments_table_id",
     "collab_table_id",
+    "collab_comments_table_id",
     "keywords",
     "xhs_sort_by",
     "xhs_note_type",
@@ -169,6 +172,7 @@ class OpsConfigPayload(BaseModel):
     note_recreation_table_name: str = "笔记二创表"
     comments_table_name: str = "笔记评论表"
     collaboration_monitor_table_name: str = "合作笔记监控表"
+    collab_comments_table_name: str = "合作笔记评论表"
     creator_selection_table_name: str = "达人智能圈选表"
     collab_project_name: str = ""
     collab_source_keyword: str = ""
@@ -176,6 +180,7 @@ class OpsConfigPayload(BaseModel):
     collab_notes_per_creator: int = 20
     note_recreation_table_id: str = ""
     collab_table_id: str = ""
+    collab_comments_table_id: str = ""
     collab_interval_hours: int = 4
     collab_sync_limit: int = 20
     pgy_nickname: str = ""
