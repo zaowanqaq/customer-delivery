@@ -58,7 +58,20 @@ def test_existing_project_link_join_and_multi_keyword_copy_are_present():
     assert 'id="existing_project_link"' in html
     assert "joinExistingProject()" in html
     assert "function extractBaseToken" in html
+    assert "fetchBaseInfo" in html
+    assert "/api/crawler/base-info" in html
     assert "function bindProjectTablesFromList" in html
     assert "已加入已有项目" in html
     assert "多个关键词用英文逗号分隔" in html
     assert "搜索关键词（单个）" not in html
+
+
+def test_cookie_login_is_the_only_visible_login_mode():
+    html = _ops_config_text()
+
+    assert '<option value="cookie">Cookie 登录</option>' in html
+    assert 'value="qrcode"' not in html
+    assert "扫码登录" not in html
+    assert "loadCookiesFromBrowser()" in html
+    assert "/api/crawler/browser-cookies" in html
+    assert "从已登录浏览器读取 Cookie" in html

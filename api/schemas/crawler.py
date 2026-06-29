@@ -38,7 +38,7 @@ class SaveDataOptionEnum(str, Enum):
 class CrawlerStartRequest(BaseModel):
     """Crawler start request"""
     platform: PlatformEnum
-    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     crawler_type: CrawlerTypeEnum = CrawlerTypeEnum.SEARCH
     keywords: str = ""  # Keywords for search mode
     specified_ids: str = ""  # Post/video ID list for detail mode, comma-separated
@@ -66,7 +66,7 @@ class RuleTableStartRequest(BaseModel):
     table_id: str
     rule_name: str = ""  # Optional exact rule name match
     platform: PlatformEnum = PlatformEnum.XHS
-    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     crawler_type: CrawlerTypeEnum = CrawlerTypeEnum.SEARCH
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.CSV
     start_page: int = 1
@@ -92,7 +92,7 @@ class LocalToBaseSyncRequest(BaseModel):
 class SampleCreatorStartRequest(BaseModel):
     """Start creator-mode crawling for sample accounts."""
     platform: PlatformEnum = PlatformEnum.XHS
-    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     creator_ids: str  # Comma/newline separated creator profile URLs or IDs
     notes_per_creator: int = 20
     max_comments_count_singlenotes: int = 10
@@ -142,7 +142,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     creator_ids: str = ""  # comma/newline separated creator profile URLs or IDs
     notes_per_creator: int = 20
     max_comments_count_singlenotes: int = 10
-    login_type: LoginTypeEnum = LoginTypeEnum.QRCODE
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     enable_comments: bool = True
     enable_sub_comments: bool = False

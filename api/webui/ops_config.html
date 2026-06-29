@@ -439,7 +439,6 @@
         <div class="row">
           <label>登录方式</label>
           <select id="login_type">
-            <option value="qrcode">扫码登录（推荐）</option>
             <option value="cookie">Cookie 登录</option>
           </select>
         </div>
@@ -487,8 +486,11 @@
           <input id="max_comments_count_singlenotes" type="number" min="1" value="10">
         </div>
         <div class="row full">
-          <label>Cookies（仅 cookie 登录时填写）</label>
-          <textarea id="cookies" placeholder="仅 Cookie 登录时填写；扫码登录请留空"></textarea>
+          <label>Cookies</label>
+          <textarea id="cookies" placeholder="可粘贴 Cookie，也可先打开小红书并登录后点击下方按钮自动读取"></textarea>
+          <div class="btns">
+            <button class="ghost" onclick="loadCookiesFromBrowser()">从已登录浏览器读取 Cookie</button>
+          </div>
         </div>
       </div>
       <div class="btns">
@@ -841,7 +843,7 @@
       sync_comments_table_id: "",
       collab_table_id: "",
       collab_comments_table_id: "",
-      login_type: "qrcode",
+      login_type: "cookie",
       save_option: "csv",
       headless: false,
       enable_comments: true,
@@ -1329,6 +1331,17 @@
       return tables;
     }
 
+    async function fetchBaseInfo(baseToken) {
+      const token = (baseToken || "").trim();
+      if (!token) return {};
+      const res = await fetch(`/api/crawler/base-info?base_token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if (!res.ok || data.status !== "ok") {
+        throw new Error(data.detail || JSON.stringify(data));
+      }
+      return data;
+    }
+
     function findTableMeta(tables, tableId) {
       if (!tableId) return null;
       const id = String(tableId).trim();
@@ -1553,7 +1566,8 @@
       fields.forEach((k) => {
         const el = document.getElementById(k);
         if (!el || !(k in config)) return;
-        if (typeof config[k] === "boolean") el.value = String(config[k]);
+        if (k === "login_type") el.value = "cookie";
+        else if (typeof config[k] === "boolean") el.value = String(config[k]);
         else el.value = config[k] ?? "";
       });
       if (currentProjectKey && projectProfiles[currentProjectKey]) {
@@ -1591,7 +1605,7 @@
         sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
         collab_table_id: document.getElementById("collab_table_id").value.trim(),
         collab_comments_table_id: document.getElementById("collab_comments_table_id").value.trim(),
-        login_type: document.getElementById("login_type").value,
+        login_type: document.getElementById("login_type").value || "cookie",
         save_option: document.getElementById("save_option").value,
         headless: document.getElementById("headless").value === "true",
         enable_comments: document.getElementById("enable_comments").value === "true",
@@ -1663,6 +1677,23 @@
       else log("配置保存失败: " + JSON.stringify(data));
     }
 
+    async function loadCookiesFromBrowser() {
+      try {
+        const res = await fetch("/api/crawler/browser-cookies");
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+          log("读取浏览器 Cookie 失败: " + (data.detail || JSON.stringify(data)));
+          return;
+        }
+        document.getElementById("cookies").value = data.cookies || "";
+        document.getElementById("login_type").value = "cookie";
+        await saveConfig();
+        log(`已从浏览器读取并保存 Cookie（${(data.cookie_keys || []).length} 项）`);
+      } catch (e) {
+        log("读取浏览器 Cookie 失败: " + (e.message || e));
+      }
+    }
+
     async function resetWorkbenchConfig() {
       if (!confirm("确定清空当前工作台配置？这会移除已保存项目、Cookie 和表格绑定。")) return;
       projectProfiles = {};
@@ -1709,10 +1740,16 @@
 
       const projectNameInput = document.getElementById("project_name");
       const slotInput = document.getElementById("project_slot_name");
-      const key = (slotInput.value || projectNameInput.value || baseToken).trim();
-      if (!projectNameInput.value.trim()) {
-        projectNameInput.value = key;
+      let baseName = "";
+      try {
+        const baseInfo = await fetchBaseInfo(baseToken);
+        baseName = (baseInfo.name || "").trim();
+      } catch (e) {
+        log("已识别 Base，但多维表格名读取失败: " + (e.message || e));
       }
+      const projectName = baseName || projectNameInput.value.trim() || slotInput.value.trim() || baseToken;
+      const key = (slotInput.value.trim() || projectName).trim();
+      projectNameInput.value = projectName;
 
       setInputValue("template_base_token", baseToken);
       setInputValue("scenario_base_token", baseToken);

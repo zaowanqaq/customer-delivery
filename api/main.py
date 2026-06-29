@@ -40,7 +40,7 @@ ensure_runtime_dirs()
 
 OPS_CONFIG_DEFAULT = {
     "platform": "xhs",
-    "login_type": "qrcode",
+    "login_type": "cookie",
     "crawler_type": "search",
     "keywords": "",
     "start_page": 1,
@@ -136,7 +136,7 @@ REQUIRED_RUNTIME_IMPORTS = {
 
 class OpsConfigPayload(BaseModel):
     platform: str = "xhs"
-    login_type: str = "qrcode"
+    login_type: str = "cookie"
     crawler_type: str = "search"
     keywords: str = ""
     start_page: int = 1
@@ -407,7 +407,6 @@ async def get_config_options():
     """Get all configuration options"""
     return {
         "login_types": [
-            {"value": "qrcode", "label": "QR Code Login"},
             {"value": "cookie", "label": "Cookie Login"},
         ],
         "crawler_types": [
