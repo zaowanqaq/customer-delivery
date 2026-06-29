@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from config.runtime_paths import data_dir, downloads_dir
+from tools.browser_launcher import BrowserLauncher
 from ..schemas import (
     CrawlerStartRequest,
     CrawlerStatusResponse,
@@ -53,6 +54,28 @@ def _pgy_cdp_available() -> bool:
             return response.status == 200
     except Exception:
         return False
+
+
+def _has_cli_option(args: List[str], option: str) -> bool:
+    return option in args or any(arg.startswith(f"{option}=") for arg in args)
+
+
+def _pgy_browser_args(args: List[str]) -> List[str]:
+    """Resolve a concrete browser for Pugongying instead of hard-coding Playwright channel=chrome."""
+    if any(_has_cli_option(args, option) for option in ("--cdp", "--executable-path", "--channel")):
+        return []
+
+    custom_browser = (config.CUSTOM_BROWSER_PATH or "").strip()
+    if custom_browser:
+        custom_path = Path(custom_browser).expanduser()
+        if custom_path.is_file():
+            return ["--executable-path", str(custom_path)]
+
+    for browser_path in BrowserLauncher().detect_browser_paths():
+        if Path(browser_path).is_file():
+            return ["--executable-path", browser_path]
+
+    return ["--channel", ""]
 
 
 async def _run_huitun_automation(args: List[str], timeout_sec: int = 180) -> Dict[str, Any]:
@@ -103,6 +126,8 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
     final_args = list(args)
     if "--cdp" not in final_args and _pgy_cdp_available():
         final_args.extend(["--cdp", PGY_CDP_ENDPOINT])
+    elif "--cdp" not in final_args:
+        final_args.extend(_pgy_browser_args(final_args))
     cmd = [sys.executable, str(script_path), *final_args]
     pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
     try:
@@ -1726,6 +1751,7 @@ async def pgy_login(request: PgyLoginRequest):
             sys.executable,
             str(script_path),
             *args,
+            *_pgy_browser_args(args),
             "--remote-debugging-port",
             str(PGY_CDP_PORT),
             "--detach-hold-open",
