@@ -219,6 +219,21 @@ def _extract_table_id(payload: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_base_name(payload: Dict[str, Any]) -> str:
+    data = payload.get("data", {})
+    candidates: List[Any] = []
+    if isinstance(data, dict):
+        candidates.extend([data.get("name"), data.get("title")])
+        for key in ("app", "base"):
+            nested = data.get(key)
+            if isinstance(nested, dict):
+                candidates.extend([nested.get("name"), nested.get("title")])
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _extract_base_token(value: str) -> str:
     text = (value or "").strip()
     if not text:
@@ -462,6 +477,64 @@ async def _list_base_tables(base_token: str) -> List[Dict[str, str]]:
         if isinstance(t, dict) and t.get("name") and t.get("id"):
             result.append({"name": str(t["name"]), "id": str(t["id"])})
     return result
+
+
+async def _get_base_info(base_token: str) -> Dict[str, Any]:
+    payload = await _run_lark_cli(
+        [
+            _find_lark_cli(),
+            "base", "+base-get",
+            "--as", "user",
+            "--base-token", base_token,
+        ],
+        timeout_sec=30,
+    )
+    return {
+        "base_token": base_token,
+        "name": _extract_base_name(payload),
+        "raw": payload.get("data", {}),
+    }
+
+
+async def _read_xhs_cookies_from_cdp(cdp_base: str) -> Dict[str, Any]:
+    import httpx as _httpx
+    import json as _json
+    import websockets
+    from tools import utils as t_utils
+
+    async with _httpx.AsyncClient() as http:
+        targets_resp = await http.get(f"{cdp_base}/json", timeout=5)
+        targets = targets_resp.json()
+
+    usable_targets = [
+        t for t in targets
+        if isinstance(t, dict) and t.get("webSocketDebuggerUrl")
+    ]
+    xhs_target = next(
+        (t for t in usable_targets if "xiaohongshu.com" in (t.get("url") or "")),
+        usable_targets[0] if usable_targets else None,
+    )
+    if not xhs_target:
+        raise HTTPException(status_code=400, detail="未找到可读取 Cookie 的浏览器页面，请先打开小红书页面")
+
+    ws_url = xhs_target.get("webSocketDebuggerUrl")
+    async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as ws:
+        await ws.send(_json.dumps({
+            "id": 1,
+            "method": "Network.getCookies",
+            "params": {"urls": ["https://www.xiaohongshu.com", "https://edith.xiaohongshu.com"]},
+        }))
+        resp = _json.loads(await ws.recv())
+
+    cdp_cookies = resp.get("result", {}).get("cookies", [])
+    cookie_list = [{"name": c["name"], "value": c["value"]} for c in cdp_cookies if c.get("name")]
+    cookie_str, cookie_dict = t_utils.convert_cookies(cookie_list)
+    return {
+        "cookies": cookie_str,
+        "cookie_dict": cookie_dict,
+        "cookie_keys": list(cookie_dict.keys()),
+        "targets": [str(t.get("url", ""))[:120] for t in targets[:8] if isinstance(t, dict)],
+    }
 
 
 async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
@@ -1636,6 +1709,29 @@ async def preflight_check(keyword: str = "测试"):
         return {"pass": False, "error": f"Preflight exception: {type(e).__name__}: {e}", "detail": {"traceback": traceback.format_exc()[-1000:]}}
 
 
+@router.get("/browser-cookies")
+async def browser_cookies():
+    cdp_port = getattr(config, "CDP_DEBUG_PORT", 9222)
+    cdp_base = f"http://127.0.0.1:{cdp_port}"
+    try:
+        data = await _read_xhs_cookies_from_cdp(cdp_base)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"读取浏览器 Cookie 失败: {exc}") from exc
+    if not data["cookie_dict"].get("web_session"):
+        raise HTTPException(
+            status_code=400,
+            detail="浏览器里没有有效的小红书登录态，请先在浏览器打开小红书并登录",
+        )
+    return {
+        "status": "ok",
+        "cookies": data["cookies"],
+        "cookie_keys": data["cookie_keys"],
+        "targets": data["targets"],
+    }
+
+
 @router.post("/start")
 async def start_crawler(request: CrawlerStartRequest):
     success = await crawler_manager.start(request)
@@ -1852,11 +1948,20 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
 
 @router.get("/base-tables")
 async def get_base_tables(base_token: str):
-    token = (base_token or "").strip()
+    token = _extract_base_token(base_token)
     if not token:
         raise HTTPException(status_code=400, detail="base_token 不能为空")
     tables = await _list_base_tables(token)
     return {"status": "ok", "base_token": token, "tables": tables}
+
+
+@router.get("/base-info")
+async def get_base_info(base_token: str):
+    token = _extract_base_token(base_token)
+    if not token:
+        raise HTTPException(status_code=400, detail="base_token 不能为空")
+    info = await _get_base_info(token)
+    return {"status": "ok", **info}
 
 
 @router.post("/bootstrap-project")
