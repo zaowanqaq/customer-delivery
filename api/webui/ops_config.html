@@ -76,12 +76,14 @@
     .cap-item { padding: 8px 12px; border-radius: 999px; background: #f4ece4; border: 1px solid #ddcfc2; color: #40372f; font-size: 12px; font-weight: 700; }
     .workflow-mini { display: grid; gap: 14px; }
     .workflow-step { display: grid; grid-template-columns: 38px 1fr; gap: 12px; align-items: start; padding: 12px; border: 1px solid #eadfd4; border-radius: 8px; background: #fffaf5; }
+    .workflow-step.no-index { grid-template-columns: 1fr; }
     .workflow-step b { width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center; color: #fff; background: var(--navy); font-size: 13px; }
     .workflow-step:nth-child(2) b { background: var(--teal); }
     .workflow-step:nth-child(3) b { background: var(--gold); }
     .workflow-step strong { display: block; font-size: 14px; color: var(--ink); }
     .workflow-step span { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
     .showcase-band { display: grid; grid-template-columns: 1.05fr .95fr; gap: 20px; margin-bottom: 20px; }
+    .showcase-band.single { grid-template-columns: 1fr; }
     .showcase-panel { background: #261f1a; color: #f9efe5; border-radius: 8px; padding: 24px; min-height: 226px; position: relative; overflow: hidden; }
     .showcase-panel::after { content: ""; position: absolute; inset: auto -32px -48px auto; width: 180px; height: 180px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); }
     .showcase-panel p { margin: 0; color: rgba(249,239,229,.72); font-size: 13px; line-height: 1.7; }
@@ -264,7 +266,7 @@
       <div class="nav-item" data-step="06" data-tab="tab-config">笔记舆情监控</div>
       <!-- 客户交付版默认自动同步，保留手动同步中心供内部排障使用但不在 UI 中展示。 -->
       <div class="nav-item v1-hidden" data-step="07" data-tab="tab-step4" data-internal-manual-sync="true">数据同步中心</div>
-      <div class="nav-item" data-step="08" data-tab="tab-monitor">交付环境与运行日志</div>
+      <div class="nav-item" data-step="07" data-tab="tab-monitor">交付环境与运行日志</div>
     </div>
   </div>
 
@@ -284,7 +286,7 @@
             <div class="overview-main">
               <div>
                 <p class="overview-kicker">ALIAFANT CONTENT OPERATIONS</p>
-                <h2>把选题、选号、抓取、同步、监控连成一条可讲清楚的项目链路</h2>
+                <h2>小红书营销项目一体化平台</h2>
                 <p class="overview-copy">这是一套围绕项目执行打造的营销工作台，用于串联策略判断、内容检索、达人筛选、数据同步与持续监控，承接艾莉芬特在小红书整合营销、AI 内容营销、流量助推、KOC 与达人投放上的组合能力。</p>
                 <div class="cap-list">
                   <span class="cap-item">小红书整合营销</span>
@@ -315,31 +317,16 @@
             </div>
             <div class="overview-side">
               <div class="workflow-mini">
-                <div class="workflow-step">
-                  <b>01</b>
+                <div class="workflow-step no-index">
                   <div>
                     <strong>选号罗盘</strong>
                     <span>先确定项目、账号与筛选标准，再进入执行。</span>
                   </div>
                 </div>
-                <div class="workflow-step">
-                  <b>02</b>
-                  <div>
-                    <strong>内容 MAP</strong>
-                    <span>围绕需求、流量、决策、心智和情绪做内容检索。</span>
-                  </div>
-                </div>
-                <div class="workflow-step">
-                  <b>03</b>
-                  <div>
-                    <strong>执行闭环</strong>
-                    <span>同步飞书表，再做合作笔记和过程监控。</span>
-                  </div>
-                </div>
               </div>
             </div>
           </section>
-          <section class="showcase-band">
+          <section class="showcase-band single">
             <div class="showcase-panel">
               <p>ALIAFANT PROJECT METHOD</p>
               <h3>从策略识别到项目落地，把内容营销能力沉淀成可执行、可追踪、可复盘的工作流。</h3>
@@ -357,10 +344,6 @@
                   <span>同步、追踪、复盘</span>
                 </div>
               </div>
-            </div>
-            <div class="quote-panel">
-              <blockquote>不仅是流量的追逐者，更是品牌的造浪者。</blockquote>
-              <small>以内容洞察、执行协同与过程监控支撑品牌项目持续推进。</small>
             </div>
           </section>
           <div class="project-grid">
