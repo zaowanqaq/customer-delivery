@@ -349,7 +349,7 @@
           <div class="project-grid">
           <section class="card">
       <h2>工作台</h2>
-      <p class="hint">工作台汇总，用于保存项目配置，新旧项目不重合，独立项目独自运营。</p>
+      <p class="hint">工作台用于保存、切换或加入已有项目。不同员工粘贴同一个 Base 链接后，会协同写入同一套项目表。</p>
       <div class="grid">
         <div class="row">
           <label>已保存项目</label>
@@ -359,9 +359,14 @@
           <label>项目检索栏（用于下次快速切换）</label>
           <input id="project_slot_name" placeholder="例如：新品上市项目">
         </div>
+        <div class="row">
+          <label>加入已有项目链接</label>
+          <input id="existing_project_link" placeholder="粘贴同事共享的 Base 链接">
+        </div>
       </div>
       <div class="btns">
         <button class="ghost" onclick="applySelectedProject()">切换到所选项目</button>
+        <button class="ghost" onclick="joinExistingProject()">加入已有项目</button>
         <button class="ghost" onclick="saveCurrentProjectProfile()">保存当前为项目配置</button>
         <button class="danger" onclick="deleteSelectedProject()">删除所选项目配置</button>
         <button class="ghost" onclick="resetWorkbenchConfig()">清空工作台配置</button>
@@ -556,11 +561,11 @@
           <div class="workbench-split">
           <section class="card">
       <h2>平台爆款检索（爆款内容检索）</h2>
-      <p class="hint">用于项目关键词爆款检索，抓取后在步骤4写入多维表。</p>
+      <p class="hint">用于项目关键词爆款检索，多个关键词会依次抓取，抓取后在步骤4写入多维表。</p>
       <div class="grid">
         <div class="row">
-          <label>搜索关键词（单个）</label>
-          <input id="keywords" placeholder="输入本项目要检索的关键词">
+          <label>搜索关键词</label>
+          <input id="keywords" placeholder="多个关键词用英文逗号分隔，例如：露营帐篷,户外桌椅">
         </div>
         <div class="row">
           <label>最大笔记数</label>
@@ -1286,6 +1291,25 @@
       return `https://my.feishu.cn/base/${encodeURIComponent(baseToken)}`;
     }
 
+    function extractBaseToken(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      try {
+        const url = new URL(text);
+        const parts = url.pathname.split("/").filter(Boolean);
+        const baseIndex = parts.indexOf("base");
+        if (baseIndex >= 0 && parts[baseIndex + 1]) {
+          return decodeURIComponent(parts[baseIndex + 1]);
+        }
+        const appToken = parts.find((part) => /^app[a-zA-Z0-9]+$/.test(part));
+        if (appToken) return decodeURIComponent(appToken);
+      } catch (e) {
+        const matched = text.match(/\/base\/([^/?#]+)/);
+        if (matched && matched[1]) return decodeURIComponent(matched[1]);
+      }
+      return text.split(/[?#]/)[0].trim();
+    }
+
     function tableUrl(baseToken, tableId) {
       if (!baseToken || !tableId) return "";
       return `${baseUrl(baseToken)}?table=${encodeURIComponent(tableId)}`;
@@ -1315,6 +1339,28 @@
       const name = String(tableName || "").trim();
       if (!name) return null;
       return (tables || []).find((t) => String(t.name || "").trim() === name) || null;
+    }
+
+    function setInputValue(id, value) {
+      const el = document.getElementById(id);
+      if (el) el.value = value || "";
+    }
+
+    function bindProjectTablesFromList(tables) {
+      const mappings = [
+        ["account_filter_table_name", "account_filter_table_id"],
+        ["viral_monitor_table_name", "sync_notes_table_id"],
+        ["note_recreation_table_name", "note_recreation_table_id"],
+        ["comments_table_name", "sync_comments_table_id"],
+        ["collaboration_monitor_table_name", "collab_table_id"],
+        ["collab_comments_table_name", "collab_comments_table_id"],
+        ["creator_selection_table_name", "pgy_table_id"]
+      ];
+      mappings.forEach(([nameId, targetId]) => {
+        const tableName = document.getElementById(nameId)?.value || "";
+        const matched = findTableMetaByName(tables, tableName);
+        if (matched && matched.id) setInputValue(targetId, String(matched.id));
+      });
     }
 
     async function resolveTableName(baseToken, tableId) {
@@ -1650,6 +1696,42 @@
       await saveConfig();
       await refreshProjectBindings();
       log(`项目配置已保存：${key}`);
+    }
+
+    async function joinExistingProject() {
+      const linkInput = document.getElementById("existing_project_link");
+      const rawLink = (linkInput?.value || "").trim();
+      const baseToken = extractBaseToken(rawLink || document.getElementById("template_base_token").value || document.getElementById("sync_base_token").value);
+      if (!baseToken) {
+        log("请先粘贴同事共享的 Base 链接");
+        return;
+      }
+
+      const projectNameInput = document.getElementById("project_name");
+      const slotInput = document.getElementById("project_slot_name");
+      const key = (slotInput.value || projectNameInput.value || baseToken).trim();
+      if (!projectNameInput.value.trim()) {
+        projectNameInput.value = key;
+      }
+
+      setInputValue("template_base_token", baseToken);
+      setInputValue("scenario_base_token", baseToken);
+      setInputValue("sync_base_token", baseToken);
+
+      try {
+        const tables = await fetchBaseTables(baseToken);
+        bindProjectTablesFromList(tables);
+      } catch (e) {
+        log("已识别 Base，但表 ID 自动匹配失败: " + (e.message || e));
+      }
+
+      projectProfiles[key] = getProjectProfileSnapshot(getFormData());
+      currentProjectKey = key;
+      slotInput.value = key;
+      refreshProjectSelector();
+      await saveConfig();
+      await refreshProjectBindings();
+      log(`已加入已有项目：${key}`);
     }
 
     async function applySelectedProject() {
