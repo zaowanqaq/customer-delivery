@@ -75,3 +75,12 @@ def test_cookie_login_is_the_only_visible_login_mode():
     assert "loadCookiesFromBrowser()" in html
     assert "/api/crawler/browser-cookies" in html
     assert "从已登录浏览器读取 Cookie" in html
+
+
+def test_project_overview_uses_single_full_width_panel_and_hot_content_compass():
+    html = _ops_config_text()
+
+    assert "grid-template-columns: 1fr; gap: 20px; margin-bottom: 22px;" in html
+    assert 'class="overview-side"' not in html
+    assert "选号罗盘" not in html
+    assert "<h2>爆款罗盘</h2>" in html
