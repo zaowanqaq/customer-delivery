@@ -84,3 +84,13 @@ def test_project_overview_uses_single_full_width_panel_and_hot_content_compass()
     assert 'class="overview-side"' not in html
     assert "选号罗盘" not in html
     assert "<h2>爆款罗盘</h2>" in html
+
+
+def test_sample_account_file_import_controls_are_present():
+    html = _ops_config_text()
+
+    assert 'id="sample_accounts_file"' in html
+    assert 'accept=".txt,.csv,.xlsx,.xls"' in html
+    assert "importSampleAccountsFile()" in html
+    assert "/api/crawler/import-sample-accounts" in html
+    assert "mergeSampleAccounts" in html
