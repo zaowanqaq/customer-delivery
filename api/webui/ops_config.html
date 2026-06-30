@@ -473,8 +473,10 @@
         </div>
         <div class="row full">
           <label>Cookies</label>
-          <textarea id="cookies" placeholder="可粘贴 Cookie，也可先打开小红书并登录后点击下方按钮自动读取"></textarea>
+          <textarea id="cookies" placeholder="首次使用先点击打开小红书登录浏览器，登录后再读取 Cookie；也可手动粘贴 Cookie"></textarea>
+          <p class="hint">先在弹出的浏览器里登录小红书，再点击读取 Cookie；后续登录态未过期时可直接读取。</p>
           <div class="btns">
+            <button class="ghost" onclick="openXhsLoginBrowser()">打开小红书登录浏览器</button>
             <button class="ghost" onclick="loadCookiesFromBrowser()">从已登录浏览器读取 Cookie</button>
           </div>
         </div>
@@ -1678,6 +1680,21 @@
       const data = await res.json();
       if (data.ok) log("配置保存成功");
       else log("配置保存失败: " + JSON.stringify(data));
+    }
+
+    async function openXhsLoginBrowser() {
+      log("正在打开小红书登录浏览器，请在弹出的浏览器里完成登录...");
+      try {
+        const res = await fetch("/api/crawler/xhs/login-browser", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.status !== "login_window_opened") {
+          log("打开小红书登录浏览器失败: " + (data.detail || JSON.stringify(data)));
+          return;
+        }
+        log(data.message || "小红书登录浏览器已打开，登录后请点击读取 Cookie");
+      } catch (e) {
+        log("打开小红书登录浏览器失败: " + (e.message || e));
+      }
     }
 
     async function loadCookiesFromBrowser() {
