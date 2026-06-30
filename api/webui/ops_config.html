@@ -489,11 +489,12 @@
         <div id="tab-step2" class="tab-pane">
           <section class="card">
       <h2>账号内容监测（样本账号抓取）</h2>
-      <p class="hint">输入客户提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。</p>
+      <p class="hint">提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。</p>
       <div class="grid">
         <div class="row full">
           <label>导入样本账号文件（txt / csv / excel）</label>
           <input id="sample_accounts_file" type="file" accept=".txt,.csv,.xlsx,.xls">
+          <p class="hint">文件格式：txt / csv 每行一个账号主页链接或账号 ID；Excel 每个单元格填写一个账号，表头会自动忽略。</p>
           <div class="btns">
             <button class="ghost" onclick="importSampleAccountsFile()">导入文件到账号列表</button>
           </div>
