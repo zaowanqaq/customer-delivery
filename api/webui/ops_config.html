@@ -345,6 +345,10 @@
           <label>加入已有项目链接</label>
           <input id="existing_project_link" placeholder="粘贴同事共享的 Base 链接">
         </div>
+        <div class="row">
+          <label>已有项目名称</label>
+          <input id="existing_project_name" placeholder="读取不到多维表格名时填写">
+        </div>
       </div>
       <div class="btns">
         <button class="ghost" onclick="applySelectedProject()">切换到所选项目</button>
@@ -1739,18 +1743,19 @@
       const projectNameInput = document.getElementById("project_name");
       const slotInput = document.getElementById("project_slot_name");
       const slotName = slotInput.value.trim();
+      const manualName = (document.getElementById("existing_project_name")?.value || "").trim();
       let baseName = "";
       try {
         const baseInfo = await fetchBaseInfo(baseToken);
         baseName = (baseInfo.name || "").trim();
         if (baseInfo.warning) {
-          log("已识别 Base，但多维表格名读取失败，项目名将使用项目检索栏或 Base Token");
+          log("已识别 Base，但多维表格名读取失败，项目名将使用手动名称、项目检索栏或 Base Token");
         }
       } catch (e) {
-        log("已识别 Base，但多维表格名读取失败，项目名将使用项目检索栏或 Base Token");
+        log("已识别 Base，但多维表格名读取失败，项目名将使用手动名称、项目检索栏或 Base Token");
       }
-      const projectName = baseName || slotName || baseToken;
-      const key = (slotName || projectName).trim();
+      const projectName = baseName || manualName || slotName || baseToken;
+      const key = (manualName || slotName || projectName).trim();
       projectNameInput.value = projectName;
 
       setInputValue("template_base_token", baseToken);
