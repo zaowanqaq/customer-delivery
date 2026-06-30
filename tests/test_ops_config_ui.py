@@ -57,6 +57,9 @@ def test_existing_project_link_join_and_multi_keyword_copy_are_present():
 
     assert 'id="existing_project_link"' in html
     assert 'id="existing_project_name"' in html
+    assert "加入其他项目 - 项目名" in html
+    assert "加入其他项目 - 项目链接" in html
+    assert html.index('id="existing_project_name"') < html.index('id="existing_project_link"')
     assert "joinExistingProject()" in html
     assert "function extractBaseToken" in html
     assert "fetchBaseInfo" in html
@@ -72,7 +75,7 @@ def test_join_existing_project_does_not_fallback_to_stale_project_name():
 
     assert "const slotName = slotInput.value.trim();" in html
     assert "const manualName = (document.getElementById(\"existing_project_name\")?.value || \"\").trim();" in html
-    assert "const projectName = baseName || manualName || slotName || baseToken;" in html
+    assert "const projectName = manualName || baseName || slotName || baseToken;" in html
     assert "baseName || projectNameInput.value.trim()" not in html
 
 
