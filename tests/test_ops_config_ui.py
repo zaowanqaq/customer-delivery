@@ -85,6 +85,10 @@ def test_cookie_login_is_the_only_visible_login_mode():
     assert '<option value="cookie">Cookie 登录</option>' in html
     assert 'value="qrcode"' not in html
     assert "扫码登录" not in html
+    assert "openXhsLoginBrowser()" in html
+    assert "/api/crawler/xhs/login-browser" in html
+    assert "打开小红书登录浏览器" in html
+    assert "先在弹出的浏览器里登录小红书" in html
     assert "loadCookiesFromBrowser()" in html
     assert "/api/crawler/browser-cookies" in html
     assert "从已登录浏览器读取 Cookie" in html

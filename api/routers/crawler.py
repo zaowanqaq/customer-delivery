@@ -17,12 +17,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from config.runtime_paths import data_dir, downloads_dir
+from config.runtime_paths import browser_data_dir, data_dir, downloads_dir
 from tools.browser_launcher import BrowserLauncher
 from ..schemas import (
     CrawlerStartRequest,
@@ -49,12 +49,31 @@ router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
 PGY_CDP_PORT = 9223
 PGY_CDP_ENDPOINT = f"http://127.0.0.1:{PGY_CDP_PORT}"
+XHS_LOGIN_URL = "https://www.xiaohongshu.com/explore"
 
 
 def _pgy_cdp_available() -> bool:
     try:
         with urllib.request.urlopen(f"{PGY_CDP_ENDPOINT}/json/version", timeout=1) as response:
             return response.status == 200
+    except Exception:
+        return False
+
+
+def _xhs_cdp_available(cdp_endpoint: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{cdp_endpoint}/json/version", timeout=1) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def _open_url_in_cdp(cdp_endpoint: str, url: str) -> bool:
+    try:
+        target = f"{cdp_endpoint}/json/new?{quote(url, safe=':/?&=%')}"
+        request = urllib.request.Request(target, method="PUT")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status in (200, 201)
     except Exception:
         return False
 
@@ -1815,6 +1834,61 @@ async def browser_cookies():
         "cookies": data["cookies"],
         "cookie_keys": data["cookie_keys"],
         "targets": data["targets"],
+    }
+
+
+@router.post("/xhs/login-browser")
+async def xhs_login_browser():
+    cdp_port = getattr(config, "CDP_DEBUG_PORT", 9222)
+    cdp_base = f"http://127.0.0.1:{cdp_port}"
+    message = "小红书登录浏览器已打开，请在浏览器内完成登录后再点击读取 Cookie"
+
+    if _xhs_cdp_available(cdp_base):
+        opened_url = _open_url_in_cdp(cdp_base, XHS_LOGIN_URL)
+        return {
+            "status": "login_window_opened",
+            "message": message,
+            "cdp": cdp_base,
+            "url": XHS_LOGIN_URL,
+            "opened_url": opened_url,
+        }
+
+    launcher = BrowserLauncher()
+    browser_paths = launcher.detect_browser_paths()
+    if not browser_paths:
+        raise HTTPException(status_code=500, detail="未找到 Chrome 或 Edge，请先安装浏览器后重试")
+
+    user_data_dir = ""
+    if getattr(config, "SAVE_LOGIN_STATE", True):
+        user_data_dir = str(browser_data_dir() / f"cdp_{config.USER_DATA_DIR % config.PLATFORM}")
+        os.makedirs(user_data_dir, exist_ok=True)
+
+    try:
+        launcher.launch_browser(
+            browser_path=browser_paths[0],
+            debug_port=cdp_port,
+            headless=False,
+            user_data_dir=user_data_dir or None,
+            start_url=XHS_LOGIN_URL,
+        )
+        ready = await asyncio.to_thread(
+            launcher.wait_for_browser_ready,
+            cdp_port,
+            getattr(config, "BROWSER_LAUNCH_TIMEOUT", 120),
+        )
+        if not ready:
+            raise HTTPException(status_code=500, detail=f"小红书登录浏览器启动超时，请确认 {cdp_port} 端口未被占用")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"小红书登录浏览器启动失败: {exc}") from exc
+
+    return {
+        "status": "login_window_opened",
+        "message": message,
+        "cdp": cdp_base,
+        "url": XHS_LOGIN_URL,
+        "opened_url": True,
     }
 
 

@@ -86,3 +86,18 @@ async def test_import_sample_accounts_endpoint_accepts_base64_txt():
     assert result["status"] == "ok"
     assert result["count"] == 2
     assert result["text"] == "abc_123\nxhs-user-99"
+
+
+@pytest.mark.asyncio
+async def test_xhs_login_browser_reuses_cdp_and_opens_login_page(monkeypatch):
+    opened = []
+
+    monkeypatch.setattr(crawler, "_xhs_cdp_available", lambda _endpoint: True)
+    monkeypatch.setattr(crawler, "_open_url_in_cdp", lambda endpoint, url: opened.append((endpoint, url)) or True)
+
+    result = await crawler.xhs_login_browser()
+
+    assert result["status"] == "login_window_opened"
+    assert result["url"] == crawler.XHS_LOGIN_URL
+    assert result["opened_url"] is True
+    assert opened == [("http://127.0.0.1:9222", crawler.XHS_LOGIN_URL)]
