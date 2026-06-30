@@ -102,6 +102,9 @@ def test_project_overview_uses_single_full_width_panel_and_hot_content_compass()
 def test_sample_account_file_import_controls_are_present():
     html = _ops_config_text()
 
+    assert "提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。" in html
+    assert "输入客户提供的样本账号主页链接" not in html
+    assert "文件格式：txt / csv 每行一个账号主页链接或账号 ID；Excel 每个单元格填写一个账号，表头会自动忽略。" in html
     assert 'id="sample_accounts_file"' in html
     assert 'accept=".txt,.csv,.xlsx,.xls"' in html
     assert "importSampleAccountsFile()" in html
