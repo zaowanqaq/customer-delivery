@@ -342,12 +342,12 @@
           <input id="project_slot_name" placeholder="例如：新品上市项目">
         </div>
         <div class="row">
-          <label>加入已有项目链接</label>
-          <input id="existing_project_link" placeholder="粘贴同事共享的 Base 链接">
+          <label>加入其他项目 - 项目名</label>
+          <input id="existing_project_name" placeholder="输入项目名称">
         </div>
         <div class="row">
-          <label>已有项目名称</label>
-          <input id="existing_project_name" placeholder="读取不到多维表格名时填写">
+          <label>加入其他项目 - 项目链接</label>
+          <input id="existing_project_link" placeholder="粘贴同事共享的 Base 链接">
         </div>
       </div>
       <div class="btns">
@@ -1749,13 +1749,13 @@
         const baseInfo = await fetchBaseInfo(baseToken);
         baseName = (baseInfo.name || "").trim();
         if (baseInfo.warning) {
-          log("已识别 Base，但多维表格名读取失败，项目名将使用手动名称、项目检索栏或 Base Token");
+          log("已识别 Base，但多维表格名读取失败，项目名将优先使用手动填写的名称");
         }
       } catch (e) {
-        log("已识别 Base，但多维表格名读取失败，项目名将使用手动名称、项目检索栏或 Base Token");
+        log("已识别 Base，但多维表格名读取失败，项目名将优先使用手动填写的名称");
       }
-      const projectName = baseName || manualName || slotName || baseToken;
-      const key = (manualName || slotName || projectName).trim();
+      const projectName = manualName || baseName || slotName || baseToken;
+      const key = (projectName || slotName || baseToken).trim();
       projectNameInput.value = projectName;
 
       setInputValue("template_base_token", baseToken);
