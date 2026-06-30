@@ -2070,7 +2070,10 @@ async def get_base_info(base_token: str):
     token = _extract_base_token(base_token)
     if not token:
         raise HTTPException(status_code=400, detail="base_token 不能为空")
-    info = await _get_base_info(token)
+    try:
+        info = await _get_base_info(token)
+    except HTTPException as exc:
+        return {"status": "ok", "base_token": token, "name": "", "warning": str(exc.detail)}
     return {"status": "ok", **info}
 
 

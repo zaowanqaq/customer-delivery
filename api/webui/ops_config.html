@@ -775,6 +775,15 @@
 
 
   <script>
+    const API_ORIGIN = window.location.protocol === "file:" ? "http://127.0.0.1:8081" : "";
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (typeof input === "string" && input.startsWith("/api/")) {
+        return nativeFetch(`${API_ORIGIN}${input}`, init);
+      }
+      return nativeFetch(input, init);
+    };
+
     let projectProfiles = {};
     let currentProjectKey = "";
     const baseTableCache = {};
@@ -1729,15 +1738,19 @@
 
       const projectNameInput = document.getElementById("project_name");
       const slotInput = document.getElementById("project_slot_name");
+      const slotName = slotInput.value.trim();
       let baseName = "";
       try {
         const baseInfo = await fetchBaseInfo(baseToken);
         baseName = (baseInfo.name || "").trim();
+        if (baseInfo.warning) {
+          log("已识别 Base，但多维表格名读取失败，项目名将使用项目检索栏或 Base Token");
+        }
       } catch (e) {
-        log("已识别 Base，但多维表格名读取失败: " + (e.message || e));
+        log("已识别 Base，但多维表格名读取失败，项目名将使用项目检索栏或 Base Token");
       }
-      const projectName = baseName || projectNameInput.value.trim() || slotInput.value.trim() || baseToken;
-      const key = (slotInput.value.trim() || projectName).trim();
+      const projectName = baseName || slotName || baseToken;
+      const key = (slotName || projectName).trim();
       projectNameInput.value = projectName;
 
       setInputValue("template_base_token", baseToken);

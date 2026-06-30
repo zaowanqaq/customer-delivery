@@ -66,6 +66,14 @@ def test_existing_project_link_join_and_multi_keyword_copy_are_present():
     assert "搜索关键词（单个）" not in html
 
 
+def test_join_existing_project_does_not_fallback_to_stale_project_name():
+    html = _ops_config_text()
+
+    assert "const slotName = slotInput.value.trim();" in html
+    assert "const projectName = baseName || slotName || baseToken;" in html
+    assert "baseName || projectNameInput.value.trim()" not in html
+
+
 def test_cookie_login_is_the_only_visible_login_mode():
     html = _ops_config_text()
 
@@ -94,3 +102,10 @@ def test_sample_account_file_import_controls_are_present():
     assert "importSampleAccountsFile()" in html
     assert "/api/crawler/import-sample-accounts" in html
     assert "mergeSampleAccounts" in html
+
+
+def test_file_preview_routes_api_requests_to_local_server():
+    html = _ops_config_text()
+
+    assert 'window.location.protocol === "file:" ? "http://127.0.0.1:8081" : ""' in html
+    assert 'input.startsWith("/api/")' in html

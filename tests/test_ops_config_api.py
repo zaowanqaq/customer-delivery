@@ -55,6 +55,18 @@ async def test_base_info_endpoint_reads_base_name(monkeypatch):
     assert "app123" in captured_cmd
 
 
+@pytest.mark.asyncio
+async def test_base_info_endpoint_soft_fails_when_name_lookup_is_unavailable(monkeypatch):
+    async def fake_get_base_info(_token):
+        raise crawler.HTTPException(status_code=404, detail="Not Found")
+
+    monkeypatch.setattr(crawler, "_get_base_info", fake_get_base_info)
+
+    result = await crawler.get_base_info("https://my.feishu.cn/base/app123?table=tbl456")
+
+    assert result == {"status": "ok", "base_token": "app123", "name": "", "warning": "Not Found"}
+
+
 def test_parse_sample_account_txt_file_dedupes_and_ignores_headers():
     content = "账号ID\nabc_123\nhttps://www.xiaohongshu.com/user/profile/abc\nabc_123\n".encode("utf-8")
 
