@@ -43,7 +43,13 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     positions = [html.index(f">{label}<") for label in expected_nav]
 
     assert positions == sorted(positions)
-    assert "小红书营销项目一体化平台" in html
+    assert "<h2>小红书营销一体化平台</h2>" in html
+    assert "<h2>小红书营销项目一体化平台</h2>" not in html
+    assert "围绕项目执行打造的营销工作台，用于串联策略判断、内容检索、达人筛选、数据同步与持续监控，承接艾莉芬特在小红书整合营销、AI 内容营销、流量助推、KOC 与达人投放上的组合能力。" in html
+    assert "这是一套围绕项目执行打造的营销工作台" not in html
+    assert "用于项目关键词爆款检索，多个关键词会依次抓取，抓取后在步骤4写入多维表。" not in html
+    assert "和抓取流程并排查看当前采集结果，支持关键词筛选、标题/正文搜索、瀑布流预览与详情查看。" not in html
+    assert "保存传播表现、粉丝分析" not in html
     assert "工作台用于保存、切换或加入已有项目" in html
     assert "项目检索栏" in html
     assert "一键新建项目" in html
