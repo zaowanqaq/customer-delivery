@@ -22,6 +22,48 @@ def test_lark_json_arg_uses_relative_temp_file_and_cleans_up():
     assert not temp_path.exists()
 
 
+def test_pgy_summary_rows_map_core_read_imp_to_existing_median_fields():
+    summary = {
+        "nickname": "数字生命卡兹克",
+        "red_id": "wzglyay2023",
+        "blogger_detail": {
+            "userId": "62c98736000000001501e075",
+            "name": "数字生命卡兹克",
+            "redId": "wzglyay2023",
+        },
+        "target_metrics": {
+            "data_date": "",
+            "exposure_count": "",
+            "read_count": "",
+            "imp_median": "",
+            "read_median": "",
+        },
+        "propagation_performance": {
+            "core_data": {
+                "sumData": {
+                    "imp": 132139,
+                    "read": 20753,
+                    "dateKey": "2026-05-20",
+                }
+            }
+        },
+    }
+
+    row = crawler._pgy_summary_to_rows(summary, "downloads/pgy/数字生命卡兹克")[0]
+
+    assert row["blogger_homepage_url"] == "https://www.xiaohongshu.com/user/profile/62c98736000000001501e075"
+    assert row["exposure_count"] == 132139
+    assert row["read_count"] == 20753
+    assert row["data_date"] == "2026-05-20"
+
+    values = crawler._pgy_row_to_values(row, ["博主主页", "曝光中位数", "阅读中位数"])
+    assert values == [
+        "https://www.xiaohongshu.com/user/profile/62c98736000000001501e075",
+        132139,
+        20753,
+    ]
+
+
 @pytest.mark.asyncio
 async def test_pgy_run_kol_route_forces_api_only(monkeypatch):
     captured_args = []
@@ -85,6 +127,23 @@ async def test_pgy_login_keep_open_uses_detected_browser_path(monkeypatch, tmp_p
     assert "--executable-path" in captured_cmd
     assert str(browser_path) in captured_cmd
     assert "--channel" not in captured_cmd
+
+
+@pytest.mark.asyncio
+async def test_pgy_login_keep_open_reuses_cdp_and_opens_login_page(monkeypatch):
+    opened = []
+
+    monkeypatch.setattr(crawler, "_pgy_cdp_available", lambda: True)
+    monkeypatch.setattr(crawler, "_open_url_in_cdp", lambda endpoint, url: opened.append((endpoint, url)) or True)
+    monkeypatch.setattr(crawler, "_focus_detected_browser", lambda: True)
+
+    result = await crawler.pgy_login(PgyLoginRequest(keep_open=True, timeout_ms=30000))
+
+    assert result["status"] == "login_window_opened"
+    assert result["url"] == crawler.PGY_LOGIN_URL
+    assert result["opened_url"] is True
+    assert result["browser_focused"] is True
+    assert opened == [(crawler.PGY_CDP_ENDPOINT, crawler.PGY_LOGIN_URL)]
 
 
 @pytest.mark.asyncio

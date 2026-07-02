@@ -49,6 +49,7 @@ router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
 PGY_CDP_PORT = 9223
 PGY_CDP_ENDPOINT = f"http://127.0.0.1:{PGY_CDP_PORT}"
+PGY_LOGIN_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
 XHS_LOGIN_URL = "https://www.xiaohongshu.com/explore"
 
 
@@ -74,6 +75,18 @@ def _open_url_in_cdp(cdp_endpoint: str, url: str) -> bool:
         request = urllib.request.Request(target, method="PUT")
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.status in (200, 201)
+    except Exception:
+        return False
+
+
+def _focus_detected_browser() -> bool:
+    try:
+        launcher = BrowserLauncher()
+        browser_paths = launcher.detect_browser_paths()
+        focus_browser_window = getattr(launcher, "focus_browser_window", None)
+        if not callable(focus_browser_window):
+            return False
+        return bool(focus_browser_window(browser_paths[0] if browser_paths else None))
     except Exception:
         return False
 
@@ -1072,6 +1085,9 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "博主名": ["nickname", "达人昵称", "博主昵称"],
         "小红书号": ["red_id", "小红书号"],
         "小红书ID": ["red_id", "小红书号"],
+        "博主主页": ["blogger_homepage_url", "博主主页"],
+        "达人主页": ["blogger_homepage_url", "博主主页"],
+        "主页链接": ["blogger_homepage_url", "博主主页"],
         "目标达人昵称": ["target_nickname", "目标达人昵称"],
         "目标小红书号": ["target_red_id", "目标小红书号"],
         "地区": ["location", "地区"],
@@ -1085,8 +1101,10 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "博主优势": ["kol_advantage", "博主优势"],
         "数据日期": ["data_date", "数据日期"],
         "发布笔记数": ["note_number", "发布笔记数"],
-        "曝光中位数": ["imp_median", "曝光中位数"],
-        "阅读中位数": ["read_median", "阅读中位数"],
+        "曝光量": ["exposure_count", "imp", "曝光量"],
+        "阅读量": ["read_count", "read", "阅读量"],
+        "曝光中位数": ["imp_median", "exposure_count", "imp", "曝光中位数"],
+        "阅读中位数": ["read_median", "read_count", "read", "阅读中位数"],
         "互动中位数": ["interaction_median", "互动中位数"],
         "中位点赞量": ["like_median", "中位点赞量"],
         "中位收藏量": ["collect_median", "中位收藏量"],
@@ -1121,7 +1139,7 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "更新时间": ["updated_at", "更新时间"],
         "采集时间": ["updated_at", "采集时间"],
     }
-    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "发布笔记数", "曝光中位数", "阅读中位数", "互动中位数", "中位点赞量", "中位收藏量", "中位评论量", "中位分享量", "中位关注量", "近7日活跃天数", "邀约数", "粉丝增量"}
+    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "发布笔记数", "曝光量", "阅读量", "曝光中位数", "阅读中位数", "互动中位数", "中位点赞量", "中位收藏量", "中位评论量", "中位分享量", "中位关注量", "近7日活跃天数", "邀约数", "粉丝增量"}
     values: List[Any] = []
     for field_name in table_fields:
         keys = alias_map.get(field_name, [field_name])
@@ -1252,11 +1270,13 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
     target = summary.get("blogger_detail") or {}
     propagation = summary.get("propagation_performance") or {}
     notes_rate = propagation.get("notes_rate") or {}
+    data_summary = propagation.get("data_summary") or {}
+    core_data = propagation.get("core_data") or {}
+    core_sum = core_data.get("sumData") or {}
     fans = summary.get("fan_analysis") or {}
     fans_summary = fans.get("fans_summary") or {}
     target_metrics = summary.get("target_metrics") or {}
     if not target_metrics:
-        data_summary = propagation.get("data_summary") or {}
         fans_profile = fans.get("fans_profile") or {}
         gender = fans_profile.get("gender") or {}
 
@@ -1281,9 +1301,12 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
             return str(best.get("name") or best.get("group") or "")
 
         target_metrics = {
+            "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{target.get('userId')}" if target.get("userId") else "",
             "kol_advantage": data_summary.get("kolAdvantage") or "",
-            "data_date": data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
+            "data_date": data_summary.get("dateKey") or core_sum.get("dateKey") or fans_profile.get("dateKey") or "",
             "note_number": data_summary.get("noteNumber") or notes_rate.get("noteNumber") or "",
+            "exposure_count": core_sum.get("imp") or data_summary.get("imp") or "",
+            "read_count": core_sum.get("read") or data_summary.get("read") or "",
             "imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or "",
             "read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or "",
             "interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
@@ -1314,6 +1337,16 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
             "top_cities": top_percent(fans_profile.get("cities") or [], limit=5),
             "top_interests": top_percent(fans_profile.get("interests") or [], limit=8),
         }
+    else:
+        fallback_metrics = {
+            "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{target.get('userId')}" if target.get("userId") else "",
+            "data_date": data_summary.get("dateKey") or core_sum.get("dateKey") or "",
+            "exposure_count": core_sum.get("imp") or data_summary.get("imp") or "",
+            "read_count": core_sum.get("read") or data_summary.get("read") or "",
+        }
+        for key, value in fallback_metrics.items():
+            if target_metrics.get(key) in ("", None) and value not in ("", None):
+                target_metrics[key] = value
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_tags = []
     for tag in target.get("featureTags") or target.get("contentTags") or []:
@@ -1328,6 +1361,7 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
         "rank": 0,
         "nickname": summary.get("nickname") or target.get("name") or "",
         "red_id": summary.get("red_id") or target.get("redId") or "",
+        "blogger_homepage_url": target_metrics.get("blogger_homepage_url") or (f"https://www.xiaohongshu.com/user/profile/{target.get('userId')}" if target.get("userId") else ""),
         "target_nickname": summary.get("nickname") or target.get("name") or "",
         "target_red_id": summary.get("red_id") or target.get("redId") or "",
         "location": target.get("location") or "",
@@ -1845,12 +1879,14 @@ async def xhs_login_browser():
 
     if _xhs_cdp_available(cdp_base):
         opened_url = _open_url_in_cdp(cdp_base, XHS_LOGIN_URL)
+        browser_focused = _focus_detected_browser()
         return {
             "status": "login_window_opened",
             "message": message,
             "cdp": cdp_base,
             "url": XHS_LOGIN_URL,
             "opened_url": opened_url,
+            "browser_focused": browser_focused,
         }
 
     launcher = BrowserLauncher()
@@ -1878,6 +1914,7 @@ async def xhs_login_browser():
         )
         if not ready:
             raise HTTPException(status_code=500, detail=f"小红书登录浏览器启动超时，请确认 {cdp_port} 端口未被占用")
+        browser_focused = launcher.focus_browser_window(browser_paths[0])
     except HTTPException:
         raise
     except Exception as exc:
@@ -1889,6 +1926,7 @@ async def xhs_login_browser():
         "cdp": cdp_base,
         "url": XHS_LOGIN_URL,
         "opened_url": True,
+        "browser_focused": browser_focused,
     }
 
 
@@ -2021,10 +2059,15 @@ async def pgy_login(request: PgyLoginRequest):
         project_root = Path(__file__).resolve().parents[2]
         script_path = project_root / "tools" / "pgy_automation.py"
         if _pgy_cdp_available():
+            opened_url = _open_url_in_cdp(PGY_CDP_ENDPOINT, PGY_LOGIN_URL)
+            browser_focused = _focus_detected_browser()
             return {
                 "status": "login_window_opened",
                 "message": "蒲公英登录窗口已打开",
                 "cdp": PGY_CDP_ENDPOINT,
+                "url": PGY_LOGIN_URL,
+                "opened_url": opened_url,
+                "browser_focused": browser_focused,
                 "wait_seconds": wait_seconds,
             }
         cmd = [
@@ -2052,6 +2095,7 @@ async def pgy_login(request: PgyLoginRequest):
             if proc.poll() is not None:
                 err = pgy_log.read_text(encoding="utf-8", errors="replace")[:800] if pgy_log.exists() else ""
                 raise HTTPException(status_code=500, detail=f"蒲公英登录进程启动后立即退出(code={proc.returncode}): {err}")
+            browser_focused = _focus_detected_browser()
         except HTTPException:
             raise
         except Exception as exc:
@@ -2060,6 +2104,9 @@ async def pgy_login(request: PgyLoginRequest):
             "status": "login_window_opened",
             "message": "蒲公英登录窗口已打开，请在浏览器内完成登录；登录状态每 1 秒检测一次",
             "cdp": PGY_CDP_ENDPOINT,
+            "url": PGY_LOGIN_URL,
+            "opened_url": True,
+            "browser_focused": browser_focused,
             "wait_seconds": wait_seconds,
         }
     result = await _run_pgy_automation(args, timeout_sec=wait_seconds + 45)

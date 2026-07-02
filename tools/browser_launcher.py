@@ -195,6 +195,56 @@ class BrowserLauncher:
         utils.logger.error(f"[BrowserLauncher] Browser failed to be ready within {timeout} seconds")
         return False
 
+    def _macos_app_name_from_path(self, browser_path: str) -> Optional[str]:
+        browser = Path(browser_path)
+        for part in [browser, *browser.parents]:
+            if part.suffix == ".app":
+                return part.stem
+        return None
+
+    def focus_browser_window(self, browser_path: Optional[str] = None) -> bool:
+        """
+        Bring a launched browser to the foreground on macOS.
+
+        Opening pages through CDP can create a tab while Chrome/Edge stays hidden
+        or behind the current app. Non-macOS platforms do not need explicit focus.
+        """
+        if self.system != "Darwin":
+            return True
+
+        app_names: List[str] = []
+        if browser_path:
+            app_name = self._macos_app_name_from_path(browser_path)
+            if app_name:
+                app_names.append(app_name)
+
+        if not app_names:
+            for path in self.detect_browser_paths():
+                app_name = self._macos_app_name_from_path(path)
+                if app_name and app_name not in app_names:
+                    app_names.append(app_name)
+
+        for app_name in app_names:
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", f'tell application "{app_name}" to activate'],
+                    capture_output=True,
+                    timeout=3,
+                    check=False,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+                if result.returncode == 0:
+                    utils.logger.info(f"[BrowserLauncher] Focused browser window: {app_name}")
+                    return True
+                utils.logger.warning(
+                    f"[BrowserLauncher] Failed to focus browser {app_name}: {result.stderr.strip()}"
+                )
+            except Exception as e:
+                utils.logger.warning(f"[BrowserLauncher] Failed to focus browser {app_name}: {e}")
+
+        return False
+
     def get_browser_info(self, browser_path: str) -> Tuple[str, str]:
         """
         Get browser info (name and version)

@@ -94,10 +94,12 @@ async def test_xhs_login_browser_reuses_cdp_and_opens_login_page(monkeypatch):
 
     monkeypatch.setattr(crawler, "_xhs_cdp_available", lambda _endpoint: True)
     monkeypatch.setattr(crawler, "_open_url_in_cdp", lambda endpoint, url: opened.append((endpoint, url)) or True)
+    monkeypatch.setattr(crawler, "_focus_detected_browser", lambda: True)
 
     result = await crawler.xhs_login_browser()
 
     assert result["status"] == "login_window_opened"
     assert result["url"] == crawler.XHS_LOGIN_URL
     assert result["opened_url"] is True
+    assert result["browser_focused"] is True
     assert opened == [("http://127.0.0.1:9222", crawler.XHS_LOGIN_URL)]
