@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import signal
 import os
+import fcntl
 import shutil
 import re
 from typing import Optional, List
@@ -28,6 +29,9 @@ class CrawlerManager:
         self._project_root = Path(__file__).parent.parent.parent
         # Log queue - for pushing to WebSocket
         self._log_queue: Optional[asyncio.Queue] = None
+        # Cross-process file lock to prevent duplicate crawler starts
+        self._crawler_lock_path = self._project_root / "runtime_data" / "crawler.lock"
+        self._crawler_lock_fd = None
 
     @property
     def logs(self) -> List[LogEntry]:
@@ -104,6 +108,23 @@ class CrawlerManager:
         """Start crawler process"""
         async with self._lock:
             if self.process and self.process.poll() is None:
+                return False
+
+            # Cross-process lock: prevent two API instances from starting crawler simultaneously
+            self._crawler_lock_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._crawler_lock_fd = open(self._crawler_lock_path, "w")
+                fcntl.flock(self._crawler_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._crawler_lock_fd.write(str(os.getpid()))
+                self._crawler_lock_fd.flush()
+            except (IOError, OSError):
+                entry = self._create_log_entry(
+                    "爬虫启动失败：另一个 API 实例已在运行爬虫，请勿重复启动", "error"
+                )
+                await self._push_log(entry)
+                if self._crawler_lock_fd:
+                    self._crawler_lock_fd.close()
+                    self._crawler_lock_fd = None
                 return False
 
             # Clear old logs
@@ -194,6 +215,13 @@ class CrawlerManager:
 
             self.status = "idle"
             self.current_config = None
+
+            # Release cross-process crawler lock
+            if self._crawler_lock_fd:
+                fcntl.flock(self._crawler_lock_fd, fcntl.LOCK_UN)
+                self._crawler_lock_fd.close()
+                self._crawler_lock_fd = None
+                self._crawler_lock_path.unlink(missing_ok=True)
 
             # Cancel log reading task
             if self._read_task:
@@ -302,6 +330,12 @@ class CrawlerManager:
                     entry = self._create_log_entry(f"Crawler exited with code: {exit_code}", "warning")
                 await self._push_log(entry)
                 self.status = "idle"
+                # Release cross-process crawler lock when crawler finishes naturally
+                if self._crawler_lock_fd:
+                    fcntl.flock(self._crawler_lock_fd, fcntl.LOCK_UN)
+                    self._crawler_lock_fd.close()
+                    self._crawler_lock_fd = None
+                    self._crawler_lock_path.unlink(missing_ok=True)
 
         except asyncio.CancelledError:
             pass

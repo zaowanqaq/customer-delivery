@@ -2056,20 +2056,21 @@ async def pgy_login(request: PgyLoginRequest):
     wait_seconds = max(30, min(1800, int(request.timeout_ms / 1000)))
     args.extend(["--login-wait-seconds", str(wait_seconds)])
     if request.keep_open:
-        project_root = Path(__file__).resolve().parents[2]
-        script_path = project_root / "tools" / "pgy_automation.py"
+        # Check if a PGY browser process is already running (CDP port occupied)
         if _pgy_cdp_available():
             opened_url = _open_url_in_cdp(PGY_CDP_ENDPOINT, PGY_LOGIN_URL)
             browser_focused = _focus_detected_browser()
             return {
                 "status": "login_window_opened",
-                "message": "蒲公英登录窗口已打开",
+                "message": "蒲公英登录窗口已打开（复用已有浏览器）",
                 "cdp": PGY_CDP_ENDPOINT,
                 "url": PGY_LOGIN_URL,
                 "opened_url": opened_url,
                 "browser_focused": browser_focused,
                 "wait_seconds": wait_seconds,
             }
+        project_root = Path(__file__).resolve().parents[2]
+        script_path = project_root / "tools" / "pgy_automation.py"
         cmd = [
             sys.executable,
             str(script_path),

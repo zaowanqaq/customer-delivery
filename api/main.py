@@ -5,6 +5,7 @@ Start command: uvicorn api.main:app --port 8081
 Or: python -m api.main
 """
 import asyncio
+import fcntl
 import importlib
 import json
 import os
@@ -257,6 +258,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Single-instance protection: file lock prevents two API processes from running simultaneously
+_PID_FILE = PROJECT_ROOT / "runtime_data" / "api_server.pid"
+_pid_lock_fd = None
+
+
+@app.on_event("startup")
+async def _acquire_instance_lock():
+    global _pid_lock_fd
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _pid_lock_fd = open(_PID_FILE, "w")
+        fcntl.flock(_pid_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _pid_lock_fd.write(str(os.getpid()))
+        _pid_lock_fd.flush()
+    except (IOError, OSError):
+        print(f"[FATAL] 另一个 API 服务实例已在运行（PID 文件: {_PID_FILE}），请先停止旧进程。")
+        os._exit(1)
+
+
+@app.on_event("shutdown")
+async def _release_instance_lock():
+    global _pid_lock_fd
+    if _pid_lock_fd:
+        fcntl.flock(_pid_lock_fd, fcntl.LOCK_UN)
+        _pid_lock_fd.close()
+        _pid_lock_fd = None
+    _PID_FILE.unlink(missing_ok=True)
+
 
 # Register routers
 app.include_router(crawler_router, prefix="/api")
