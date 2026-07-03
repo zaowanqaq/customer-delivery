@@ -1051,6 +1051,20 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
     return values
 
 
+def _chunk_table_rows(rows: List[List[Any]], chunk_size: int = 50) -> List[List[List[Any]]]:
+    if not rows:
+        return []
+    if chunk_size <= 0:
+        return [rows]
+    return [rows[i:i + chunk_size] for i in range(0, len(rows), chunk_size)]
+
+
+def _base_dedupe_field_candidates(data_type: str) -> List[str]:
+    if data_type == "notes":
+        return ["note_id", "笔记ID", "id"]
+    return ["comment_id", "评论ID"]
+
+
 def _pgy_summary_path_from_request(request: PgyKolSyncRequest) -> Path:
     project_root = Path(__file__).resolve().parents[2]
     if request.summary_path:
@@ -1237,9 +1251,10 @@ async def _read_existing_pgy_records(base_token: str, table_id: str, field_names
     return existing
 
 
-async def _read_existing_base_records(base_token: str, table_id: str, dedupe_field: str = "note_id") -> Dict[str, str]:
+async def _read_existing_base_records(base_token: str, table_id: str, dedupe_fields: str | List[str] = "note_id") -> Dict[str, str]:
     lark_cli_bin = _find_lark_cli()
     existing: Dict[str, str] = {}
+    candidate_fields = [dedupe_fields] if isinstance(dedupe_fields, str) else list(dedupe_fields)
     offset = 0
     limit = 200
     while True:
@@ -1257,7 +1272,7 @@ async def _read_existing_base_records(base_token: str, table_id: str, dedupe_fie
             if not isinstance(values, list):
                 continue
             existing_row = {field_name: str(value).strip() for field_name, value in zip(fields, values) if value}
-            key = existing_row.get(dedupe_field, "")
+            key = next((existing_row.get(field_name, "") for field_name in candidate_fields if existing_row.get(field_name, "")), "")
             if key and key not in existing:
                 existing[key] = str(record_id)
         if not data.get("has_more"):
@@ -2281,11 +2296,13 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
     if not rows:
         raise HTTPException(status_code=400, detail="未找到可同步的数据（请检查关键词/文件类型）")
     lark_cli_bin = _find_lark_cli()
-    dedupe_field = "note_id" if request.data_type == "notes" else "comment_id"
-    existing = await _read_existing_base_records(request.base_token, request.table_id, dedupe_field)
+    dedupe_fields = _base_dedupe_field_candidates(request.data_type)
+    dedupe_field = next((field_name for field_name in dedupe_fields if field_name in table_fields), dedupe_fields[0])
+    existing = await _read_existing_base_records(request.base_token, request.table_id, dedupe_fields)
     created = 0
     updated = 0
     dedupe_idx = table_fields.index(dedupe_field) if dedupe_field in table_fields else -1
+    rows_to_create: List[List[Any]] = []
     for row_values in rows:
         dedupe_key = str(row_values[dedupe_idx]).strip() if dedupe_idx >= 0 and row_values[dedupe_idx] else ""
         record_id = existing.get(dedupe_key) if dedupe_key else None
@@ -2298,13 +2315,15 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
                 )
             updated += 1
         else:
-            payload = {"fields": table_fields, "rows": [row_values]}
-            with _lark_json_arg(payload) as json_arg:
-                await _run_lark_cli(
-                    [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
-                    timeout_sec=60,
-                )
-            created += 1
+            rows_to_create.append(row_values)
+    for batch in _chunk_table_rows(rows_to_create):
+        payload = {"fields": table_fields, "rows": batch}
+        with _lark_json_arg(payload) as json_arg:
+            await _run_lark_cli(
+                [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
+                timeout_sec=60,
+            )
+        created += len(batch)
     target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
     return {
         "status": "ok",

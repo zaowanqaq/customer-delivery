@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import base64
+import json
+from pathlib import Path
 
 import pytest
 
@@ -103,3 +105,85 @@ async def test_xhs_login_browser_reuses_cdp_and_opens_login_page(monkeypatch):
     assert result["opened_url"] is True
     assert result["browser_focused"] is True
     assert opened == [("http://127.0.0.1:9222", crawler.XHS_LOGIN_URL)]
+
+
+@pytest.mark.asyncio
+async def test_sync_local_to_base_batches_new_records(monkeypatch, tmp_path):
+    notes_path = tmp_path / "notes.json"
+    notes = [{"note_id": f"note-{i}", "title": f"title-{i}"} for i in range(55)]
+    notes_path.write_text(json.dumps(notes, ensure_ascii=False), encoding="utf-8")
+    batch_payloads = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        batch_payloads.append(json.loads(payload_path.read_text(encoding="utf-8")))
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_fields(_base_token, _table_id):
+        return ["note_id", "标题"]
+
+    async def fake_read_existing_base_records(_base_token, _table_id, _dedupe_field):
+        return {}
+
+    monkeypatch.setattr(crawler, "_read_table_fields", fake_read_table_fields)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(
+        crawler.LocalToBaseSyncRequest(
+            base_token="app123",
+            table_id="tbl123",
+            data_type="notes",
+            file_path=str(notes_path),
+        )
+    )
+
+    assert result["created"] == 55
+    assert result["updated"] == 0
+    assert [len(payload["rows"]) for payload in batch_payloads] == [50, 5]
+
+
+@pytest.mark.asyncio
+async def test_sync_local_to_base_dedupes_with_chinese_note_id_field(monkeypatch, tmp_path):
+    notes_path = tmp_path / "notes.json"
+    notes = [
+        {"note_id": "note-existing", "title": "old"},
+        {"note_id": "note-new", "title": "new"},
+    ]
+    notes_path.write_text(json.dumps(notes, ensure_ascii=False), encoding="utf-8")
+    calls = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        calls.append({"cmd": cmd, "payload": json.loads(payload_path.read_text(encoding="utf-8"))})
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_fields(_base_token, _table_id):
+        return ["笔记ID", "标题"]
+
+    async def fake_read_existing_base_records(_base_token, _table_id, dedupe_fields):
+        assert "笔记ID" in dedupe_fields
+        return {"note-existing": "rec123"}
+
+    monkeypatch.setattr(crawler, "_read_table_fields", fake_read_table_fields)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(
+        crawler.LocalToBaseSyncRequest(
+            base_token="app123",
+            table_id="tbl123",
+            data_type="notes",
+            file_path=str(notes_path),
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["updated"] == 1
+    assert [call["cmd"][2] for call in calls] == ["+record-upsert", "+record-batch-create"]
+    assert calls[0]["payload"]["values"] == ["note-existing", "old"]
+    assert calls[1]["payload"]["rows"] == [["note-new", "new"]]
