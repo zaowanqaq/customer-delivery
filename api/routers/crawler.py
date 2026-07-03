@@ -1434,7 +1434,7 @@ async def _upload_base_attachment(base_token: str, table_id: str, record_id: str
     if not path.is_absolute():
         path = Path(__file__).resolve().parents[2] / path
     path = path.resolve()
-    if not path.exists() or not path.is_file():
+    if not path.exists() or not path.is_file() or path.stat().st_size == 0:
         return
     project_root = Path(__file__).resolve().parents[2]
     try:
