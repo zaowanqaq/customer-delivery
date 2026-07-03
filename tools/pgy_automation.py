@@ -861,19 +861,10 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     screenshot = output_dir / "detail.png"
-    tab_screenshots: dict[str, str] = {}
     if page is not None:
         page.screenshot(path=str(screenshot), full_page=True)
-        tab_screenshots["全页面"] = str(screenshot)
-        for label in ["传播表现", "粉丝分析"]:
-            try:
-                click_text(page, label, exact=True, timeout=2500)
-                page.wait_for_timeout(2000)
-                tab_shot = output_dir / f"detail_{label}.png"
-                page.screenshot(path=str(tab_shot), full_page=True)
-                tab_screenshots[label] = str(tab_shot)
-            except Exception:
-                pass
+    elif screenshot.exists():
+        pass
 
     detail_path = output_dir / "detail_text.txt"
     detail_path.write_text(detail_text, encoding="utf-8")
@@ -950,7 +941,6 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
         "red_id": red_id,
         "url": page.url if page is not None else f"{PGY_ORIGIN}/solar/pre-trade/blogger-detail/{user_id}",
         "screenshot": str(screenshot) if screenshot.exists() else "",
-        "tab_screenshots": tab_screenshots,
         "detail_text": str(detail_path),
         "raw_api": str(raw_path),
         "blogger_detail": blogger_detail,
@@ -1172,33 +1162,17 @@ def _capture_kol_detail(
 
     page.on("response", collect_response)
     try:
-        detail_url = f"https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/{user_id}"
-        page.goto(detail_url, wait_until="domcontentloaded", timeout=60_000)
-        page = active_page(context, page)
-        page.wait_for_timeout(6000)
-
-        # Full-page screenshot before clicking tabs
-        full_screenshot = output_dir / f"{file_prefix}_detail.png"
-        page.screenshot(path=str(full_screenshot), full_page=True)
-
-        # Per-tab screenshots: click each tab and capture
-        tab_screenshots: dict[str, str] = {"全页面": str(full_screenshot)}
-        for label in ["传播表现", "粉丝分析"]:
-            click_text(page, label, exact=True, timeout=2500)
-            page.wait_for_timeout(2000)
-            tab_shot = output_dir / f"{file_prefix}_{label}.png"
-            page.screenshot(path=str(tab_shot), full_page=True)
-            tab_screenshots[label] = str(tab_shot)
-
+        page = _navigate_to_kol_detail(context, page, user_id)
         _wait_for_detail_data(page, local_data)
         detail_text = visible_text(page, limit=60000)
+        screenshot = output_dir / f"{file_prefix}_detail.png"
+        page.screenshot(path=str(screenshot), full_page=True)
         detail_path = output_dir / f"{file_prefix}_detail_text.txt"
         detail_path.write_text(detail_text, encoding="utf-8")
         return page, {
             "api_data": local_data,
             "detail_text": str(detail_path),
-            "screenshot": str(full_screenshot),
-            "tab_screenshots": tab_screenshots,
+            "screenshot": str(screenshot),
             "url": page.url,
         }
     finally:

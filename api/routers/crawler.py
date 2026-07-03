@@ -835,8 +835,6 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
         _text_field("兴趣TOP8"),
         _text_field("输出目录"),
         _attachment_field("截图"),
-        _attachment_field("传播表现截图"),
-        _attachment_field("粉丝分析截图"),
         _attachment_field("详情文本"),
         _text_field("更新时间"),
     ]
@@ -1402,8 +1400,6 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
         **target_metrics,
         "output_dir": output_dir,
         "screenshot": summary.get("screenshot") or "",
-        "propagation_screenshot": (summary.get("tab_screenshots") or {}).get("传播表现", ""),
-        "fans_screenshot": (summary.get("tab_screenshots") or {}).get("粉丝分析", ""),
         "detail_text": summary.get("detail_text") or "",
         "updated_at": updated_at,
     }
@@ -1548,8 +1544,6 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
         created += len(batch_rows)
     screenshot_field = "截图" if field_types.get("截图") == "attachment" else "截图附件"
     detail_text_field = "详情文本" if field_types.get("详情文本") == "attachment" else "详情文本附件"
-    propagation_screenshot_field = "传播表现截图" if field_types.get("传播表现截图") == "attachment" else None
-    fans_screenshot_field = "粉丝分析截图" if field_types.get("粉丝分析截图") == "attachment" else None
     # Merge new record attachments into the queue
     for record_id, row in zip(record_ids, rows_for_attachments):
         attachment_queue.append((record_id, row))
@@ -1563,20 +1557,6 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
                 attachment_uploads += 1
             except Exception as exc:
                 attachment_errors.append(f"截图上传失败: {str(exc)[:300]}")
-        # Upload propagation tab screenshot
-        if propagation_screenshot_field and row.get("propagation_screenshot"):
-            try:
-                await _upload_base_attachment(request.base_token, request.table_id, record_id, propagation_screenshot_field, row["propagation_screenshot"])
-                attachment_uploads += 1
-            except Exception as exc:
-                attachment_errors.append(f"传播表现截图上传失败: {str(exc)[:300]}")
-        # Upload fans tab screenshot
-        if fans_screenshot_field and row.get("fans_screenshot"):
-            try:
-                await _upload_base_attachment(request.base_token, request.table_id, record_id, fans_screenshot_field, row["fans_screenshot"])
-                attachment_uploads += 1
-            except Exception as exc:
-                attachment_errors.append(f"粉丝分析截图上传失败: {str(exc)[:300]}")
         # Upload detail_text
         if field_types.get(detail_text_field) == "attachment" and row.get("detail_text"):
             try:
