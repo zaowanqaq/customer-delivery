@@ -718,8 +718,8 @@ async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> Li
     return await _read_table_field_defs(base_token, table_id)
 
 
-def _text_field(name: str) -> Dict[str, Any]:
-    return {"name": name, "type": "text", "style": {"type": "plain"}}
+def _text_field(name: str, style: str = "plain") -> Dict[str, Any]:
+    return {"name": name, "type": "text", "style": {"type": style}}
 
 
 def _number_field(name: str) -> Dict[str, Any]:
@@ -791,6 +791,7 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
         _number_field("排名"),
         _text_field("达人昵称"),
         _text_field("小红书号"),
+        _text_field("博主主页链接", style="url"),
         _text_field("目标达人昵称"),
         _text_field("目标小红书号"),
         _text_field("地区"),
@@ -942,9 +943,10 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "账号名称": ["author_nickname", "nickname", "博主名", "账号"],
         "账号ID": ["author_user_id", "user_id", "author_id"],
         "小红书ID": ["author_user_id", "user_id", "author_id", "账号ID"],
-        "账号主页": ["author_homepage_url", "author_profile_url", "博主主页"],
-        "博主主页": ["author_homepage_url", "author_profile_url"],
-        "主页链接": ["author_homepage_url", "author_profile_url", "博主主页", "账号主页"],
+        "账号主页": ["author_homepage_url", "author_profile_url", "博主主页", "博主主页链接"],
+        "博主主页": ["author_homepage_url", "author_profile_url", "博主主页链接"],
+        "主页链接": ["author_homepage_url", "author_profile_url", "博主主页", "账号主页", "博主主页链接"],
+        "博主主页链接": ["author_homepage_url", "author_profile_url", "博主主页", "主页链接", "账号主页"],
         "笔记链接": ["note_url"],
         "发布链接": ["note_url", "笔记链接"],
         "笔记ID": ["note_id", "id"],
@@ -1023,8 +1025,8 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                 value = "百互动爆文"
             else:
                 value = "普通笔记"
-        if field_name in {"author_homepage_url", "账号主页", "博主主页", "主页链接"} and value == "":
-            author_id = row.get("author_user_id") or row.get("user_id") or row.get("账号ID")
+        if field_name in {"author_homepage_url", "账号主页", "博主主页", "主页链接", "博主主页链接"} and value == "":
+            author_id = row.get("author_user_id") or row.get("user_id") or row.get("账号ID") or row.get("小红书号") or row.get("小红书ID")
             value = f"https://www.xiaohongshu.com/user/profile/{author_id}" if author_id else ""
         if field_name in datetime_fields and value not in ("", None):
             try:
@@ -1099,9 +1101,10 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "博主名": ["nickname", "达人昵称", "博主昵称"],
         "小红书号": ["red_id", "小红书号"],
         "小红书ID": ["red_id", "小红书号"],
-        "博主主页": ["blogger_homepage_url", "博主主页"],
-        "达人主页": ["blogger_homepage_url", "博主主页"],
-        "主页链接": ["blogger_homepage_url", "博主主页"],
+        "博主主页": ["blogger_homepage_url", "博主主页", "博主主页链接"],
+        "达人主页": ["blogger_homepage_url", "博主主页", "博主主页链接"],
+        "主页链接": ["blogger_homepage_url", "博主主页", "博主主页链接"],
+        "博主主页链接": ["blogger_homepage_url", "博主主页", "主页链接", "达人主页"],
         "目标达人昵称": ["target_nickname", "目标达人昵称"],
         "目标小红书号": ["target_red_id", "目标小红书号"],
         "地区": ["location", "地区"],
@@ -1169,6 +1172,13 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
                     value = int(value)
             except Exception:
                 pass
+        # Auto-fill 博主主页链接 from 小红书号 or userId when empty
+        if field_name in {"博主主页链接", "博主主页", "主页链接", "达人主页"} and value == "":
+            red_id = row.get("red_id") or row.get("小红书号")
+            user_id = row.get("userId") or row.get("author_user_id")
+            uid = red_id or user_id
+            if uid:
+                value = f"https://www.xiaohongshu.com/user/profile/{uid}"
         values.append(value)
     return values
 
