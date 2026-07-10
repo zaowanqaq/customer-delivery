@@ -22,7 +22,7 @@ from urllib.parse import quote, urlparse
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from config.runtime_paths import browser_data_dir, data_dir, downloads_dir
+from config.runtime_paths import browser_data_dir, data_dir, downloads_dir, temp_dir
 from tools.browser_launcher import BrowserLauncher
 from ..schemas import (
     CrawlerStartRequest,
@@ -375,6 +375,7 @@ def _find_lark_cli() -> str:
     for candidate in (
         home / "nodejs" / "bin" / "lark-cli",
         home / "nodejs" / "bin" / "lark-cli.cmd",
+        Path("/opt/homebrew/bin/lark-cli"),
         Path("/usr/local/bin/lark-cli"),
     ):
         if candidate.exists():
@@ -656,18 +657,12 @@ async def _read_xhs_cookies_from_cdp(cdp_base: str) -> Dict[str, Any]:
 
 
 async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
-    payload = await _run_lark_cli(
-        [
-            _find_lark_cli(),
-            "base", "+field-list",
-            "--as", "user",
-            "--base-token", base_token,
-            "--table-id", table_id,
-        ],
-        timeout_sec=30,
-    )
-    fields = payload.get("data", {}).get("fields", [])
-    return [f.get("name") for f in fields if isinstance(f, dict) and f.get("name")]
+    fields = await _read_table_field_defs(base_token, table_id)
+    return [
+        f.get("name")
+        for f in fields
+        if isinstance(f, dict) and f.get("name") and f.get("type") not in {"not_support", "attachment"}
+    ]
 
 
 async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[str, Any]]:
@@ -745,86 +740,113 @@ def _attachment_field(name: str) -> Dict[str, Any]:
 
 def _viral_monitor_fields() -> List[Dict[str, Any]]:
     return [
+        _text_field("归属项目"),
+        _text_field("检索关键词"),
+        _datetime_field("笔记发布时间"),
         _text_field("博主名"),
-        _text_field("项目名"),
-        _datetime_field("采集时间"),
-        _number_field("分享数"),
-        _text_field("笔记链接"),
+        _text_field("博主ID"),
+        _number_field("博主粉丝数"),
+        _text_field("博主主页"),
         _text_field("笔记类型"),
-        _text_field("内容"),
+        _text_field("笔记标题"),
+        _text_field("笔记内容"),
+        _text_field("笔记封面"),
+        _text_field("笔记图片1"),
+        _text_field("笔记tag"),
+        _number_field("点赞"),
+        _number_field("收藏数"),
+        _number_field("分享数"),
         _number_field("评论数"),
+        _number_field("阅读量"),
+        _number_field("曝光量"),
+        _number_field("总互动数据（赞+藏+评，不算分享）"),
+        _datetime_field("采集数据时间"),
+        _attachment_field("封面文件"),
+    ]
+
+
+def _note_recreation_fields() -> List[Dict[str, Any]]:
+    return [
+        _number_field("收藏数"),
+        _text_field("当日使用标记"),
+        _text_field("改写打分"),
+        _text_field("笔记ID"),
+        _text_field("博主名"),
+        _text_field("笔记链接"),
+        _text_field("标题"),
+        _datetime_field("采集时间"),
+        _text_field("博主主页"),
+        _text_field("标题改写"),
+        _text_field("关键词"),
+        _number_field("点赞数"),
+        _number_field("评论数"),
+        _text_field("内容"),
+        _text_field("笔记类型"),
+        _datetime_field("首发时间"),
+        _number_field("分享数"),
+        _number_field("博主粉丝数"),
         _text_field("封面图"),
         _text_field("已使用账号记录"),
-        _datetime_field("首发时间"),
-        _text_field("关键词"),
-        _number_field("收藏数"),
-        _number_field("点赞数"),
-        _text_field("标题"),
-        _text_field("博主主页"),
-        _text_field("当日使用标记"),
-        _number_field("博主粉丝数"),
-        _text_field("笔记ID"),
+        _text_field("项目名"),
+        _text_field("正文改写"),
         _text_field("话题标签"),
     ]
 
 
-def _comments_fields() -> List[Dict[str, Any]]:
+def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
     return [
         _text_field("项目名"),
-        _text_field("关键词"),
-        _text_field("笔记ID"),
-        _text_field("评论内容"),
-        _text_field("评论用户"),
-        _datetime_field("评论时间"),
+        _text_field("笔记链接"),
+        _text_field("笔记标题"),
+        _number_field("评论总数"),
+        _text_field("评论区敏感词"),
+        _text_field("评论区敏感词监测（是/否）"),
+        _text_field("评论区分析"),
+        _text_field("首评评论用户"),
         _text_field("IP属地"),
-        _number_field("点赞数"),
-        _number_field("二级评论数"),
-        _text_field("父评论ID"),
+        _datetime_field("评论时间"),
+        _text_field("评论内容"),
         _text_field("评论图片"),
+        _number_field("点赞数"),
+        _text_field("二级评论用户"),
+        _text_field("三级评论用户"),
+        _text_field("四级评论用户"),
     ]
+
+
+def _comments_fields() -> List[Dict[str, Any]]:
+    return _sentiment_monitor_fields()
 
 
 def _creator_selection_fields() -> List[Dict[str, Any]]:
     return [
-        _text_field("类型"),
-        _text_field("去重键"),
-        _number_field("排名"),
+        _text_field("目标/推荐博主"),
+        _number_field("推荐排名"),
+        _text_field("目标达人昵称"),
         _text_field("达人昵称"),
         _text_field("小红书号"),
-        _text_field("目标达人昵称"),
-        _text_field("目标小红书号"),
-        _text_field("地区"),
+        _text_field("主页链接"),
+        _text_field("蒲公英主页链接"),
+        _text_field("内容类目（标签）"),
+        _text_field("合作行业"),
         _number_field("粉丝数"),
         _number_field("获赞收藏"),
+        _number_field("发布笔记数"),
         _number_field("商业笔记数"),
-        _number_field("最低报价"),
         _number_field("图文报价"),
         _number_field("视频报价"),
-        _text_field("标签"),
-        _text_field("博主优势"),
-        _text_field("数据日期"),
-        _number_field("发布笔记数"),
-        _number_field("曝光中位数"),
-        _number_field("阅读中位数"),
-        _number_field("互动中位数"),
-        _number_field("中位点赞量"),
-        _number_field("中位收藏量"),
-        _number_field("中位评论量"),
-        _number_field("中位分享量"),
-        _number_field("中位关注量"),
-        _text_field("互动率"),
-        _text_field("视频完播率"),
-        _text_field("图文3秒阅读率"),
+        *_pgy_metric_fields(),
+        _number_field("粉丝增量"),
         _text_field("千赞笔记比例"),
         _text_field("百赞笔记比例"),
-        _number_field("近7日活跃天数"),
-        _number_field("邀约数"),
-        _text_field("响应率"),
-        _number_field("粉丝增量"),
-        _text_field("粉丝增长率"),
         _text_field("活跃粉丝占比"),
         _text_field("阅读粉丝占比"),
         _text_field("互动粉丝占比"),
+        _number_field("近7日活跃天数"),
+        _text_field("地区"),
+        _number_field("邀约数"),
+        _text_field("响应率"),
+        _text_field("粉丝增长率"),
         _text_field("付费粉丝占比"),
         _text_field("女性粉丝占比"),
         _text_field("男性粉丝占比"),
@@ -832,10 +854,100 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
         _text_field("省份TOP5"),
         _text_field("城市TOP5"),
         _text_field("兴趣TOP8"),
-        _text_field("输出目录"),
-        _attachment_field("截图"),
-        _attachment_field("详情文本"),
-        _text_field("更新时间"),
+        _datetime_field("最新笔记更新时间"),
+        _datetime_field("采集博主数据日期"),
+    ]
+
+
+def _pgy_metric_fields() -> List[Dict[str, Any]]:
+    prefixes = ("日常笔记", "合作笔记")
+    metrics: List[Dict[str, Any]] = []
+    for prefix in prefixes:
+        metrics.extend([
+            _number_field(f"{prefix}曝光中位数"),
+            _number_field(f"{prefix}阅读中位数"),
+            _number_field(f"{prefix}互动中位数"),
+            _text_field(f"{prefix}互动率"),
+            _number_field(f"{prefix}中位点赞量"),
+            _number_field(f"{prefix}中位收藏量"),
+            _number_field(f"{prefix}中位评论量"),
+            _number_field(f"{prefix}中位分享量"),
+            _number_field(f"{prefix}中位关注量"),
+            _text_field(f"{prefix}视频完播率"),
+            _text_field(f"{prefix}图文3秒阅读率"),
+        ])
+    return metrics
+
+
+def _account_content_monitor_fields() -> List[Dict[str, Any]]:
+    return [
+        _text_field("达人昵称"),
+        _text_field("小红书号"),
+        _text_field("主页链接"),
+        _text_field("蒲公英主页链接"),
+        _datetime_field("发布笔记倒序（发布时间由近及远）"),
+        _text_field("笔记链接"),
+        _text_field("笔记标题"),
+        _text_field("笔记内容"),
+        _text_field("笔记封面"),
+        _text_field("笔记tag"),
+        _number_field("点赞"),
+        _number_field("收藏"),
+        _number_field("评论"),
+        _number_field("转发量"),
+        _number_field("笔记总互动量（点赞+收藏+评论）"),
+        _number_field("曝光量"),
+        _number_field("阅读量"),
+        _number_field("笔记收获关注量"),
+        _text_field("内容类目（标签）"),
+        _text_field("合作行业"),
+        _number_field("粉丝数"),
+        _number_field("获赞收藏"),
+        _number_field("发布笔记数"),
+        _number_field("商业笔记数"),
+        _number_field("图文报价"),
+        _number_field("视频报价"),
+        *_pgy_metric_fields(),
+        _number_field("粉丝增量"),
+        _text_field("千赞笔记比例"),
+        _text_field("百赞笔记比例"),
+        _text_field("活跃粉丝占比"),
+        _text_field("阅读粉丝占比"),
+        _text_field("互动粉丝占比"),
+        _number_field("近7日活跃天数"),
+        _text_field("地区"),
+        _number_field("邀约数"),
+        _text_field("响应率"),
+        _text_field("粉丝增长率"),
+        _text_field("付费粉丝占比"),
+        _text_field("女性粉丝占比"),
+        _text_field("男性粉丝占比"),
+        _text_field("主要年龄段"),
+        _text_field("省份TOP5"),
+        _text_field("城市TOP5"),
+        _text_field("兴趣TOP8"),
+        _datetime_field("最新笔记更新时间"),
+        _datetime_field("采集博主数据日期"),
+    ]
+
+
+def _note_data_monitor_fields() -> List[Dict[str, Any]]:
+    return [
+        _number_field("序号"),
+        _text_field("达人昵称"),
+        _text_field("小红书id"),
+        _text_field("发布笔记链接"),
+        _datetime_field("发布时间"),
+        _text_field("笔记tag"),
+        _text_field("笔记标题"),
+        _number_field("点赞"),
+        _number_field("收藏"),
+        _number_field("评论"),
+        _number_field("总互动（点赞+收藏+评论）"),
+        _number_field("分享"),
+        _number_field("曝光量"),
+        _number_field("阅读量"),
+        _text_field("笔记失效/正常（有失效链接作标记）"),
     ]
 
 
@@ -937,22 +1049,34 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "标题": ["title", "笔记标题"],
         "笔记标题": ["title", "标题"],
         "内容": ["desc", "content", "note_content"],
+        "笔记内容": ["desc", "content", "note_content", "内容"],
         "博主名": ["author_nickname", "nickname"],
+        "达人昵称": ["author_nickname", "nickname", "博主名", "账号"],
         "账号": ["author_nickname", "nickname", "博主名"],
         "账号名称": ["author_nickname", "nickname", "博主名", "账号"],
         "账号ID": ["author_user_id", "user_id", "author_id"],
+        "博主ID": ["author_user_id", "user_id", "author_id", "账号ID"],
+        "小红书id": ["author_user_id", "user_id", "author_id", "账号ID", "小红书号"],
         "小红书ID": ["author_user_id", "user_id", "author_id", "账号ID"],
+        "小红书号": ["author_user_id", "user_id", "author_id", "账号ID"],
         "账号主页": ["author_homepage_url", "author_profile_url", "博主主页"],
         "博主主页": ["author_homepage_url", "author_profile_url"],
         "主页链接": ["author_homepage_url", "author_profile_url", "博主主页", "账号主页"],
         "笔记链接": ["note_url"],
+        "发布笔记链接": ["note_url", "笔记链接"],
         "发布链接": ["note_url", "笔记链接"],
         "笔记ID": ["note_id", "id"],
+        "归属项目": ["project_name", "项目名", "所属项目"],
+        "项目名": ["project_name", "归属项目", "所属项目"],
         "关键词": ["source_keyword", "搜索关键词"],
+        "检索关键词": ["source_keyword", "搜索关键词", "关键词"],
         "搜索关键词": ["source_keyword"],
         "笔记类型": ["note_type", "type"],
         "封面图": ["image_list", "cover", "cover_url"],
+        "笔记封面": ["cover", "cover_url", "image_list", "封面图"],
+        "笔记图片1": ["image_list", "images", "img_urls"],
         "话题标签": ["tag_list", "topics"],
+        "笔记tag": ["tag_list", "topics", "话题标签", "语义标签"],
         "点赞量": ["liked_count", "like_count", "点赞数"],
         "点赞数": ["liked_count", "like_count", "点赞量"],
         "点赞": ["liked_count", "like_count", "点赞量", "点赞数"],
@@ -965,14 +1089,24 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "分享量": ["share_count", "分享数"],
         "分享数": ["share_count", "分享量"],
         "分享": ["share_count", "分享量", "分享数"],
+        "转发量": ["share_count", "分享量", "分享数"],
         "阅读量": ["read_count", "view_count", "浏览量"],
+        "曝光量": ["exposure_count", "imp", "曝光量"],
         "发布日期": ["publish_date", "发布时间", "time", "create_time"],
+        "发布时间": ["publish_date", "发布时间", "time", "create_time", "首发时间"],
+        "笔记发布时间": ["publish_date", "发布时间", "time", "create_time", "首发时间"],
+        "发布笔记倒序（发布时间由近及远）": ["publish_date", "发布时间", "time", "create_time", "首发时间"],
         "博主粉丝数": ["author_fans", "author_fans_count", "fans_count"],
         "首发时间": ["time", "create_time", "发布时间"],
         "采集时间": ["last_update_time", "crawl_time", "抓取时间"],
+        "采集数据时间": ["last_update_time", "crawl_time", "抓取时间", "采集时间"],
         "评论ID": ["comment_id"],
         "评论内容": ["content"],
         "评论用户": ["comment_user_nickname", "nickname"],
+        "首评评论用户": ["comment_user_nickname", "nickname", "评论用户"],
+        "二级评论用户": ["comment_user_nickname", "nickname", "评论用户"],
+        "三级评论用户": ["comment_user_nickname", "nickname", "评论用户"],
+        "四级评论用户": ["comment_user_nickname", "nickname", "评论用户"],
         "评论用户ID": ["comment_user_id", "user_id"],
         "评论时间": ["create_time"],
         "IP属地": ["ip_location"],
@@ -982,13 +1116,13 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "头像": ["avatar"],
         "author_nickname": ["nickname"], "author_user_id": ["user_id"], "comment_user_id": ["user_id"], "comment_user_nickname": ["nickname"],
     }
-    datetime_fields = {"采集时间", "首发时间", "评论时间", "create_time", "last_modify_ts"}
+    datetime_fields = {"采集时间", "采集数据时间", "首发时间", "笔记发布时间", "发布时间", "发布笔记倒序（发布时间由近及远）", "评论时间", "create_time", "last_modify_ts"}
     numeric_fields = {
         "liked_count", "collected_count", "comment_count", "share_count", "like_count",
         "点赞量", "收藏量", "评论量", "分享量",
         "点赞数", "收藏数", "评论数", "分享数",
-        "点赞", "收藏", "评论", "分享", "阅读量", "互动总和", "发布日期",
-        "博主粉丝数", "二级评论数",
+        "点赞", "收藏", "评论", "分享", "转发量", "阅读量", "曝光量", "互动总和", "发布日期",
+        "博主粉丝数", "二级评论数", "序号", "评论总数", "笔记收获关注量",
     }
     values: List[Any] = []
     for field_name in table_fields:
@@ -1002,6 +1136,22 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
             value = "trial_notes" if data_type == "notes" else "trial_comments"
         if field_name == "媒介进度" and value == "":
             value = "已发布"
+        if field_name == "笔记类型" and value not in ("", None):
+            note_type_text = str(value).lower()
+            if note_type_text in {"normal", "image", "images", "图文"}:
+                value = "图文"
+            elif note_type_text in {"video", "视频"}:
+                value = "视频"
+        if field_name in {"笔记封面", "封面图"} and isinstance(value, list):
+            value = value[0] if value else ""
+        if field_name == "笔记图片1" and isinstance(value, list):
+            value = value[0] if value else ""
+        if field_name in {"笔记封面", "封面图", "笔记图片1"} and isinstance(value, str) and "," in value:
+            value = value.split(",", 1)[0].strip()
+        if field_name in {"笔记tag", "话题标签"} and isinstance(value, list):
+            value = ",".join(str(item) for item in value if item not in ("", None))
+        if field_name == "评论图片" and isinstance(value, list):
+            value = ",".join(str(item) for item in value if item not in ("", None))
         if field_name == "互动总和" and value == "":
             total = 0
             for key in ("liked_count", "like_count", "collected_count", "comment_count", "share_count", "点赞", "收藏", "评论", "分享"):
@@ -1023,6 +1173,16 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                 value = "百互动爆文"
             else:
                 value = "普通笔记"
+        if field_name in {"总互动数据（赞+藏+评，不算分享）", "笔记总互动量（点赞+收藏+评论）", "总互动（点赞+收藏+评论）"} and value == "":
+            total = 0
+            for key in ("liked_count", "like_count", "collected_count", "comment_count", "点赞", "收藏", "评论"):
+                try:
+                    total += int(str(row.get(key) or 0))
+                except Exception:
+                    pass
+            value = total
+        if field_name == "笔记失效/正常（有失效链接作标记）" and value == "":
+            value = "失效" if row.get("is_invalid") or row.get("失效") else "正常"
         if field_name in {"author_homepage_url", "账号主页", "博主主页", "主页链接"} and value == "":
             author_id = row.get("author_user_id") or row.get("user_id") or row.get("账号ID")
             value = f"https://www.xiaohongshu.com/user/profile/{author_id}" if author_id else ""
@@ -1051,6 +1211,136 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
     return values
 
 
+def _first_media_url(value: Any) -> str:
+    if value in ("", None):
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                url = item.get("url_default") or item.get("url") or item.get("cover") or item.get("cover_url")
+                if url:
+                    return str(url).split(",", 1)[0].strip()
+            elif item not in ("", None):
+                return str(item).split(",", 1)[0].strip()
+        return ""
+    if isinstance(value, dict):
+        url = value.get("url_default") or value.get("url") or value.get("cover") or value.get("cover_url")
+        return str(url).split(",", 1)[0].strip() if url else ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    with contextlib.suppress(Exception):
+        parsed = json.loads(text)
+        parsed_url = _first_media_url(parsed)
+        if parsed_url:
+            return parsed_url
+    return text.split(",", 1)[0].strip()
+
+
+def _cover_url_from_row(row: Dict[str, Any]) -> str:
+    for key in ("cover", "cover_url", "笔记封面", "封面图", "image_list", "images", "img_urls"):
+        url = _first_media_url(row.get(key))
+        if url:
+            return url
+    return ""
+
+
+def _local_cover_file_from_row(row: Dict[str, Any]) -> Path | None:
+    note_id = str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
+    if not note_id:
+        return None
+    project_root = Path(__file__).resolve().parents[2]
+    roots = [
+        data_dir() / "xhs" / "images" / note_id,
+        project_root / "data" / "xhs" / "images" / note_id,
+        data_dir() / "xhs" / "videos" / note_id,
+        project_root / "data" / "xhs" / "videos" / note_id,
+    ]
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for pattern in ("0.*", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.mp4"):
+            candidates = sorted(path for path in root.glob(pattern) if path.is_file())
+            if candidates:
+                return candidates[0]
+    return None
+
+
+def _suffix_for_download(url: str, content_type: str) -> str:
+    content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    by_type = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "video/mp4": ".mp4",
+    }
+    if content_type in by_type:
+        return by_type[content_type]
+    suffix = Path(urlparse(url).path).suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4"}:
+        return ".jpg" if suffix == ".jpeg" else suffix
+    return ".jpg"
+
+
+async def _download_media_to_temp_file(url: str, prefix: str = "cover") -> Path:
+    if not url:
+        raise ValueError("empty media url")
+
+    def _download() -> Path:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.xiaohongshu.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            content = resp.read(30 * 1024 * 1024)
+            content_type = resp.headers.get("Content-Type", "")
+        suffix = _suffix_for_download(url, content_type)
+        target = temp_dir() / f"{prefix}_{uuid4().hex}{suffix}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        return target
+
+    return await asyncio.to_thread(_download)
+
+
+async def _upload_cover_file_if_available(
+    base_token: str,
+    table_id: str,
+    record_id: str,
+    row: Dict[str, Any],
+    attachment_field_ids: Dict[str, str],
+) -> tuple[bool, str]:
+    cover_field_id = attachment_field_ids.get("封面文件", "")
+    if not cover_field_id:
+        return False, ""
+    local_cover = _local_cover_file_from_row(row)
+    if local_cover:
+        try:
+            await _upload_base_attachment(base_token, table_id, record_id, cover_field_id, str(local_cover))
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)[:300]
+    cover_url = _cover_url_from_row(row)
+    if not cover_url:
+        return False, ""
+    temp_path: Path | None = None
+    try:
+        temp_path = await _download_media_to_temp_file(cover_url)
+        await _upload_base_attachment(base_token, table_id, record_id, cover_field_id, str(temp_path))
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)[:300]
+    finally:
+        if temp_path:
+            with contextlib.suppress(Exception):
+                temp_path.unlink()
+
+
 def _chunk_table_rows(rows: List[List[Any]], chunk_size: int = 50) -> List[List[List[Any]]]:
     if not rows:
         return []
@@ -1061,8 +1351,8 @@ def _chunk_table_rows(rows: List[List[Any]], chunk_size: int = 50) -> List[List[
 
 def _base_dedupe_field_candidates(data_type: str) -> List[str]:
     if data_type == "notes":
-        return ["note_id", "笔记ID", "id"]
-    return ["comment_id", "评论ID"]
+        return ["note_id", "笔记ID", "id", "发布笔记链接", "笔记链接"]
+    return ["comment_id", "评论ID", "笔记链接", "评论内容"]
 
 
 def _pgy_summary_path_from_request(request: PgyKolSyncRequest) -> Path:
@@ -1091,9 +1381,11 @@ def _pick_number(*values: Any) -> Any:
 def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any]:
     alias_map = {
         "类型": ["row_type", "类型"],
+        "目标/推荐博主": ["row_type", "类型"],
         "达人类型": ["row_type", "类型"],
         "去重键": ["dedupe_key", "去重键"],
         "排名": ["rank", "排名"],
+        "推荐排名": ["rank", "排名"],
         "达人昵称": ["nickname", "博主昵称", "博主名"],
         "博主昵称": ["nickname", "达人昵称", "博主名"],
         "博主名": ["nickname", "达人昵称", "博主昵称"],
@@ -1102,6 +1394,7 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "博主主页": ["blogger_homepage_url", "博主主页"],
         "达人主页": ["blogger_homepage_url", "博主主页"],
         "主页链接": ["blogger_homepage_url", "博主主页"],
+        "蒲公英主页链接": ["pgy_homepage_url", "蒲公英主页链接"],
         "目标达人昵称": ["target_nickname", "目标达人昵称"],
         "目标小红书号": ["target_red_id", "目标小红书号"],
         "地区": ["location", "地区"],
@@ -1112,22 +1405,47 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "图文报价": ["picture_price", "图文报价"],
         "视频报价": ["video_price", "视频报价"],
         "标签": ["tags", "标签"],
+        "内容类目（标签）": ["tags", "标签", "内容类目（标签）"],
+        "合作行业": ["cooperation_industry", "合作行业"],
         "博主优势": ["kol_advantage", "博主优势"],
         "数据日期": ["data_date", "数据日期"],
+        "采集博主数据日期": ["data_date", "数据日期"],
         "发布笔记数": ["note_number", "发布笔记数"],
         "曝光量": ["exposure_count", "imp", "曝光量"],
         "阅读量": ["read_count", "read", "阅读量"],
         "曝光中位数": ["imp_median", "exposure_count", "imp", "曝光中位数"],
+        "日常笔记曝光中位数": ["imp_median", "exposure_count", "imp", "曝光中位数"],
+        "合作笔记曝光中位数": ["business_imp_median", "合作笔记曝光中位数"],
         "阅读中位数": ["read_median", "read_count", "read", "阅读中位数"],
+        "日常笔记阅读中位数": ["read_median", "read_count", "read", "阅读中位数"],
+        "合作笔记阅读中位数": ["business_read_median", "合作笔记阅读中位数"],
         "互动中位数": ["interaction_median", "互动中位数"],
+        "日常笔记互动中位数": ["interaction_median", "互动中位数"],
+        "合作笔记互动中位数": ["business_interaction_median", "合作笔记互动中位数"],
         "中位点赞量": ["like_median", "中位点赞量"],
+        "日常笔记中位点赞量": ["like_median", "中位点赞量"],
+        "合作笔记中位点赞量": ["business_like_median", "合作笔记中位点赞量"],
         "中位收藏量": ["collect_median", "中位收藏量"],
+        "日常笔记中位收藏量": ["collect_median", "中位收藏量"],
+        "合作笔记中位收藏量": ["business_collect_median", "合作笔记中位收藏量"],
         "中位评论量": ["comment_median", "中位评论量"],
+        "日常笔记中位评论量": ["comment_median", "中位评论量"],
+        "合作笔记中位评论量": ["business_comment_median", "合作笔记中位评论量"],
         "中位分享量": ["share_median", "中位分享量"],
+        "日常笔记中位分享量": ["share_median", "中位分享量"],
+        "合作笔记中位分享量": ["business_share_median", "合作笔记中位分享量"],
         "中位关注量": ["follow_median", "中位关注量"],
+        "日常笔记中位关注量": ["follow_median", "中位关注量"],
+        "合作笔记中位关注量": ["business_follow_median", "合作笔记中位关注量"],
         "互动率": ["interaction_rate", "互动率"],
+        "日常笔记互动率": ["interaction_rate", "互动率"],
+        "合作笔记互动率": ["business_interaction_rate", "合作笔记互动率"],
         "视频完播率": ["video_full_view_rate", "视频完播率"],
+        "日常笔记视频完播率": ["video_full_view_rate", "视频完播率"],
+        "合作笔记视频完播率": ["business_video_full_view_rate", "合作笔记视频完播率"],
         "图文3秒阅读率": ["picture_3s_view_rate", "图文3秒阅读率"],
+        "日常笔记图文3秒阅读率": ["picture_3s_view_rate", "图文3秒阅读率"],
+        "合作笔记图文3秒阅读率": ["business_picture_3s_view_rate", "合作笔记图文3秒阅读率"],
         "千赞笔记比例": ["thousand_like_percent", "千赞笔记比例"],
         "百赞笔记比例": ["hundred_like_percent", "百赞笔记比例"],
         "近7日活跃天数": ["active_day_7", "近7日活跃天数"],
@@ -1151,9 +1469,18 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "详情文本": ["detail_text", "详情文本"],
         "详情文本附件": ["detail_text", "详情文本附件"],
         "更新时间": ["updated_at", "更新时间"],
+        "最新笔记更新时间": ["updated_at", "更新时间"],
         "采集时间": ["updated_at", "采集时间"],
     }
-    numeric_fields = {"排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "发布笔记数", "曝光量", "阅读量", "曝光中位数", "阅读中位数", "互动中位数", "中位点赞量", "中位收藏量", "中位评论量", "中位分享量", "中位关注量", "近7日活跃天数", "邀约数", "粉丝增量"}
+    numeric_fields = {
+        "排名", "推荐排名", "粉丝数", "获赞收藏", "商业笔记数", "最低报价", "图文报价", "视频报价", "发布笔记数",
+        "曝光量", "阅读量", "曝光中位数", "阅读中位数", "互动中位数", "中位点赞量", "中位收藏量", "中位评论量",
+        "中位分享量", "中位关注量", "日常笔记曝光中位数", "日常笔记阅读中位数", "日常笔记互动中位数",
+        "日常笔记中位点赞量", "日常笔记中位收藏量", "日常笔记中位评论量", "日常笔记中位分享量",
+        "日常笔记中位关注量", "合作笔记曝光中位数", "合作笔记阅读中位数", "合作笔记互动中位数",
+        "合作笔记中位点赞量", "合作笔记中位收藏量", "合作笔记中位评论量", "合作笔记中位分享量",
+        "合作笔记中位关注量", "近7日活跃天数", "邀约数", "粉丝增量",
+    }
     values: List[Any] = []
     for field_name in table_fields:
         keys = alias_map.get(field_name, [field_name])
@@ -1377,6 +1704,7 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
         "nickname": summary.get("nickname") or target.get("name") or "",
         "red_id": summary.get("red_id") or target.get("redId") or "",
         "blogger_homepage_url": target_metrics.get("blogger_homepage_url") or (f"https://www.xiaohongshu.com/user/profile/{target.get('userId')}" if target.get("userId") else ""),
+        "pgy_homepage_url": f"https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/{target.get('userId')}" if target.get("userId") else "",
         "target_nickname": summary.get("nickname") or target.get("name") or "",
         "target_red_id": summary.get("red_id") or target.get("redId") or "",
         "location": target.get("location") or "",
@@ -1402,6 +1730,7 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
             "row_type": "相似博主",
             "target_nickname": target_row["nickname"],
             "target_red_id": target_row["red_id"],
+            "pgy_homepage_url": f"https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/{item.get('userId')}" if item.get("userId") else "",
             "output_dir": output_dir,
             "screenshot": item.get("screenshot") or "",
             "detail_text": item.get("detail_text") or "",
@@ -1413,34 +1742,47 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
     return rows
 
 
-async def _upload_base_attachment(base_token: str, table_id: str, record_id: str, field_name: str, file_path: str) -> None:
+async def _upload_base_attachment(base_token: str, table_id: str, record_id: str, field_id: str, file_path: str) -> None:
     if not file_path:
         return
+    project_root = Path(__file__).resolve().parents[2]
     path = Path(file_path)
     if not path.is_absolute():
-        path = Path(__file__).resolve().parents[2] / path
+        path = project_root / path
     path = path.resolve()
     if not path.exists() or not path.is_file():
         return
-    project_root = Path(__file__).resolve().parents[2]
+
+    staged_path: Path | None = None
     try:
-        cli_file = str(path.relative_to(project_root))
+        cli_path = path.relative_to(project_root)
     except ValueError:
-        cli_file = str(path)
-    await _run_lark_cli(
-        [
-            _find_lark_cli(),
-            "base", "+record-upload-attachment",
-            "--as", "user",
-            "--base-token", base_token,
-            "--table-id", table_id,
-            "--record-id", record_id,
-            "--field-id", field_name,
-            "--file", cli_file,
-            "--name", path.name,
-        ],
-        timeout_sec=60,
-    )
+        staging_dir = project_root / ".tmp_lark_uploads"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        staged_path = staging_dir / f"{uuid4().hex}_{path.name}"
+        shutil.copy2(path, staged_path)
+        cli_path = staged_path.relative_to(project_root)
+
+    try:
+        await _run_lark_cli(
+            [
+                _find_lark_cli(),
+                "base", "+record-upload-attachment",
+                "--as", "user",
+                "--base-token", base_token,
+                "--table-id", table_id,
+                "--record-id", record_id,
+                "--field-id", field_id,
+                "--file", cli_path.as_posix(),
+            ],
+            timeout_sec=60,
+        )
+    finally:
+        if staged_path:
+            with contextlib.suppress(Exception):
+                staged_path.unlink()
+            with contextlib.suppress(Exception):
+                staged_path.parent.rmdir()
 
 
 async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any]:
@@ -1527,13 +1869,24 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
         batch_rows = new_rows[i:i + 200]
         rows_for_attachments.extend(batch_rows)
         created += len(batch_rows)
-    screenshot_field = "截图" if field_types.get("截图") == "attachment" else "截图附件"
+    attachment_field_ids = {
+        str(field.get("name")): str(field.get("id"))
+        for field in field_defs
+        if field.get("type") == "attachment" and field.get("name") and field.get("id")
+    }
+    screenshot_field = "截图" if "截图" in attachment_field_ids else "截图附件"
     attachment_uploads = 0
     attachment_errors: List[str] = []
     for record_id, row in zip(record_ids, rows_for_attachments):
-        if field_types.get(screenshot_field) == "attachment" and row.get("screenshot"):
+        if screenshot_field in attachment_field_ids and row.get("screenshot"):
             try:
-                await _upload_base_attachment(request.base_token, request.table_id, record_id, screenshot_field, row.get("screenshot") or "")
+                await _upload_base_attachment(
+                    request.base_token,
+                    request.table_id,
+                    record_id,
+                    attachment_field_ids[screenshot_field],
+                    row.get("screenshot") or "",
+                )
                 attachment_uploads += 1
             except Exception as exc:
                 attachment_errors.append(str(exc)[:300])
@@ -1621,7 +1974,7 @@ def _clear_creator_data_files() -> None:
 async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
     table_fields = await _read_table_fields(request.base_token, request.table_id)
     if not table_fields:
-        raise HTTPException(status_code=400, detail="合作监控表没有可用字段")
+        raise HTTPException(status_code=400, detail="笔记数据监测表没有可用字段")
     file_path = Path(request.file_path) if request.file_path else _latest_local_file("notes", "creator")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
@@ -2164,11 +2517,11 @@ async def pgy_sync_kol(request: PgyKolSyncRequest):
 async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     if not request.base_token:
         raise HTTPException(status_code=400, detail="缺少 base_token")
-    account_filter_fields = [_text_field("项目名"), _text_field("搜索关键词"), _text_field("账号"), _text_field("账号ID"), _text_field("账号主页"), _text_field("笔记标题"), _text_field("笔记链接"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _text_field("语义标签"), _text_field("推荐理由")]
+    account_filter_fields = _account_content_monitor_fields()
     viral_monitor_fields = _viral_monitor_fields()
-    note_recreation_fields = _viral_monitor_fields()
-    comments_fields = _comments_fields()
-    collaboration_fields = [_text_field("项目名"), _text_field("监控周期"), _text_field("搜索关键词"), _text_field("笔记标题"), _text_field("笔记链接"), _text_field("博主名"), _number_field("点赞量"), _number_field("评论量"), _number_field("收藏量"), _number_field("分享量"), _datetime_field("抓取时间")]
+    note_recreation_fields = _note_recreation_fields()
+    comments_fields = _sentiment_monitor_fields()
+    collaboration_fields = _note_data_monitor_fields()
     creator_selection_fields = _creator_selection_fields()
     existing = await _list_base_tables(request.base_token)
     existing_map = {t["name"]: t["id"] for t in existing}
@@ -2256,8 +2609,10 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             account_filter_table_name=request.account_filter_table_name,
             viral_monitor_table_name=request.viral_monitor_table_name,
             note_recreation_table_name=request.note_recreation_table_name,
+            comments_table_name=request.comments_table_name,
             collaboration_monitor_table_name=request.collaboration_monitor_table_name,
             collab_comments_table_name=request.collab_comments_table_name,
+            creator_selection_table_name=request.creator_selection_table_name,
         )
     )
     return {"status": "ok", "project_name": request.project_name.strip(), "base_token": base_token, "root_table": root_table, "tables": scenario.get("tables", []), "base_raw": base_info.get("raw", {})}
@@ -2265,13 +2620,24 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
 
 @router.post("/sync-local-to-base")
 async def sync_local_to_base(request: LocalToBaseSyncRequest):
-    table_fields = await _read_table_fields(request.base_token, request.table_id)
+    field_defs = await _read_table_field_defs(request.base_token, request.table_id)
+    field_types = {field.get("name"): field.get("type") for field in field_defs if field.get("name")}
+    table_fields = [
+        field.get("name")
+        for field in field_defs
+        if field.get("name") and field.get("type") not in {"not_support", "attachment"}
+    ]
+    attachment_field_ids = {
+        str(field.get("name")): str(field.get("id"))
+        for field in field_defs
+        if field.get("type") == "attachment" and field.get("name") and field.get("id")
+    }
     if not table_fields:
         raise HTTPException(status_code=400, detail="目标数据表没有可用字段")
     file_path = Path(request.file_path) if request.file_path else _latest_local_file(request.data_type, request.crawler_type_hint)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
-    rows: List[List[Any]] = []
+    row_items: List[Dict[str, Any]] = []
     local_rows = _read_local_rows(file_path)
     for obj in local_rows:
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
@@ -2285,14 +2651,14 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         if request.source_keyword and not (obj.get("source_keyword") or obj.get("关键词")):
             obj["source_keyword"] = request.source_keyword
             obj["关键词"] = request.source_keyword
-        rows.append(_row_to_table_values(obj, table_fields, request.data_type))
+        row_items.append({"source": obj, "values": _row_to_table_values(obj, table_fields, request.data_type)})
     if request.data_type == "notes":
         liked_idx = table_fields.index("liked_count") if "liked_count" in table_fields else -1
         if liked_idx >= 0:
-            rows.sort(key=lambda x: int(x[liked_idx]) if isinstance(x[liked_idx], int) else 0, reverse=True)
+            row_items.sort(key=lambda x: int(x["values"][liked_idx]) if isinstance(x["values"][liked_idx], int) else 0, reverse=True)
     if request.limit and request.limit > 0:
-        rows = rows[:request.limit]
-    if not rows:
+        row_items = row_items[:request.limit]
+    if not row_items:
         raise HTTPException(status_code=400, detail="未找到可同步的数据（请检查关键词/文件类型）")
     lark_cli_bin = _find_lark_cli()
     dedupe_fields = _base_dedupe_field_candidates(request.data_type)
@@ -2300,9 +2666,12 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
     existing = await _read_existing_base_records(request.base_token, request.table_id, dedupe_fields)
     created = 0
     updated = 0
+    attachment_uploads = 0
+    attachment_errors: List[str] = []
     dedupe_idx = table_fields.index(dedupe_field) if dedupe_field in table_fields else -1
-    rows_to_create: List[List[Any]] = []
-    for row_values in rows:
+    rows_to_create: List[Dict[str, Any]] = []
+    for item in row_items:
+        row_values = item["values"]
         dedupe_key = str(row_values[dedupe_idx]).strip() if dedupe_idx >= 0 and row_values[dedupe_idx] else ""
         record_id = existing.get(dedupe_key) if dedupe_key else None
         if record_id:
@@ -2313,15 +2682,29 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
                     timeout_sec=60,
                 )
             updated += 1
+            uploaded, error = await _upload_cover_file_if_available(request.base_token, request.table_id, record_id, item["source"], attachment_field_ids)
+            if uploaded:
+                attachment_uploads += 1
+            elif error:
+                attachment_errors.append(error)
         else:
-            rows_to_create.append(row_values)
-    for batch in _chunk_table_rows(rows_to_create):
+            rows_to_create.append(item)
+    for batch in _chunk_table_rows([item["values"] for item in rows_to_create]):
+        batch_start = created
+        batch_items = rows_to_create[batch_start:batch_start + len(batch)]
         payload = {"fields": table_fields, "rows": batch}
         with _lark_json_arg(payload) as json_arg:
-            await _run_lark_cli(
+            created_payload = await _run_lark_cli(
                 [lark_cli_bin, "base", "+record-batch-create", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--json", json_arg],
                 timeout_sec=60,
             )
+        record_ids = [str(record_id) for record_id in ((created_payload.get("data") or {}).get("record_id_list") or []) if record_id]
+        for record_id, item in zip(record_ids, batch_items):
+            uploaded, error = await _upload_cover_file_if_available(request.base_token, request.table_id, record_id, item["source"], attachment_field_ids)
+            if uploaded:
+                attachment_uploads += 1
+            elif error:
+                attachment_errors.append(error)
         created += len(batch)
     target_url = f"https://my.feishu.cn/base/{request.base_token}?table={request.table_id}"
     return {
@@ -2334,6 +2717,8 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         "fields": table_fields,
         "created": created,
         "updated": updated,
+        "attachment_uploads": attachment_uploads,
+        "attachment_errors": attachment_errors[:10],
     }
 
 

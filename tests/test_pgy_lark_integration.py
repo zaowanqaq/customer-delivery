@@ -64,6 +64,59 @@ def test_pgy_summary_rows_map_core_read_imp_to_existing_median_fields():
     ]
 
 
+def test_pgy_summary_rows_map_to_customer_creator_selection_fields():
+    summary = {
+        "nickname": "数字生命卡兹克",
+        "red_id": "wzglyay2023",
+        "blogger_detail": {
+            "userId": "62c98736000000001501e075",
+            "name": "数字生命卡兹克",
+            "redId": "wzglyay2023",
+            "fansCount": 12345,
+            "likeCollectCountInfo": 67890,
+            "businessNoteCount": 8,
+            "picturePrice": 1000,
+            "videoPrice": 2000,
+        },
+        "propagation_performance": {
+            "data_summary": {"dateKey": "2026-05-20", "noteNumber": 88},
+            "core_data": {"sumData": {"imp": 132139, "read": 20753, "dateKey": "2026-05-20"}},
+            "notes_rate": {"interactionMedian": 321, "likeMedian": 111, "collectMedian": 22, "commentMedian": 3},
+        },
+    }
+
+    row = crawler._pgy_summary_to_rows(summary, "downloads/pgy/数字生命卡兹克")[0]
+    values = crawler._pgy_row_to_values(row, [
+        "目标/推荐博主",
+        "推荐排名",
+        "达人昵称",
+        "小红书号",
+        "主页链接",
+        "蒲公英主页链接",
+        "粉丝数",
+        "日常笔记曝光中位数",
+        "日常笔记阅读中位数",
+        "日常笔记互动中位数",
+        "日常笔记中位点赞量",
+        "日常笔记中位收藏量",
+        "日常笔记中位评论量",
+        "最新笔记更新时间",
+        "采集博主数据日期",
+    ])
+
+    assert values[:7] == [
+        "目标达人",
+        0,
+        "数字生命卡兹克",
+        "wzglyay2023",
+        "https://www.xiaohongshu.com/user/profile/62c98736000000001501e075",
+        "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/62c98736000000001501e075",
+        12345,
+    ]
+    assert values[7:13] == [132139, 20753, 321, 111, 22, 3]
+    assert values[14] == "2026-05-20"
+
+
 @pytest.mark.asyncio
 async def test_pgy_run_kol_route_forces_api_only(monkeypatch):
     captured_args = []

@@ -61,3 +61,9 @@ def test_env_check_covers_runtime_dependencies_and_cdp_browser(project_root_path
     assert "BrowserLauncher" in source
     assert "ENABLE_CDP_MODE" in source
     assert "CUSTOM_BROWSER_PATH" in source
+
+
+def test_lark_cli_lookup_covers_homebrew_on_macos(project_root_path):
+    source = (project_root_path / "api" / "routers" / "crawler.py").read_text(encoding="utf-8")
+
+    assert 'Path("/opt/homebrew/bin/lark-cli")' in source

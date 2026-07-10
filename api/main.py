@@ -71,12 +71,12 @@ OPS_CONFIG_DEFAULT = {
     "sample_creator_ids": "",
     "notes_per_creator": 20,
     "scenario_base_token": "",
-    "account_filter_table_name": "账号筛选表",
-    "viral_monitor_table_name": "爆款监控表",
-    "note_recreation_table_name": "笔记二创表",
-    "comments_table_name": "笔记评论表",
-    "collaboration_monitor_table_name": "合作笔记监控表",
-    "collab_comments_table_name": "合作笔记评论表",
+    "account_filter_table_name": "账号内容监测表",
+    "viral_monitor_table_name": "平台爆款监测表",
+    "note_recreation_table_name": "笔记内容二创表",
+    "comments_table_name": "笔记舆情监控表",
+    "collaboration_monitor_table_name": "笔记数据监测表",
+    "collab_comments_table_name": "合作笔记舆情监控表",
     "creator_selection_table_name": "达人智能圈选表",
     "collab_project_name": "",
     "collab_source_keyword": "",
@@ -120,6 +120,15 @@ PROJECT_BOUND_FIELDS = {
     "collab_sync_limit",
     "pgy_table_id",
     "pgy_sync_after_run",
+}
+
+OPS_TABLE_NAME_MIGRATIONS = {
+    "account_filter_table_name": {"账号筛选表": "账号内容监测表"},
+    "viral_monitor_table_name": {"爆款监控表": "平台爆款监测表"},
+    "note_recreation_table_name": {"笔记二创表": "笔记内容二创表"},
+    "comments_table_name": {"笔记评论表": "笔记舆情监控表"},
+    "collaboration_monitor_table_name": {"合作笔记监控表": "笔记数据监测表"},
+    "collab_comments_table_name": {"合作笔记评论表": "合作笔记舆情监控表"},
 }
 
 REQUIRED_RUNTIME_IMPORTS = {
@@ -167,12 +176,12 @@ class OpsConfigPayload(BaseModel):
     sample_creator_ids: str = ""
     notes_per_creator: int = 20
     scenario_base_token: str = ""
-    account_filter_table_name: str = "账号筛选表"
-    viral_monitor_table_name: str = "爆款监控表"
-    note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "笔记评论表"
-    collaboration_monitor_table_name: str = "合作笔记监控表"
-    collab_comments_table_name: str = "合作笔记评论表"
+    account_filter_table_name: str = "账号内容监测表"
+    viral_monitor_table_name: str = "平台爆款监测表"
+    note_recreation_table_name: str = "笔记内容二创表"
+    comments_table_name: str = "笔记舆情监控表"
+    collaboration_monitor_table_name: str = "笔记数据监测表"
+    collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
     collab_project_name: str = ""
     collab_source_keyword: str = ""
@@ -192,6 +201,24 @@ class OpsConfigPayload(BaseModel):
     project_profiles: Dict[str, Dict[str, Any]] = {}
 
 
+def _migrate_ops_table_names(config: dict) -> dict:
+    migrated = dict(config)
+    for field, replacements in OPS_TABLE_NAME_MIGRATIONS.items():
+        current = migrated.get(field)
+        if current in replacements:
+            migrated[field] = replacements[current]
+    profiles = migrated.get("project_profiles")
+    if isinstance(profiles, dict):
+        for profile in profiles.values():
+            if not isinstance(profile, dict):
+                continue
+            for field, replacements in OPS_TABLE_NAME_MIGRATIONS.items():
+                current = profile.get(field)
+                if current in replacements:
+                    profile[field] = replacements[current]
+    return migrated
+
+
 def _load_ops_config() -> dict:
     config = dict(OPS_CONFIG_DEFAULT)
     source_path = OPS_CONFIG_PATH if OPS_CONFIG_PATH.exists() else LEGACY_OPS_CONFIG_PATH
@@ -203,7 +230,7 @@ def _load_ops_config() -> dict:
                 config.update(loaded)
         except Exception:
             pass
-    return config
+    return _migrate_ops_table_names(config)
 
 
 def _save_ops_config(config_data: dict) -> None:
@@ -443,7 +470,7 @@ async def get_ops_config():
 @app.post("/api/ops-config")
 async def save_ops_config(payload: OpsConfigPayload):
     """Save ops config for independent ops page."""
-    config_data = payload.model_dump()
+    config_data = _migrate_ops_table_names(payload.model_dump())
     # Keep start_page >= 1 for stability.
     if config_data["start_page"] < 1:
         config_data["start_page"] = 1
