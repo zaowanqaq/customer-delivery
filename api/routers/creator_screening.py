@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..schemas.creator_screening import CreatorScreeningImportRequest, CreatorScreeningStartRequest
-from ..services.creator_screening import CreatorScreeningJobManager, parse_creator_screening_file
+from ..services.creator_screening import CreatorScreeningAI, CreatorScreeningJobManager, parse_creator_screening_file
 
 
 router = APIRouter(prefix="/creator-screening", tags=["creator-screening"])
@@ -23,6 +23,11 @@ async def download_template():
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=creator_screening_template.csv"},
     )
+
+
+@router.get("/preflight")
+async def preflight():
+    return CreatorScreeningAI().configuration_status()
 
 
 @router.post("/import")
@@ -48,6 +53,8 @@ async def start_job(request: CreatorScreeningStartRequest):
         raise HTTPException(status_code=400, detail="请填写筛选需求")
     if not request.candidates:
         raise HTTPException(status_code=400, detail="请先导入至少一位达人")
+    if any(not item.profile_url.strip() for item in request.candidates):
+        raise HTTPException(status_code=400, detail="主页链接为必填项")
     job = await screening_manager.start(request.requirement, request.candidates)
     return {"job_id": job.id, "status": "running"}
 

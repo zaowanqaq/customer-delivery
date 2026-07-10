@@ -25,7 +25,7 @@ async def _looks_like_login(page: Page) -> bool:
     return any(marker in content for marker in LOGIN_MARKERS)
 
 
-def _extract_ip(text: str) -> str:
+def extract_profile_ip(text: str) -> str:
     match = re.search(r"(?:IP属地|IP 地|IP所在地)\s*[：:]?\s*([^\s|｜，,。]{1,20})", text)
     return match.group(1).strip() if match else ""
 
@@ -45,6 +45,8 @@ async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path
         await page.goto(profile_url, wait_until="domcontentloaded", timeout=30_000)
         if await _looks_like_login(page):
             return ProfileSnapshot(profile_url=profile_url, status="异常", error="主页要求登录或出现验证码")
+        profile_header_text = (await page.locator("body").inner_text(timeout=5_000)).strip()
+        profile_ip_location = extract_profile_ip(profile_header_text)
         for _ in range(3):
             await page.evaluate("window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))")
             await page.wait_for_timeout(500)
@@ -53,7 +55,7 @@ async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path
         return ProfileSnapshot(
             profile_url=profile_url,
             visible_text=text[:12_000],
-            ip_location=_extract_ip(text),
+            ip_location=profile_ip_location,
             screenshot_paths=screenshots,
         )
     except Exception as exc:

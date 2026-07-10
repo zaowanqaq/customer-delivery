@@ -110,6 +110,12 @@ class CreatorScreeningAI:
         self._deepseek_key = deepseek_key if deepseek_key is not None else os.getenv("DEEPSEEK_API_KEY", "")
         self._openrouter_key = openrouter_key if openrouter_key is not None else os.getenv("OPENROUTER_API_KEY", "")
 
+    def configuration_status(self) -> dict[str, bool]:
+        return {
+            "deepseek_configured": bool(self._deepseek_key),
+            "openrouter_configured": bool(self._openrouter_key),
+        }
+
     async def _post_json(self, url: str, headers: dict, body: dict) -> dict:
         async with httpx.AsyncClient(timeout=45) as client:
             response = await client.post(url, headers=headers, json=body)
@@ -363,10 +369,10 @@ def parse_creator_screening_file(filename: str, content: bytes) -> CreatorImport
         blogger_id = _clean_cell(row.get("博主ID"))
         profile_url = _clean_cell(row.get("主页链接"))
         price = _clean_cell(row.get("达人价格"))
-        if not blogger_id and not profile_url:
-            result.invalid_rows.append({"row": excel_row, "reason": "博主ID或主页链接至少填写一项"})
+        if not profile_url:
+            result.invalid_rows.append({"row": excel_row, "reason": "主页链接必填"})
             continue
-        identity = (profile_url or blogger_id).lower()
+        identity = profile_url.lower()
         if identity in seen:
             result.invalid_rows.append({"row": excel_row, "reason": f"与第{seen[identity]}行重复"})
             continue

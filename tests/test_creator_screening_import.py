@@ -11,10 +11,10 @@ def test_creator_screening_import_requires_all_customer_columns():
         parse_creator_screening_file("creators.csv", content)
 
 
-def test_creator_screening_import_keeps_valid_rows_and_reports_invalid_or_duplicate_rows():
+def test_creator_screening_import_requires_profile_url_and_reports_invalid_or_duplicate_rows():
     content = (
         "达人昵称,博主ID,主页链接,达人价格\n"
-        "甲,creator_1,,1000\n"
+        "甲,creator_1,https://www.xiaohongshu.com/user/profile/a,1000\n"
         "乙,,,2000\n"
         "丙,creator_1,,3000\n"
         "丁,,https://www.xiaohongshu.com/user/profile/d,4000\n"
@@ -27,6 +27,6 @@ def test_creator_screening_import_keeps_valid_rows_and_reports_invalid_or_duplic
         (2, "丁", "", "4000"),
     ]
     assert result.invalid_rows == [
-        {"row": 3, "reason": "博主ID或主页链接至少填写一项"},
-        {"row": 4, "reason": "与第2行重复"},
+        {"row": 3, "reason": "主页链接必填"},
+        {"row": 4, "reason": "主页链接必填"},
     ]

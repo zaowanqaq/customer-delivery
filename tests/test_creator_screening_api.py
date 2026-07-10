@@ -42,7 +42,7 @@ async def fake_snapshot(candidate, job_id):
 @pytest.mark.asyncio
 async def test_import_endpoint_returns_candidates_and_invalid_rows():
     content = base64.b64encode(
-        "达人昵称,博主ID,主页链接,达人价格\n甲,a,,100\n乙,,,200\n".encode("utf-8")
+        "达人昵称,博主ID,主页链接,达人价格\n甲,a,https://www.xiaohongshu.com/user/profile/a,100\n乙,,,200\n".encode("utf-8")
     ).decode("ascii")
 
     result = await creator_screening.import_candidates(
@@ -51,7 +51,7 @@ async def test_import_endpoint_returns_candidates_and_invalid_rows():
 
     assert result["count"] == 1
     assert result["candidates"][0]["nickname"] == "甲"
-    assert result["invalid_rows"] == [{"row": 3, "reason": "博主ID或主页链接至少填写一项"}]
+    assert result["invalid_rows"] == [{"row": 3, "reason": "主页链接必填"}]
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_start_job_and_status_expose_frontend_result_rows(monkeypatch):
     monkeypatch.setattr(creator_screening, "screening_manager", manager)
     request = CreatorScreeningStartRequest(
         requirement="浙江线下打卡",
-        candidates=[CreatorCandidateInput(index=1, nickname="甲", blogger_id="a", price="100")],
+        candidates=[CreatorCandidateInput(index=1, nickname="甲", blogger_id="a", profile_url="https://www.xiaohongshu.com/user/profile/a", price="100")],
     )
 
     started = await creator_screening.start_job(request)
@@ -90,3 +90,13 @@ async def test_unknown_job_returns_not_found(monkeypatch):
 
     with pytest.raises(creator_screening.HTTPException, match="任务不存在"):
         await creator_screening.get_job("missing")
+
+
+@pytest.mark.asyncio
+async def test_preflight_reports_missing_model_keys_without_leaking_values(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    result = await creator_screening.preflight()
+
+    assert result == {"deepseek_configured": False, "openrouter_configured": False}

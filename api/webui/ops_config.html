@@ -582,8 +582,8 @@
               <div class="grid">
                 <div class="row full">
                   <label>达人库文件（csv / Excel）</label>
-                  <input id="creator_screening_file" type="file" accept=".csv,.xlsx,.xls">
-                  <p class="hint">表头固定为：达人昵称、博主ID、主页链接、达人价格。博主ID或主页链接至少填写一项。</p>
+                  <input id="creator_screening_file" type="file" accept=".csv,.xlsx,.xls" onchange="handleCreatorScreeningFileChange()">
+                  <p class="hint">表头固定为：达人昵称、博主ID、主页链接、达人价格。主页链接为必填项；博主ID可选。</p>
                 </div>
                 <div class="row full">
                   <label>筛选需求</label>
@@ -592,7 +592,6 @@
               </div>
               <div class="btns">
                 <button class="ghost" type="button" onclick="downloadCreatorScreeningTemplate()">下载模板</button>
-                <button class="ghost" type="button" onclick="importCreatorScreeningFile()">导入达人库</button>
                 <button class="primary" type="button" onclick="startCreatorScreening()">启动 AI 初筛</button>
               </div>
               <div id="creator_screening_status" class="creator-screening-status">等待导入达人库</div>
@@ -2050,6 +2049,7 @@
       });
       document.getElementById("creator_selection_pgy_panel").classList.toggle("active", mode === "pgy");
       document.getElementById("creator_selection_ai_panel").classList.toggle("active", mode === "ai");
+      if (mode === "ai") checkCreatorScreeningPreflight();
     }
 
     function setCreatorScreeningStatus(message) {
@@ -2077,6 +2077,30 @@
       const invalid = (data.invalid_rows || []).length;
       setCreatorScreeningStatus(`已导入 ${creatorScreeningCandidates.length} 位达人${invalid ? `，${invalid} 行未纳入初筛` : ""}`);
       return creatorScreeningCandidates;
+    }
+
+    async function handleCreatorScreeningFileChange() {
+      creatorScreeningCandidates = [];
+      renderCreatorScreeningResults([]);
+      try {
+        await importCreatorScreeningFile();
+      } catch (error) {
+        setCreatorScreeningStatus("上传失败：" + (error.message || String(error)));
+      }
+    }
+
+    async function checkCreatorScreeningPreflight() {
+      try {
+        const response = await fetch("/api/creator-screening/preflight");
+        const data = await response.json();
+        if (!response.ok) return;
+        const missing = [];
+        if (!data.deepseek_configured) missing.push("DEEPSEEK_API_KEY");
+        if (!data.openrouter_configured) missing.push("OPENROUTER_API_KEY");
+        if (missing.length) setCreatorScreeningStatus("AI 接口未配置：" + missing.join("、") + "。配置后重启服务再执行初筛。");
+      } catch (_) {
+        // The upload flow will surface a readable error if the local API is unavailable.
+      }
     }
 
     function renderCreatorScreeningResults(rows) {

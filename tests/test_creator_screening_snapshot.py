@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 
-from tools.xhs_profile_snapshot import capture_visible_profile
+from tools.xhs_profile_snapshot import capture_visible_profile, extract_profile_ip
 
 
 class FakeLocator:
@@ -65,3 +65,7 @@ async def test_login_page_returns_exception_snapshot(tmp_path):
 
     assert snapshot.status == "异常"
     assert "登录" in snapshot.error
+
+
+def test_profile_ip_is_extracted_from_profile_header_text():
+    assert extract_profile_ip("体育周报 小红书号：6301714171 IP属地：重庆 中国综合类体育类报纸") == "重庆"

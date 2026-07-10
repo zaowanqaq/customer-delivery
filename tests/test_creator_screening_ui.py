@@ -13,8 +13,10 @@ def test_creator_selection_tab_embeds_ai_profile_screening_controls():
     assert "AI 主页初筛" in html
     assert 'id="creator_screening_file"' in html
     assert 'accept=".csv,.xlsx,.xls"' in html
+    assert 'onchange="handleCreatorScreeningFileChange()"' in html
     assert 'id="creator_screening_requirement"' in html
     assert "启动 AI 初筛" in html
+    assert ">导入达人库<" not in html
     assert "/api/creator-screening/import" in html
     assert "/api/creator-screening/jobs" in html
 
@@ -26,3 +28,4 @@ def test_creator_selection_ai_result_table_has_all_customer_columns_and_statuses
         assert label in html
     for status in ("符合", "不符合", "待人工确认", "异常"):
         assert status in html
+    assert "主页链接为必填项；博主ID可选" in html
