@@ -37,7 +37,7 @@ def test_customer_feedback_copy_and_navigation_are_updated():
         "平台爆款检索",
         "达人智能圈选",
         "账号内容监测",
-        "笔记数据监控",
+        "笔记数据监测",
         "笔记舆情监控",
     ]
     positions = [html.index(f">{label}<") for label in expected_nav]
@@ -107,6 +107,18 @@ def test_project_overview_uses_single_full_width_panel_and_hot_content_compass()
     assert 'class="overview-side"' not in html
     assert "选号罗盘" not in html
     assert "<h2>爆款罗盘</h2>" in html
+
+
+def test_project_binding_uses_customer_table_names():
+    html = _ops_config_text()
+
+    assert "爆款评论 -> 笔记舆情监控表" in html
+    assert "步骤5合作笔记 -> 笔记数据监测表" in html
+    assert "步骤5合作评论 -> 合作笔记舆情监控表" in html
+    assert 'collab_comments_table_name: document.getElementById("collab_comments_table_name").value.trim()' in html
+    assert "爆款评论表" not in html
+    assert "合作监控表" not in html
+    assert "合作评论表" not in html
 
 
 def test_sample_account_file_import_controls_are_present():
