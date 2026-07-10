@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** 在运营工作台提供独立页面，上传客户达人库和自然语言需求后，仅依据小红书主页可见信息完成 AI 初筛，并展示四状态结果表。
+**Goal:** 在运营工作台“达人智能圈选”tab 内提供 AI 主页初筛子标签，上传客户达人库和自然语言需求后，仅依据小红书主页可见信息完成 AI 初筛，并展示四状态结果表。
 
-**Architecture:** 新建独立 creator_screening 路由与服务层，不改动现有蒲公英圈选和飞书同步流程。服务层分为文件解析、主页可见信息快照、AI 规则/判定和内存任务编排；页面轮询任务状态并展示八列结果。
+**Architecture:** 新建独立 creator_screening 路由与服务层，不改动现有蒲公英圈选和飞书同步流程。服务层分为文件解析、主页可见信息快照、AI 规则/判定和内存任务编排；在现有“达人智能圈选”区域新增子标签，轮询任务状态并展示八列结果。
 
 **Tech Stack:** FastAPI、Pydantic、httpx、Playwright、pandas/openpyxl、原生 HTML/CSS/JavaScript、pytest/pytest-asyncio。
 
@@ -27,9 +27,8 @@
 - Create: api/services/creator_screening.py — 数据模型、文件校验、AI 调用、任务生命周期与状态映射。
 - Create: tools/xhs_profile_snapshot.py — 用 Playwright 采集单个主页可见文字与截图，并以 JSON 输出。
 - Create: api/routers/creator_screening.py — 文件导入、创建任务、轮询状态和下载模板接口。
-- Modify: api/routers/__init__.py、api/main.py — 注册路由并服务独立页面。
-- Create: api/webui/creator_screening.html — 上传、需求、进度、八列表格和行详情界面。
-- Modify: api/webui/ops_config.html — 增加“AI 达人初筛”入口，不替换已有“达人智能圈选”。
+- Modify: api/routers/__init__.py、api/main.py — 注册新 API 路由。
+- Modify: api/webui/ops_config.html — 在“达人智能圈选”内新增“AI 主页初筛”子标签、上传、需求、进度、八列表格和行详情界面。
 - Create: tests/test_creator_screening_import.py、tests/test_creator_screening_ai.py、tests/test_creator_screening_snapshot.py、tests/test_creator_screening_api.py、tests/test_creator_screening_ui.py。
 
 ### Task 1: 定义导入契约和客户达人库解析
@@ -262,7 +261,7 @@ Expected: FAIL，提示路由模块不存在。
                 job.results.append(await self._screen_one(job.rules, candidate))
                 job.completed += 1
 
-只有博主 ID 时构造 https://www.xiaohongshu.com/user/profile/ 加 URL 编码 ID。每行异常必须捕获为 异常，不能中断其余候选人；若全局需求解析失败，仍创建任务并将所有候选行标记为 异常，理由为需求解析失败。状态接口只返回无密钥的元数据、进度、八列行数据和详情证据。模板接口返回四列表头 CSV。api/main.py 注册新路由并新增 GET /creator-screening 服务独立 HTML。
+只有博主 ID 时构造 https://www.xiaohongshu.com/user/profile/ 加 URL 编码 ID。每行异常必须捕获为 异常，不能中断其余候选人；若全局需求解析失败，仍创建任务并将所有候选行标记为 异常，理由为需求解析失败。状态接口只返回无密钥的元数据、进度、八列行数据和详情证据。模板接口返回四列表头 CSV。api/main.py 只注册新 API 路由，不新增独立页面路由。
 
 - [ ] **Step 4: 运行 API 测试。**
 
@@ -278,28 +277,27 @@ Expected: PASS。
 ### Task 5: 构建独立工作台页面并进行端到端验证
 
 **Files:**
-- Create: api/webui/creator_screening.html
 - Modify: api/webui/ops_config.html
 - Test: tests/test_creator_screening_ui.py、tests/test_ops_config_ui.py
 
 **Interfaces:**
 - Consumes: /api/creator-screening/template、/import、/jobs、/jobs/job-id。
-- Produces: 页面入口 /creator-screening，八列表格、四状态标签和点击展开的证据详情。
+- Produces: “达人智能圈选”内的“AI 主页初筛”子标签、八列表格、四状态标签和点击展开的证据详情。
 
 - [ ] **Step 1: 写入失败测试，锁定页面元素、API 和导航隔离。**
 
     def test_creator_screening_ui_has_required_inputs_and_result_columns():
-        html = SCREENING_HTML.read_text(encoding="utf-8")
+        html = OPS_CONFIG_HTML.read_text(encoding="utf-8")
         for label in ("达人昵称", "博主ID", "主页链接", "达人价格", "是否符合筛选要求", "IP 地", "达人类型"):
             assert label in html
         assert "/api/creator-screening/import" in html
         assert "/api/creator-screening/jobs" in html
         assert "待人工确认" in html and "异常" in html
 
-    def test_ops_config_keeps_pgy_creator_selection_and_links_to_ai_screening():
+    def test_ops_config_keeps_pgy_creator_selection_and_embeds_ai_screening_tab():
         html = OPS_CONFIG_HTML.read_text(encoding="utf-8")
         assert "达人智能圈选" in html
-        assert 'href="/creator-screening"' in html
+        assert "AI 主页初筛" in html
 
 - [ ] **Step 2: 运行 UI 测试，确认当前失败。**
 
@@ -327,7 +325,7 @@ Expected: FAIL，提示独立页面不存在或缺少入口。
       if (!data.finished) window.setTimeout(() => pollJob(jobId), 1200);
     }
 
-页面提供模板下载、文件选择、需求文本、启动按钮、处理中进度和八列表格。状态以文字+色彩标签呈现：符合绿色、不符合红色、待人工确认琥珀色、异常灰色。点击表格行展开证据、理由和不确定项，不增加飞书写入或保存按钮。现有导航只新增链接，保留原“达人智能圈选”蒲公英流程。
+在“达人智能圈选”区域增加“蒲公英圈选”和“AI 主页初筛”两个子标签。AI 子标签提供模板下载、文件选择、需求文本、启动按钮、处理中进度和八列表格；蒲公英子标签的现有表单、说明、结果和接口调用保持不变。状态以文字+色彩标签呈现：符合绿色、不符合红色、待人工确认琥珀色、异常灰色。点击表格行展开证据、理由和不确定项，不增加飞书写入或保存按钮。
 
 - [ ] **Step 4: 运行 UI 与完整测试集。**
 
@@ -339,10 +337,10 @@ Expected: PASS。
 
 Run: python -m uvicorn api.main:app --host 127.0.0.1 --port 8082
 
-Expected: 在 http://127.0.0.1:8082/creator-screening 可下载模板、导入四列表格、启动模拟任务、查看进度和四种状态；密钥缺失时受影响行显示“异常”。
+Expected: 在 http://127.0.0.1:8082/ops-config 的“达人智能圈选 > AI 主页初筛”中可下载模板、导入四列表格、启动模拟任务、查看进度和四种状态；密钥缺失时受影响行显示“异常”。
 
-    git add api/webui/creator_screening.html api/webui/ops_config.html tests/test_creator_screening_ui.py tests/test_ops_config_ui.py
-    git commit -m "feat: add AI creator screening workbench"
+    git add api/webui/ops_config.html tests/test_creator_screening_ui.py tests/test_ops_config_ui.py
+    git commit -m "feat: add AI creator screening tab"
 
 ## Plan Self-Review
 
