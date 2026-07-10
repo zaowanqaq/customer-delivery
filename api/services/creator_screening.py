@@ -3,16 +3,22 @@ from __future__ import annotations
 
 import csv
 import base64
+import asyncio
 import io
 import json
 import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List
+from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
 
 from api.schemas.creator_screening import CreatorCandidateInput
+from config.runtime_paths import temp_dir
 
 
 REQUIRED_CREATOR_COLUMNS = ("达人昵称", "博主ID", "主页链接", "达人价格")
@@ -47,6 +53,56 @@ class ScreeningDecision:
     reason: str = ""
     evidence: List[str] = field(default_factory=list)
     uncertainties: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ScreeningResult:
+    candidate: CreatorCandidateInput
+    status: str
+    profile_url: str
+    ip_location: str = ""
+    creator_type: str = ""
+    reason: str = ""
+    evidence: List[str] = field(default_factory=list)
+    uncertainties: List[str] = field(default_factory=list)
+
+    def to_row(self) -> dict:
+        return {
+            "序号": self.candidate.index,
+            "是否符合筛选要求": self.status,
+            "达人昵称": self.candidate.nickname,
+            "博主id": self.candidate.blogger_id,
+            "主页链接": self.profile_url,
+            "ip地": self.ip_location,
+            "达人类型": self.creator_type,
+            "达人价格": self.candidate.price,
+            "详情": {"理由": self.reason, "证据": self.evidence, "不确定项": self.uncertainties},
+        }
+
+
+@dataclass
+class ScreeningJob:
+    id: str
+    requirement: str
+    candidates: List[CreatorCandidateInput]
+    results: List[ScreeningResult] = field(default_factory=list)
+    completed: int = 0
+    finished: bool = False
+    task: asyncio.Task | None = field(default=None, repr=False)
+
+    def to_payload(self) -> dict:
+        exceptions = sum(1 for item in self.results if item.status == "异常")
+        return {
+            "job_id": self.id,
+            "finished": self.finished,
+            "progress": {
+                "total": len(self.candidates),
+                "completed": self.completed,
+                "pending": max(0, len(self.candidates) - self.completed),
+                "exceptions": exceptions,
+            },
+            "results": [item.to_row() for item in self.results],
+        }
 
 
 class CreatorScreeningAI:
@@ -157,6 +213,100 @@ class CreatorScreeningAI:
             )
         except Exception:
             return ScreeningDecision(status="异常", reason="AI 返回格式无效")
+
+
+def profile_url_for(candidate: CreatorCandidateInput) -> str:
+    if candidate.profile_url:
+        return candidate.profile_url
+    return "https://www.xiaohongshu.com/user/profile/" + quote(candidate.blogger_id, safe="")
+
+
+async def collect_profile_snapshot(candidate: CreatorCandidateInput, job_id: str) -> ProfileSnapshot:
+    project_root = Path(__file__).resolve().parents[2]
+    output_dir = temp_dir() / "creator_screening" / job_id / str(candidate.index)
+    command = [
+        sys.executable,
+        str(project_root / "tools" / "xhs_profile_snapshot.py"),
+        "--profile-url",
+        profile_url_for(candidate),
+        "--output-dir",
+        str(output_dir),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(project_root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=90)
+    except Exception as exc:
+        return ProfileSnapshot(profile_url=profile_url_for(candidate), status="异常", error=f"主页快照启动失败：{type(exc).__name__}")
+    payload = None
+    for line in reversed(stdout.decode("utf-8", errors="replace").splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            payload = value
+            break
+    if process.returncode != 0 or not payload:
+        return ProfileSnapshot(profile_url=profile_url_for(candidate), status="异常", error="主页快照没有返回有效结果")
+    return ProfileSnapshot(
+        profile_url=str(payload.get("profile_url") or profile_url_for(candidate)),
+        visible_text=str(payload.get("visible_text") or ""),
+        ip_location=str(payload.get("ip_location") or ""),
+        screenshot_paths=[str(item) for item in payload.get("screenshot_paths", []) if str(item)],
+        status=str(payload.get("status") or "异常"),
+        error=str(payload.get("error") or ""),
+    )
+
+
+class CreatorScreeningJobManager:
+    def __init__(self, ai: CreatorScreeningAI | None = None, snapshot_collector=collect_profile_snapshot):
+        self._ai = ai or CreatorScreeningAI()
+        self._snapshot_collector = snapshot_collector
+        self._jobs: dict[str, ScreeningJob] = {}
+
+    async def start(self, requirement: str, candidates: List[CreatorCandidateInput]) -> ScreeningJob:
+        job = ScreeningJob(id=uuid4().hex, requirement=requirement, candidates=candidates)
+        self._jobs[job.id] = job
+        job.task = asyncio.create_task(self._run(job))
+        return job
+
+    def get(self, job_id: str) -> ScreeningJob | None:
+        return self._jobs.get(job_id)
+
+    async def _run(self, job: ScreeningJob) -> None:
+        try:
+            rules = await self._ai.parse_requirement(job.requirement)
+        except Exception as exc:
+            for candidate in job.candidates:
+                job.results.append(ScreeningResult(candidate, "异常", profile_url_for(candidate), reason=f"需求解析失败：{type(exc).__name__}"))
+                job.completed += 1
+            job.finished = True
+            return
+        for candidate in job.candidates:
+            try:
+                snapshot = await self._snapshot_collector(candidate, job.id)
+                decision = await self._ai.evaluate(rules, snapshot)
+                job.results.append(
+                    ScreeningResult(
+                        candidate=candidate,
+                        status=decision.status,
+                        profile_url=snapshot.profile_url or profile_url_for(candidate),
+                        ip_location=snapshot.ip_location,
+                        creator_type=decision.creator_type,
+                        reason=decision.reason,
+                        evidence=decision.evidence,
+                        uncertainties=decision.uncertainties,
+                    )
+                )
+            except Exception as exc:
+                job.results.append(ScreeningResult(candidate, "异常", profile_url_for(candidate), reason=f"初筛失败：{type(exc).__name__}"))
+            job.completed += 1
+        job.finished = True
 
 
 def _read_csv_rows(content: bytes) -> List[dict]:

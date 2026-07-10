@@ -23,7 +23,7 @@ from pydantic import BaseModel
 import config
 from config.runtime_paths import ensure_runtime_dirs, ops_config_path
 from tools.browser_launcher import BrowserLauncher
-from .routers import crawler_router, data_router, notes_router, websocket_router
+from .routers import crawler_router, creator_screening_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
     title="MediaCrawler WebUI API",
@@ -287,6 +287,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(crawler_router, prefix="/api")
+app.include_router(creator_screening_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
