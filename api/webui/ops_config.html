@@ -149,6 +149,24 @@
     .pgy-similar-item input { width: 16px; height: 16px; }
     .pgy-similar-name { font-weight: 800; color: var(--ink); }
     .pgy-similar-meta { font-size: 12px; color: var(--muted); }
+    .creator-selection-tabs { display: flex; gap: 8px; margin: 14px 0 18px; border-bottom: 1px solid var(--line); }
+    .creator-selection-tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 10px 12px; font-weight: 700; }
+    .creator-selection-tab.active { color: var(--accent-strong); border-bottom-color: var(--accent); }
+    .creator-selection-panel { display: none; }
+    .creator-selection-panel.active { display: block; }
+    .creator-screening-status { min-height: 24px; margin: 10px 0; color: var(--muted); font-size: 13px; }
+    .creator-screening-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+    .creator-screening-table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: 13px; }
+    .creator-screening-table th, .creator-screening-table td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+    .creator-screening-table th { background: #f8f2ec; color: var(--ink); font-weight: 800; }
+    .creator-screening-table td.detail-cell { white-space: normal; min-width: 220px; }
+    .screening-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
+    .screening-status.符合 { background: #d9f3e4; color: #17623c; }
+    .screening-status.不符合 { background: #f9dedd; color: #9a251f; }
+    .screening-status.待人工确认 { background: #fff0c9; color: #8a5a08; }
+    .screening-status.异常 { background: #e7e7e7; color: #4b5563; }
+    .creator-screening-table details { white-space: normal; }
+    .creator-screening-table summary { cursor: pointer; color: var(--accent-strong); font-weight: 700; }
     .huitun-path { display: inline-flex; max-width: 100%; overflow-wrap: anywhere; color: var(--accent-strong); font-weight: 800; }
     .notes-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; gap: 12px; align-items: end; margin-bottom: 16px; min-width: 0; }
     .notes-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -518,6 +536,11 @@
         <div id="tab-huitun" class="tab-pane">
           <section class="card">
             <h2>达人智能圈选</h2>
+            <div class="creator-selection-tabs" role="tablist" aria-label="达人智能圈选方式">
+              <button class="creator-selection-tab active" type="button" data-creator-mode="pgy" onclick="setCreatorSelectionMode('pgy')">蒲公英圈选</button>
+              <button class="creator-selection-tab" type="button" data-creator-mode="ai" onclick="setCreatorSelectionMode('ai')">AI 主页初筛</button>
+            </div>
+            <div id="creator_selection_pgy_panel" class="creator-selection-panel active">
             <p class="hint">通过小红书蒲公英搜索达人，并抓取“相似博主推荐”前 20 个达人。Mac 上会自动使用已安装的 Chrome/Edge；如果窗口没有弹出，先点“打开蒲公英登录窗口”，再看执行结果中的错误提示。</p>
             <div class="huitun-console">
               <div>
@@ -551,6 +574,33 @@
               <div class="huitun-result">
                 <h3>执行结果</h3>
                 <div id="huitun_result" class="pgy-result-host">等待操作</div>
+              </div>
+            </div>
+            </div>
+            <div id="creator_selection_ai_panel" class="creator-selection-panel">
+              <p class="hint">导入客户达人库后，系统只读取小红书主页当前可见的资料、IP、简介、笔记卡片和截图进行初筛，不会进入笔记详情页，也不会写入飞书多维表格。</p>
+              <div class="grid">
+                <div class="row full">
+                  <label>达人库文件（csv / Excel）</label>
+                  <input id="creator_screening_file" type="file" accept=".csv,.xlsx,.xls">
+                  <p class="hint">表头固定为：达人昵称、博主ID、主页链接、达人价格。博主ID或主页链接至少填写一项。</p>
+                </div>
+                <div class="row full">
+                  <label>筛选需求</label>
+                  <textarea id="creator_screening_requirement" placeholder="例如：需要现在 IP 在浙江、主页之前有线下打卡内容的帅哥美女账号"></textarea>
+                </div>
+              </div>
+              <div class="btns">
+                <button class="ghost" type="button" onclick="downloadCreatorScreeningTemplate()">下载模板</button>
+                <button class="ghost" type="button" onclick="importCreatorScreeningFile()">导入达人库</button>
+                <button class="primary" type="button" onclick="startCreatorScreening()">启动 AI 初筛</button>
+              </div>
+              <div id="creator_screening_status" class="creator-screening-status">等待导入达人库</div>
+              <div class="creator-screening-table-wrap">
+                <table class="creator-screening-table">
+                  <thead><tr><th>序号</th><th>是否符合筛选要求</th><th>达人昵称</th><th>博主id</th><th>主页链接</th><th>ip地</th><th>达人类型</th><th>达人价格</th><th>判断详情</th></tr></thead>
+                  <tbody id="creator_screening_results"><tr><td colspan="9">暂无结果</td></tr></tbody>
+                </table>
               </div>
             </div>
           </section>
@@ -1991,6 +2041,88 @@
 
     let latestPgyOutput = null;
     let pgyProgressTimer = null;
+    let creatorScreeningCandidates = [];
+    let creatorScreeningJobId = null;
+
+    function setCreatorSelectionMode(mode) {
+      document.querySelectorAll(".creator-selection-tab").forEach((button) => {
+        button.classList.toggle("active", button.dataset.creatorMode === mode);
+      });
+      document.getElementById("creator_selection_pgy_panel").classList.toggle("active", mode === "pgy");
+      document.getElementById("creator_selection_ai_panel").classList.toggle("active", mode === "ai");
+    }
+
+    function setCreatorScreeningStatus(message) {
+      document.getElementById("creator_screening_status").textContent = message;
+    }
+
+    function downloadCreatorScreeningTemplate() {
+      window.location.href = "/api/creator-screening/template";
+    }
+
+    async function importCreatorScreeningFile() {
+      const input = document.getElementById("creator_screening_file");
+      const file = input && input.files ? input.files[0] : null;
+      if (!file) throw new Error("请先选择 csv 或 Excel 达人库文件");
+      setCreatorScreeningStatus("正在读取达人库...");
+      const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+      const response = await fetch("/api/creator-screening/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content_base64: contentBase64 })
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== "ok") throw new Error(data.detail || "达人库导入失败");
+      creatorScreeningCandidates = data.candidates || [];
+      const invalid = (data.invalid_rows || []).length;
+      setCreatorScreeningStatus(`已导入 ${creatorScreeningCandidates.length} 位达人${invalid ? `，${invalid} 行未纳入初筛` : ""}`);
+      return creatorScreeningCandidates;
+    }
+
+    function renderCreatorScreeningResults(rows) {
+      const target = document.getElementById("creator_screening_results");
+      if (!rows || !rows.length) {
+        target.innerHTML = '<tr><td colspan="9">暂无结果</td></tr>';
+        return;
+      }
+      target.innerHTML = rows.map((row) => {
+        const detail = row["详情"] || {};
+        const evidence = (detail["证据"] || []).map(escapeHtml).join("；") || "无";
+        const uncertain = (detail["不确定项"] || []).map(escapeHtml).join("；") || "无";
+        const status = escapeHtml(row["是否符合筛选要求"] || "异常");
+        return `<tr><td>${escapeHtml(row["序号"] || "")}</td><td><span class="screening-status ${status}">${status}</span></td><td>${escapeHtml(row["达人昵称"] || "")}</td><td>${escapeHtml(row["博主id"] || "")}</td><td><a href="${escapeHtml(row["主页链接"] || "#")}" target="_blank" rel="noreferrer">打开主页</a></td><td>${escapeHtml(row["ip地"] || "")}</td><td>${escapeHtml(row["达人类型"] || "")}</td><td>${escapeHtml(row["达人价格"] || "")}</td><td class="detail-cell"><details><summary>查看依据</summary><p>${escapeHtml(detail["理由"] || "无")}</p><p>证据：${evidence}</p><p>不确定项：${uncertain}</p></details></td></tr>`;
+      }).join("");
+    }
+
+    async function pollCreatorScreeningJob(jobId) {
+      const response = await fetch(`/api/creator-screening/jobs/${encodeURIComponent(jobId)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "读取初筛进度失败");
+      renderCreatorScreeningResults(data.results || []);
+      const progress = data.progress || {};
+      setCreatorScreeningStatus(`已处理 ${progress.completed || 0}/${progress.total || 0}，异常 ${progress.exceptions || 0}`);
+      if (!data.finished) window.setTimeout(() => pollCreatorScreeningJob(jobId).catch((error) => setCreatorScreeningStatus(error.message)), 1200);
+    }
+
+    async function startCreatorScreening() {
+      try {
+        if (!creatorScreeningCandidates.length) await importCreatorScreeningFile();
+        const requirement = document.getElementById("creator_screening_requirement").value.trim();
+        if (!requirement) throw new Error("请填写筛选需求");
+        setCreatorScreeningStatus("正在创建 AI 初筛任务...");
+        const response = await fetch("/api/creator-screening/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requirement, candidates: creatorScreeningCandidates })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "创建初筛任务失败");
+        creatorScreeningJobId = data.job_id;
+        await pollCreatorScreeningJob(creatorScreeningJobId);
+      } catch (error) {
+        setCreatorScreeningStatus(error.message || String(error));
+      }
+    }
     let latestPgySimilarCreators = [];
 
     function pgyStatusLabel(status) {
