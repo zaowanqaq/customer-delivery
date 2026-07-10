@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from playwright.sync_api import APIRequestContext, Browser, BrowserContext, Page, TimeoutError, sync_playwright
 
@@ -671,15 +671,28 @@ def extract_api_payload(raw: dict) -> object:
     return raw
 
 
-def classify_api_response(url: str) -> str:
+def _response_business(response) -> int:
+    query = parse_qs(urlparse(response.url).query)
+    value = (query.get("business") or [""])[0]
+    if value in ("", None):
+        try:
+            payload = json.loads(response.request.post_data or "{}")
+            value = payload.get("business", "")
+        except Exception:
+            value = ""
+    return 1 if str(value) == "1" else 0
+
+
+def classify_api_response(response) -> str:
+    url = response.url
     if "/api/solar/cooperator/user/blogger/" in url:
         return "blogger_detail"
     if "/api/pgy/kol/data/data_summary" in url:
-        return "data_summary"
+        return f"{'business' if _response_business(response) else 'daily'}_data_summary"
     if "/api/pgy/kol/data/core_data" in url:
-        return "core_data"
+        return f"{'business' if _response_business(response) else 'daily'}_core_data"
     if "/api/solar/kol/data_v3/notes_rate" in url:
-        return "notes_rate"
+        return f"{'business' if _response_business(response) else 'daily'}_notes_rate"
     if "/api/solar/kol/data_v3/fans_summary" in url:
         return "fans_summary"
     if "/fans_profile" in url:
@@ -714,17 +727,24 @@ def make_search_attempts(keyword: str) -> list[tuple[str, str, dict]]:
 
 
 def make_detail_attempts(user_id: str) -> dict[str, list[tuple[str, str, dict]]]:
-    metrics_params = {"userId": user_id, "business": 0, "noteType": 3, "dateType": 1, "advertiseSwitch": 1}
-    return {
+    attempts = {
         "blogger_detail": [("GET", f"/api/solar/cooperator/user/blogger/{user_id}", {})],
-        "data_summary": [("GET", "/api/pgy/kol/data/data_summary", {"userId": user_id, "business": 0})],
-        "core_data": [("POST", "/api/pgy/kol/data/core_data", {"userId": user_id, "business": "0", "noteType": 3, "dateType": 1, "advertiseSwitch": 1})],
-        "notes_rate": [("GET", "/api/solar/kol/data_v3/notes_rate", metrics_params)],
         "fans_summary": [("GET", "/api/solar/kol/data_v3/fans_summary", {"userId": user_id})],
         "fans_profile": [("GET", f"/api/solar/kol/data/{user_id}/fans_profile", {})],
         "fans_history": [("GET", f"/api/solar/kol/data/{user_id}/fans_overall_new_history", {"dateType": 1, "increaseType": 1})],
         "similar_creators": [("GET", "/api/solar/kol/get_similar_kol", {"userId": user_id, "pageNum": 1, "pageSize": 20})],
     }
+    for label, business in (("daily", 0), ("business", 1)):
+        attempts[f"{label}_data_summary"] = [
+            ("GET", "/api/pgy/kol/data/data_summary", {"userId": user_id, "business": business}),
+        ]
+        attempts[f"{label}_core_data"] = [
+            ("POST", "/api/pgy/kol/data/core_data", {"userId": user_id, "business": str(business), "noteType": 3, "dateType": 1, "advertiseSwitch": 1}),
+        ]
+        attempts[f"{label}_notes_rate"] = [
+            ("GET", "/api/solar/kol/data_v3/notes_rate", {"userId": user_id, "business": business, "noteType": 3, "dateType": 1, "advertiseSwitch": 1}),
+        ]
+    return attempts
 
 
 def extract_kols_from_payload(payload: dict) -> list[dict]:
@@ -741,7 +761,7 @@ def extract_kols_from_payload(payload: dict) -> list[dict]:
 
 
 def collect_detail_api_response(api_data: dict, response) -> None:
-    key = classify_api_response(response.url)
+    key = classify_api_response(response)
     if not key:
         return
     try:
@@ -767,11 +787,13 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
             tags.append(str(tag.get("name") or tag.get("tagName") or tag.get("taxonomy1Tag") or tag))
         else:
             tags.append(str(tag))
+    user_id = kol.get("userId") or ""
     return {
-        "_user_id": kol.get("userId") or "",
+        "_user_id": user_id,
         "rank": rank,
         "nickname": kol.get("name") or "",
         "red_id": kol.get("redId") or "",
+        "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{user_id}" if user_id else "",
         "location": kol.get("location") or "",
         "fans_count": kol.get("fansCount") or "",
         "like_collect_count": kol.get("likeCollectCountInfo") or "",
@@ -780,6 +802,8 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
         "picture_price": kol.get("picturePrice") or "",
         "video_price": kol.get("videoPrice") or "",
         "tags": ",".join(tags),
+        "content_category": _profile_text(kol.get("contentTags") or kol.get("featureTags")),
+        "cooperation_industry": _profile_text(kol.get("industryTag") or kol.get("cooperationIndustry")),
     }
 
 
@@ -812,36 +836,75 @@ def _dominant_group(items: list[dict], name_key: str = "name") -> str:
     return str(best.get(name_key) or best.get("group") or "")
 
 
+def _profile_text(value: object) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("taxonomy1Tag") or value.get("tagName") or "")
+    if isinstance(value, list):
+        values = [_profile_text(item) for item in value]
+        return ",".join(dict.fromkeys(value for value in values if value))
+    return str(value or "")
+
+
+def _note_metrics(api_data: dict, prefix: str) -> dict:
+    legacy = prefix == "daily"
+    data_summary = extract_api_payload(api_data.get(f"{prefix}_data_summary") or (api_data.get("data_summary") if legacy else {})) or {}
+    core_data = extract_api_payload(api_data.get(f"{prefix}_core_data") or (api_data.get("core_data") if legacy else {})) or {}
+    core_sum = core_data.get("sumData") or {}
+    notes_rate = extract_api_payload(api_data.get(f"{prefix}_notes_rate") or (api_data.get("notes_rate") if legacy else {})) or {}
+    return {
+        f"{prefix}_exposure_count": core_sum.get("imp") or data_summary.get("imp") or "",
+        f"{prefix}_read_count": core_sum.get("read") or data_summary.get("read") or "",
+        f"{prefix}_imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or core_sum.get("imp") or "",
+        f"{prefix}_read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or core_sum.get("read") or "",
+        f"{prefix}_interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
+        f"{prefix}_like_median": notes_rate.get("likeMedian") or "",
+        f"{prefix}_collect_median": notes_rate.get("collectMedian") or "",
+        f"{prefix}_comment_median": notes_rate.get("commentMedian") or "",
+        f"{prefix}_share_median": notes_rate.get("shareMedian") or "",
+        f"{prefix}_follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
+        f"{prefix}_interaction_rate": notes_rate.get("interactionRate") or "",
+        f"{prefix}_video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
+        f"{prefix}_picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
+    }
+
+
 def flatten_detail_metrics(api_data: dict) -> dict:
     blogger = extract_api_payload(api_data.get("blogger_detail") or {}) or {}
-    data_summary = extract_api_payload(api_data.get("data_summary") or {}) or {}
-    notes_rate = extract_api_payload(api_data.get("notes_rate") or {}) or {}
+    daily = _note_metrics(api_data, "daily")
+    business = _note_metrics(api_data, "business")
+    daily_data_summary = extract_api_payload(api_data.get("daily_data_summary") or api_data.get("data_summary") or {}) or {}
     fans_summary = extract_api_payload(api_data.get("fans_summary") or {}) or {}
     fans_profile = extract_api_payload(api_data.get("fans_profile") or {}) or {}
     gender = fans_profile.get("gender") or {}
+    user_id = blogger.get("userId") or ""
     return {
-        "kol_advantage": data_summary.get("kolAdvantage") or "",
-        "data_date": data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
-        "note_number": data_summary.get("noteNumber") or notes_rate.get("noteNumber") or "",
-        "imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or "",
-        "read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or "",
-        "interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
-        "like_median": notes_rate.get("likeMedian") or "",
-        "collect_median": notes_rate.get("collectMedian") or "",
-        "comment_median": notes_rate.get("commentMedian") or "",
-        "share_median": notes_rate.get("shareMedian") or "",
-        "follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
-        "interaction_rate": notes_rate.get("interactionRate") or "",
-        "video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
-        "picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
-        "thousand_like_percent": notes_rate.get("thousandLikePercent") or "",
-        "hundred_like_percent": notes_rate.get("hundredLikePercent") or "",
-        "active_day_7": data_summary.get("activeDayInLast7") or "",
-        "invite_num": data_summary.get("inviteNum") or "",
-        "response_rate": data_summary.get("responseRate") or "",
+        "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{user_id}" if user_id else "",
+        "content_category": _profile_text(blogger.get("contentTags") or blogger.get("featureTags")),
+        "cooperation_industry": _profile_text(blogger.get("industryTag") or blogger.get("cooperationIndustry")),
+        "kol_advantage": daily_data_summary.get("kolAdvantage") or "",
+        "data_date": daily_data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
+        "note_number": daily_data_summary.get("noteNumber") or "",
+        "exposure_count": daily["daily_exposure_count"],
+        "read_count": daily["daily_read_count"],
+        "imp_median": daily["daily_imp_median"],
+        "read_median": daily["daily_read_median"],
+        "interaction_median": daily["daily_interaction_median"],
+        "like_median": daily["daily_like_median"],
+        "collect_median": daily["daily_collect_median"],
+        "comment_median": daily["daily_comment_median"],
+        "share_median": daily["daily_share_median"],
+        "follow_median": daily["daily_follow_median"],
+        "interaction_rate": daily["daily_interaction_rate"],
+        "video_full_view_rate": daily["daily_video_full_view_rate"],
+        "picture_3s_view_rate": daily["daily_picture_3s_view_rate"],
+        "thousand_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("thousandLikePercent") or "",
+        "hundred_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("hundredLikePercent") or "",
+        "active_day_7": daily_data_summary.get("activeDayInLast7") or "",
+        "invite_num": daily_data_summary.get("inviteNum") or "",
+        "response_rate": daily_data_summary.get("responseRate") or "",
         "fans_num": fans_summary.get("fansNum") or blogger.get("fansCount") or "",
         "fans_increase": fans_summary.get("fansIncreaseNum") or "",
-        "fans_growth_rate": fans_summary.get("fansGrowthRate") or data_summary.get("fans30GrowthRate") or "",
+        "fans_growth_rate": fans_summary.get("fansGrowthRate") or daily_data_summary.get("fans30GrowthRate") or "",
         "active_fans_rate": fans_summary.get("activeFansRate") or "",
         "read_fans_rate": fans_summary.get("readFansRate") or "",
         "engage_fans_rate": fans_summary.get("engageFansRate") or "",
@@ -852,6 +915,8 @@ def flatten_detail_metrics(api_data: dict) -> dict:
         "top_provinces": _top_name_percent(fans_profile.get("provinces") or [], limit=5),
         "top_cities": _top_name_percent(fans_profile.get("cities") or [], limit=5),
         "top_interests": _top_name_percent(fans_profile.get("interests") or [], limit=8),
+        **daily,
+        **business,
     }
 
 
@@ -892,6 +957,7 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "rank",
             "nickname",
             "red_id",
+            "blogger_homepage_url",
             "location",
             "fans_count",
             "like_collect_count",
@@ -903,6 +969,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "kol_advantage",
             "data_date",
             "note_number",
+            "exposure_count",
+            "read_count",
             "imp_median",
             "read_median",
             "interaction_median",
@@ -1141,8 +1209,14 @@ def _navigate_to_kol_detail(context: BrowserContext, page: Page, user_id: str) -
     return page
 
 
-def _wait_for_detail_data(page: Page, detail_api_data: dict) -> None:
-    required_keys = {"blogger_detail", "data_summary", "core_data", "notes_rate", "fans_summary", "fans_profile"}
+def _wait_for_detail_data(page: Page, detail_api_data: dict, note_prefix: str = "daily") -> None:
+    required_keys = {
+        "blogger_detail",
+        f"{note_prefix}_core_data",
+        f"{note_prefix}_notes_rate",
+        "fans_summary",
+        "fans_profile",
+    }
     wait_until = time.time() + 10
     while time.time() < wait_until and not required_keys.issubset(detail_api_data.keys()):
         page.wait_for_timeout(500)
@@ -1163,7 +1237,11 @@ def _capture_kol_detail(
     page.on("response", collect_response)
     try:
         page = _navigate_to_kol_detail(context, page, user_id)
-        _wait_for_detail_data(page, local_data)
+        click_text(page, "传播表现", exact=True, timeout=2500)
+        click_text(page, "日常笔记", exact=True, timeout=2500)
+        _wait_for_detail_data(page, local_data, "daily")
+        if click_text(page, "合作笔记", exact=True, timeout=2500):
+            _wait_for_detail_data(page, local_data, "business")
         detail_text = visible_text(page, limit=60000)
         screenshot = output_dir / f"{file_prefix}_detail.png"
         page.screenshot(path=str(screenshot), full_page=True)
@@ -1210,7 +1288,11 @@ def _api_fetch_kol_detail(
 ) -> dict:
     api_data: dict = {}
     attempts_by_key = make_detail_attempts(user_id)
-    key_order = ["data_summary", "core_data", "notes_rate", "fans_summary", "fans_profile", "fans_history", "similar_creators", "blogger_detail"]
+    key_order = [
+        "daily_data_summary", "daily_core_data", "daily_notes_rate",
+        "business_data_summary", "business_core_data", "business_notes_rate",
+        "fans_summary", "fans_profile", "fans_history", "similar_creators", "blogger_detail",
+    ]
     for key in key_order:
         attempts = attempts_by_key.get(key) or []
         if not attempts:
@@ -1227,7 +1309,7 @@ def _api_fetch_kol_detail(
             api_data["blogger_detail"] = {"code": 0, "success": True, "data": fallback_blogger}
         else:
             raise RuntimeError(api_data.get("blogger_detail_error") or "API 未返回达人基础信息")
-    metric_keys = {"data_summary", "notes_rate", "fans_summary", "fans_profile"}
+    metric_keys = {"daily_core_data", "daily_notes_rate", "business_core_data", "business_notes_rate", "fans_summary", "fans_profile"}
     if not metric_keys.intersection(api_data.keys()):
         raise RuntimeError("API 未返回传播表现/粉丝分析数据")
     return api_data

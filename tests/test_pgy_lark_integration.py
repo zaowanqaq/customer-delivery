@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from api.routers import crawler
 from api.schemas import PgyKolRunRequest, PgyLoginRequest
+from tools import pgy_automation
 
 
 def test_lark_json_arg_uses_relative_temp_file_and_cleans_up():
@@ -115,6 +116,56 @@ def test_pgy_summary_rows_map_to_customer_creator_selection_fields():
     ]
     assert values[7:13] == [132139, 20753, 321, 111, 22, 3]
     assert values[14] == "2026-05-20"
+
+
+def test_pgy_detail_attempts_request_daily_and_business_note_metrics():
+    attempts = pgy_automation.make_detail_attempts("user-1")
+
+    assert attempts["daily_notes_rate"][0][2]["business"] == 0
+    assert attempts["business_notes_rate"][0][2]["business"] == 1
+    assert attempts["daily_core_data"][0][2]["business"] == "0"
+    assert attempts["business_core_data"][0][2]["business"] == "1"
+
+
+def test_pgy_response_classifier_uses_business_request_parameter():
+    class Request:
+        post_data = '{"business":"1"}'
+
+    class Response:
+        url = "https://pgy.xiaohongshu.com/api/pgy/kol/data/core_data"
+        request = Request()
+
+    assert pgy_automation.classify_api_response(Response()) == "business_core_data"
+
+
+def test_pgy_profile_and_metric_groups_map_to_creator_selection_columns():
+    api_data = {
+        "blogger_detail": {
+            "data": {
+                "contentTags": [
+                    {"taxonomy1Tag": "美妆"},
+                    {"taxonomy1Tag": "时尚"},
+                ],
+                "industryTag": "服装配饰",
+            }
+        },
+        "daily_core_data": {"data": {"sumData": {"imp": 120, "read": 12}}},
+        "daily_notes_rate": {"data": {"interactionMedian": 3, "likeMedian": 4}},
+        "business_core_data": {"data": {"sumData": {"imp": 320, "read": 32}}},
+        "business_notes_rate": {"data": {"interactionMedian": 8, "likeMedian": 9}},
+    }
+
+    metrics = pgy_automation.flatten_detail_metrics(api_data)
+    values = crawler._pgy_row_to_values(metrics, [
+        "内容类目（标签）",
+        "合作行业",
+        "日常笔记曝光中位数",
+        "日常笔记互动中位数",
+        "合作笔记曝光中位数",
+        "合作笔记互动中位数",
+    ])
+
+    assert values == ["美妆,时尚", "服装配饰", 120, 3, 320, 8]
 
 
 @pytest.mark.asyncio

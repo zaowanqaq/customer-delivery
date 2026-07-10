@@ -695,6 +695,22 @@ async def _create_base_field(base_token: str, table_id: str, field: Dict[str, An
     )
 
 
+async def _update_base_field(base_token: str, table_id: str, field_id: str, field: Dict[str, Any]) -> None:
+    await _run_lark_cli(
+        [
+            _find_lark_cli(),
+            "base", "+field-update",
+            "--as", "user",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--field-id", field_id,
+            "--json", json.dumps(field, ensure_ascii=False),
+            "--yes",
+        ],
+        timeout_sec=45,
+    )
+
+
 async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
     existing = await _read_table_field_defs(base_token, table_id)
     existing_by_name = {field.get("name"): field for field in existing}
@@ -703,6 +719,10 @@ async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> Li
         name = field["name"]
         if name not in existing_by_name:
             await _create_base_field(base_token, table_id, field)
+    creator_type_field = next(field for field in wanted if field["name"] == "目标/推荐博主")
+    existing_creator_type = existing_by_name.get("目标/推荐博主")
+    if existing_creator_type and existing_creator_type.get("type") != "select" and existing_creator_type.get("id"):
+        await _update_base_field(base_token, table_id, str(existing_creator_type["id"]), creator_type_field)
     # Existing old tables may already have text fields named 截图/详情文本.
     refreshed = await _read_table_field_defs(base_token, table_id)
     refreshed_by_name = {field.get("name"): field for field in refreshed}
@@ -736,6 +756,18 @@ def _datetime_field(name: str) -> Dict[str, Any]:
 
 def _attachment_field(name: str) -> Dict[str, Any]:
     return {"name": name, "type": "attachment"}
+
+
+def _creator_type_field() -> Dict[str, Any]:
+    return {
+        "name": "目标/推荐博主",
+        "type": "select",
+        "multiple": False,
+        "options": [
+            {"name": "目标达人", "hue": "Blue", "lightness": "Lighter"},
+            {"name": "相似博主", "hue": "Orange", "lightness": "Lighter"},
+        ],
+    }
 
 
 def _viral_monitor_fields() -> List[Dict[str, Any]]:
@@ -820,7 +852,7 @@ def _comments_fields() -> List[Dict[str, Any]]:
 
 def _creator_selection_fields() -> List[Dict[str, Any]]:
     return [
-        _text_field("目标/推荐博主"),
+        _creator_type_field(),
         _number_field("推荐排名"),
         _text_field("目标达人昵称"),
         _text_field("达人昵称"),
@@ -1405,7 +1437,7 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "图文报价": ["picture_price", "图文报价"],
         "视频报价": ["video_price", "视频报价"],
         "标签": ["tags", "标签"],
-        "内容类目（标签）": ["tags", "标签", "内容类目（标签）"],
+        "内容类目（标签）": ["content_category", "tags", "标签", "内容类目（标签）"],
         "合作行业": ["cooperation_industry", "合作行业"],
         "博主优势": ["kol_advantage", "博主优势"],
         "数据日期": ["data_date", "数据日期"],
@@ -1414,37 +1446,37 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "曝光量": ["exposure_count", "imp", "曝光量"],
         "阅读量": ["read_count", "read", "阅读量"],
         "曝光中位数": ["imp_median", "exposure_count", "imp", "曝光中位数"],
-        "日常笔记曝光中位数": ["imp_median", "exposure_count", "imp", "曝光中位数"],
+        "日常笔记曝光中位数": ["daily_imp_median", "imp_median", "exposure_count", "imp", "曝光中位数"],
         "合作笔记曝光中位数": ["business_imp_median", "合作笔记曝光中位数"],
         "阅读中位数": ["read_median", "read_count", "read", "阅读中位数"],
-        "日常笔记阅读中位数": ["read_median", "read_count", "read", "阅读中位数"],
+        "日常笔记阅读中位数": ["daily_read_median", "read_median", "read_count", "read", "阅读中位数"],
         "合作笔记阅读中位数": ["business_read_median", "合作笔记阅读中位数"],
         "互动中位数": ["interaction_median", "互动中位数"],
-        "日常笔记互动中位数": ["interaction_median", "互动中位数"],
+        "日常笔记互动中位数": ["daily_interaction_median", "interaction_median", "互动中位数"],
         "合作笔记互动中位数": ["business_interaction_median", "合作笔记互动中位数"],
         "中位点赞量": ["like_median", "中位点赞量"],
-        "日常笔记中位点赞量": ["like_median", "中位点赞量"],
+        "日常笔记中位点赞量": ["daily_like_median", "like_median", "中位点赞量"],
         "合作笔记中位点赞量": ["business_like_median", "合作笔记中位点赞量"],
         "中位收藏量": ["collect_median", "中位收藏量"],
-        "日常笔记中位收藏量": ["collect_median", "中位收藏量"],
+        "日常笔记中位收藏量": ["daily_collect_median", "collect_median", "中位收藏量"],
         "合作笔记中位收藏量": ["business_collect_median", "合作笔记中位收藏量"],
         "中位评论量": ["comment_median", "中位评论量"],
-        "日常笔记中位评论量": ["comment_median", "中位评论量"],
+        "日常笔记中位评论量": ["daily_comment_median", "comment_median", "中位评论量"],
         "合作笔记中位评论量": ["business_comment_median", "合作笔记中位评论量"],
         "中位分享量": ["share_median", "中位分享量"],
-        "日常笔记中位分享量": ["share_median", "中位分享量"],
+        "日常笔记中位分享量": ["daily_share_median", "share_median", "中位分享量"],
         "合作笔记中位分享量": ["business_share_median", "合作笔记中位分享量"],
         "中位关注量": ["follow_median", "中位关注量"],
-        "日常笔记中位关注量": ["follow_median", "中位关注量"],
+        "日常笔记中位关注量": ["daily_follow_median", "follow_median", "中位关注量"],
         "合作笔记中位关注量": ["business_follow_median", "合作笔记中位关注量"],
         "互动率": ["interaction_rate", "互动率"],
-        "日常笔记互动率": ["interaction_rate", "互动率"],
+        "日常笔记互动率": ["daily_interaction_rate", "interaction_rate", "互动率"],
         "合作笔记互动率": ["business_interaction_rate", "合作笔记互动率"],
         "视频完播率": ["video_full_view_rate", "视频完播率"],
-        "日常笔记视频完播率": ["video_full_view_rate", "视频完播率"],
+        "日常笔记视频完播率": ["daily_video_full_view_rate", "video_full_view_rate", "视频完播率"],
         "合作笔记视频完播率": ["business_video_full_view_rate", "合作笔记视频完播率"],
         "图文3秒阅读率": ["picture_3s_view_rate", "图文3秒阅读率"],
-        "日常笔记图文3秒阅读率": ["picture_3s_view_rate", "图文3秒阅读率"],
+        "日常笔记图文3秒阅读率": ["daily_picture_3s_view_rate", "picture_3s_view_rate", "图文3秒阅读率"],
         "合作笔记图文3秒阅读率": ["business_picture_3s_view_rate", "合作笔记图文3秒阅读率"],
         "千赞笔记比例": ["thousand_like_percent", "千赞笔记比例"],
         "百赞笔记比例": ["hundred_like_percent", "百赞笔记比例"],

@@ -69,6 +69,15 @@ def test_scenario_setup_fields_match_customer_template():
     ]
 
 
+def test_creator_selection_type_field_uses_colored_single_select_options():
+    field = next(item for item in crawler._creator_selection_fields() if item["name"] == "目标/推荐博主")
+
+    assert field["type"] == "select"
+    assert field["multiple"] is False
+    assert {item["name"] for item in field["options"]} == {"目标达人", "相似博主"}
+    assert {item["hue"] for item in field["options"]} == {"Blue", "Orange"}
+
+
 def test_historical_note_row_maps_to_customer_viral_payload():
     table_fields = [field["name"] for field in crawler._viral_monitor_fields()]
     row = {
