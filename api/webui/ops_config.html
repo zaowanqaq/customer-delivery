@@ -592,6 +592,7 @@
               </div>
               <div class="btns">
                 <button class="ghost" type="button" onclick="downloadCreatorScreeningTemplate()">下载模板</button>
+                <button class="ghost" type="button" onclick="openCreatorScreeningLogin()">打开小红书登录浏览器</button>
                 <button class="primary" type="button" onclick="startCreatorScreening()">启动 AI 初筛</button>
               </div>
               <div id="creator_screening_status" class="creator-screening-status">等待导入达人库</div>
@@ -2058,6 +2059,18 @@
 
     function downloadCreatorScreeningTemplate() {
       window.location.href = "/api/creator-screening/template";
+    }
+
+    async function openCreatorScreeningLogin() {
+      setCreatorScreeningStatus("正在打开小红书登录浏览器，请完成登录后返回这里启动初筛...");
+      try {
+        const response = await fetch("/api/crawler/xhs/login-browser", { method: "POST" });
+        const data = await response.json();
+        if (!response.ok || data.status !== "login_window_opened") throw new Error(data.detail || "登录浏览器启动失败");
+        setCreatorScreeningStatus("登录浏览器已打开。完成登录后可直接启动 AI 初筛。");
+      } catch (error) {
+        setCreatorScreeningStatus("打开登录浏览器失败：" + (error.message || String(error)));
+      }
     }
 
     async function importCreatorScreeningFile() {

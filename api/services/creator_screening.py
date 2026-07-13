@@ -238,10 +238,12 @@ async def collect_profile_snapshot(candidate: CreatorCandidateInput, job_id: str
         "--output-dir",
         str(output_dir),
     ]
+    python_path = os.pathsep.join(filter(None, [str(project_root), os.environ.get("PYTHONPATH", "")]))
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(project_root),
+            env={**os.environ, "PYTHONPATH": python_path},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

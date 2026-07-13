@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,20 @@ from tools.browser_launcher import BrowserLauncher
 LOGIN_MARKERS = ("登录", "验证码", "滑动验证", "请先登录")
 
 
+def shared_xhs_login_profile_dir() -> Path:
+    return browser_data_dir() / f"cdp_{config.USER_DATA_DIR % config.PLATFORM}"
+
+
+def configure_utf8_stdout() -> None:
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8")
+
+
 async def _looks_like_login(page: Page) -> bool:
+    visible_text = await page.locator("body").inner_text(timeout=5_000)
+    if "小红书号" in visible_text or "IP属地" in visible_text:
+        return False
     content = await page.content()
     return any(marker in content for marker in LOGIN_MARKERS)
 
@@ -75,7 +89,7 @@ async def capture_profile_with_browser(profile_url: str, output_dir: Path, cdp_e
                 if not paths:
                     return ProfileSnapshot(profile_url=profile_url, status="异常", error="未找到可用 Chrome 或 Edge 浏览器")
                 port = launcher.find_available_port(getattr(config, "CDP_DEBUG_PORT", 9222))
-                profile_dir = browser_data_dir() / "creator_screening_profile"
+                profile_dir = shared_xhs_login_profile_dir()
                 launcher.launch_browser(paths[0], port, headless=False, user_data_dir=str(profile_dir))
                 ready = await asyncio.to_thread(launcher.wait_for_browser_ready, port, 30)
                 if not ready:
@@ -100,6 +114,7 @@ def _snapshot_to_dict(snapshot: ProfileSnapshot) -> dict[str, Any]:
 
 
 def main() -> None:
+    configure_utf8_stdout()
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile-url", required=True)
     parser.add_argument("--output-dir", required=True)
