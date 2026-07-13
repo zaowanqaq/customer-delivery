@@ -179,6 +179,8 @@ class CreatorScreeningAI:
         return [{"role": "user", "content": content}]
 
     async def evaluate(self, rules: RequirementRules, snapshot: ProfileSnapshot) -> ScreeningDecision:
+        if snapshot.status == "待人工确认":
+            return ScreeningDecision(status="待人工确认", reason=snapshot.error or "主页可见资料不足")
         if snapshot.status != "ok":
             return ScreeningDecision(status="异常", reason=snapshot.error or "主页快照失败")
         if not self._openrouter_key:

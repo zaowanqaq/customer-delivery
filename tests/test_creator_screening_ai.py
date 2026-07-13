@@ -53,3 +53,20 @@ async def test_creator_screening_ai_marks_low_confidence_as_manual_review():
 
     assert result.status == "待人工确认"
     assert result.creator_type == "线下打卡"
+
+
+@pytest.mark.asyncio
+async def test_creator_screening_ai_keeps_login_only_snapshot_for_manual_review():
+    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+
+    result = await client.evaluate(
+        RequirementRules(tags=["线下打卡"]),
+        ProfileSnapshot(
+            profile_url="https://www.xiaohongshu.com/user/profile/a",
+            status="待人工确认",
+            error="主页只显示登录页，未找到可见资料",
+        ),
+    )
+
+    assert result.status == "待人工确认"
+    assert "登录页" in result.reason

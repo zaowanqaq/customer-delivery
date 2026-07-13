@@ -24,17 +24,21 @@ class FakePage:
         self.scroll_count = 0
         self.screenshots = []
         self.detail_navigation_attempts = 0
+        self.keyboard = self
 
     async def goto(self, url, wait_until, timeout):
         self.url = url
 
     async def content(self):
-        return "登录 验证码" if self.login_required else "主页内容"
+        return "手机号登录 获取验证码" if self.login_required else "主页内容"
 
     async def evaluate(self, script):
         self.scroll_count += 1
 
     async def wait_for_timeout(self, timeout):
+        return None
+
+    async def press(self, key):
         return None
 
     def locator(self, selector):
@@ -61,15 +65,16 @@ async def test_visible_profile_snapshot_limits_scrolls_and_screenshots(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_login_page_returns_exception_snapshot(tmp_path):
+async def test_login_page_returns_manual_review_snapshot(tmp_path):
     snapshot = await capture_visible_profile(
         FakePage(login_required=True),
         "https://www.xiaohongshu.com/user/profile/a",
         tmp_path,
     )
 
-    assert snapshot.status == "异常"
-    assert "登录" in snapshot.error
+    assert snapshot.status == "待人工确认"
+    assert snapshot.ip_location == ""
+    assert len(snapshot.screenshot_paths) == 2
 
 
 @pytest.mark.asyncio
@@ -80,6 +85,31 @@ async def test_profile_with_visible_login_copy_is_not_mistaken_for_login_page(tm
 
     snapshot = await capture_visible_profile(
         ProfilePage(visible_text="体坛周报 小红书号：6301714171 IP属地：重庆"),
+        "https://www.xiaohongshu.com/user/profile/a",
+        tmp_path,
+    )
+
+    assert snapshot.status == "ok"
+    assert snapshot.ip_location == "重庆"
+
+
+@pytest.mark.asyncio
+async def test_login_overlay_is_dismissed_before_profile_is_marked_unavailable(tmp_path):
+    class LoginOverlayPage(FakePage):
+        def __init__(self):
+            super().__init__(visible_text="登录探索更多内容")
+            self.overlay_open = True
+
+        async def content(self):
+            return "登录 验证码" if self.overlay_open else "主页内容"
+
+        async def press(self, key):
+            assert key == "Escape"
+            self.overlay_open = False
+            self.visible_text = "体坛周报 小红书号：6301714171 IP属地：重庆"
+
+    snapshot = await capture_visible_profile(
+        LoginOverlayPage(),
         "https://www.xiaohongshu.com/user/profile/a",
         tmp_path,
     )

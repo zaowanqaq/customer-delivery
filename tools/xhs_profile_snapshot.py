@@ -31,17 +31,23 @@ def configure_utf8_stdout() -> None:
         reconfigure(encoding="utf-8")
 
 
-async def _looks_like_login(page: Page) -> bool:
-    visible_text = await page.locator("body").inner_text(timeout=5_000)
-    if "小红书号" in visible_text or "IP属地" in visible_text:
-        return False
+async def _dismiss_login_prompt(page: Page) -> None:
     content = await page.content()
-    return any(marker in content for marker in LOGIN_MARKERS)
+    if any(marker in content for marker in LOGIN_MARKERS):
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
 
 
 def extract_profile_ip(text: str) -> str:
     match = re.search(r"(?:IP属地|IP 地|IP所在地)\s*[：:]?\s*([^\s|｜，,。]{1,20})", text)
     return match.group(1).strip() if match else ""
+
+
+def _is_login_only_page(text: str, page_content: str = "") -> bool:
+    source = f"{text}\n{page_content}"
+    if "小红书号" in source or "IP属地" in source:
+        return False
+    return any(marker in source for marker in ("手机号登录", "扫码", "获取验证码", "登录后推荐"))
 
 
 async def _save_at_most_two_screenshots(page: Page, output_dir: Path) -> list[str]:
@@ -57,8 +63,7 @@ async def _save_at_most_two_screenshots(page: Page, output_dir: Path) -> list[st
 async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path) -> ProfileSnapshot:
     try:
         await page.goto(profile_url, wait_until="domcontentloaded", timeout=30_000)
-        if await _looks_like_login(page):
-            return ProfileSnapshot(profile_url=profile_url, status="异常", error="主页要求登录或出现验证码")
+        await _dismiss_login_prompt(page)
         profile_header_text = (await page.locator("body").inner_text(timeout=5_000)).strip()
         profile_ip_location = extract_profile_ip(profile_header_text)
         for _ in range(3):
@@ -66,6 +71,14 @@ async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path
             await page.wait_for_timeout(500)
         text = (await page.locator("body").inner_text(timeout=5_000)).strip()
         screenshots = await _save_at_most_two_screenshots(page, output_dir)
+        if _is_login_only_page(text, await page.content()):
+            return ProfileSnapshot(
+                profile_url=profile_url,
+                visible_text=text[:12_000],
+                screenshot_paths=screenshots,
+                status="待人工确认",
+                error="主页只显示登录页，未找到可见资料",
+            )
         return ProfileSnapshot(
             profile_url=profile_url,
             visible_text=text[:12_000],
