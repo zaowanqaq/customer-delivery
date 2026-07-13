@@ -24,7 +24,9 @@ def test_customer_ui_hides_local_save_and_manual_sync_controls():
 def test_step2_and_step3_start_flows_auto_sync_after_crawler_finishes():
     html = _ops_config_text()
 
-    assert 'waitCrawlerIdleThenAutoSync("sample")' in html
+    assert "base_token: payload.sync_base_token" in html
+    assert "table_id: payload.account_filter_table_id" in html
+    assert "/api/crawler/account-monitor/status" in html
     assert 'waitCrawlerIdleThenAutoSync("viral")' in html
     assert "AUTO_SYNC_POLL_INTERVAL_MS" in html
 
@@ -35,6 +37,7 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     expected_nav = [
         "项目大盘",
         "平台爆款检索",
+        "爆款笔记二创",
         "达人智能圈选",
         "账号内容监测",
         "笔记数据监测",
@@ -54,7 +57,17 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     assert "项目检索栏" in html
     assert "一键新建项目" in html
     assert "Base 链接 / Token（必填）" in html
-    assert "二级评论就是楼中楼评论" in html
+    assert "爆款笔记二创" in html
+    assert "仅展示已填写标题、正文、图片或二次改写结果的记录。" in html
+    assert "/api/crawler/note-recreation/cases" in html
+    assert "本页不调用 AI" in html
+    assert "笔记链接（逗号或换行）" in html
+    assert "风险类型分组" in html
+    assert "新增风险类型" in html
+    assert "同步规则到多维表格" in html
+    assert "评论区分析" not in html
+    assert "/api/crawler/sentiment-monitor/start" in html
+    assert "/api/crawler/sentiment-monitor/sync-rules" in html
     assert "需处理表示该项会影响对应功能，需要按右侧处理办法优先处理" in html
 
 
@@ -124,14 +137,20 @@ def test_project_binding_uses_customer_table_names():
 def test_sample_account_file_import_controls_are_present():
     html = _ops_config_text()
 
-    assert "提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。" in html
-    assert "输入客户提供的样本账号主页链接" not in html
-    assert "文件格式：txt / csv 每行一个账号主页链接或账号 ID；Excel 每个单元格填写一个账号，表头会自动忽略。" in html
+    assert "导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记" in html
+    assert "表头固定为「主页链接」" in html
     assert 'id="sample_accounts_file"' in html
     assert 'accept=".txt,.csv,.xlsx,.xls"' in html
     assert "importSampleAccountsFile()" in html
     assert "/api/crawler/import-sample-accounts" in html
     assert "mergeSampleAccounts" in html
+    assert 'id="account_monitor_mode"' in html
+    assert "无蒲公英后台：公开数据 13 列" in html
+    assert "有蒲公英后台：含后台指标 68 列" in html
+    assert "/api/crawler/account-monitor/start" in html
+    assert "downloadAccountMonitorTemplate()" in html
+    assert "账号内容监测_主页链接模板.csv" in html
+    assert "下载账号内容监测表" not in html
 
 
 def test_file_preview_routes_api_requests_to_local_server():

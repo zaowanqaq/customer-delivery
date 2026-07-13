@@ -70,6 +70,10 @@ OPS_CONFIG_DEFAULT = {
     "sync_file_path": "",
     "sample_creator_ids": "",
     "notes_per_creator": 20,
+    "account_monitor_mode": "public",
+    "sentiment_note_links": "",
+    "sentiment_risk_keywords": "骗人,差,价格高,贵,jd,pdd",
+    "sentiment_risk_groups": '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]',
     "scenario_base_token": "",
     "account_filter_table_name": "账号内容监测表",
     "viral_monitor_table_name": "平台爆款监测表",
@@ -114,6 +118,10 @@ PROJECT_BOUND_FIELDS = {
     "max_comments_count_singlenotes",
     "sample_creator_ids",
     "notes_per_creator",
+    "account_monitor_mode",
+    "sentiment_note_links",
+    "sentiment_risk_keywords",
+    "sentiment_risk_groups",
     "collab_creator_ids",
     "collab_notes_per_creator",
     "collab_interval_hours",
@@ -175,6 +183,10 @@ class OpsConfigPayload(BaseModel):
     sync_file_path: str = ""
     sample_creator_ids: str = ""
     notes_per_creator: int = 20
+    account_monitor_mode: str = "public"
+    sentiment_note_links: str = ""
+    sentiment_risk_keywords: str = "骗人,差,价格高,贵,jd,pdd"
+    sentiment_risk_groups: str = '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]'
     scenario_base_token: str = ""
     account_filter_table_name: str = "账号内容监测表"
     viral_monitor_table_name: str = "平台爆款监测表"
@@ -483,6 +495,8 @@ async def save_ops_config(payload: OpsConfigPayload):
         config_data["sync_limit"] = 0
     if config_data["notes_per_creator"] < 1:
         config_data["notes_per_creator"] = 1
+    if config_data.get("account_monitor_mode") not in {"public", "pgy"}:
+        config_data["account_monitor_mode"] = "public"
     if config_data["collab_interval_hours"] not in (4, 8, 24):
         config_data["collab_interval_hours"] = 4
     if config_data["collab_sync_limit"] < 1:

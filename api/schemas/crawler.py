@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from enum import Enum
-from typing import Optional, Literal
+from typing import List, Optional, Literal
 from pydantic import BaseModel
 
 
@@ -93,7 +93,7 @@ class SampleCreatorStartRequest(BaseModel):
     """Start creator-mode crawling for sample accounts."""
     platform: PlatformEnum = PlatformEnum.XHS
     login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
-    creator_ids: str  # Comma/newline separated creator profile URLs or IDs
+    creator_ids: str  # Comma/newline separated Xiaohongshu creator profile URLs
     notes_per_creator: int = 20
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
@@ -102,12 +102,46 @@ class SampleCreatorStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
+    report_mode: Literal["public", "pgy"] = "public"
+    base_token: str = ""
+    table_id: str = ""
 
 
 class SampleAccountImportRequest(BaseModel):
     """Import sample creator accounts from txt/csv/excel content."""
     filename: str
     content_base64: str
+
+
+class SentimentRiskGroup(BaseModel):
+    """One editable risk category and its comment keywords."""
+    name: str
+    keywords: str
+
+
+class NoteSentimentStartRequest(BaseModel):
+    """Crawl comments from Xiaohongshu note links and sync Base risk-group formulas."""
+    note_links: str
+    base_token: str
+    table_id: str
+    risk_groups: List[SentimentRiskGroup] = []
+    # Keep accepting the former one-list payload so saved integrations do not break.
+    risk_keywords: str = ""
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
+    max_comments_count_singlenotes: int = 10
+    enable_sub_comments: bool = False
+    enable_media: bool = False
+    save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
+    cookies: str = ""
+    headless: bool = False
+
+
+class SentimentRuleSyncRequest(BaseModel):
+    """Synchronize editable sentiment risk groups to a Base table without crawling."""
+    base_token: str
+    table_id: str
+    risk_groups: List[SentimentRiskGroup] = []
+    risk_keywords: str = ""
 
 
 class ScenarioTableSetupRequest(BaseModel):

@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -31,6 +31,8 @@ from ..schemas import (
     LocalToBaseSyncRequest,
     SampleCreatorStartRequest,
     SampleAccountImportRequest,
+    NoteSentimentStartRequest,
+    SentimentRuleSyncRequest,
     ScenarioTableSetupRequest,
     ScenarioBootstrapRequest,
     CollaborationMonitorStartRequest,
@@ -47,6 +49,8 @@ import config
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
+account_monitor_jobs: Dict[str, Dict[str, Any]] = {}
+sentiment_monitor_jobs: Dict[str, Dict[str, Any]] = {}
 PGY_CDP_PORT = 9223
 PGY_CDP_ENDPOINT = f"http://127.0.0.1:{PGY_CDP_PORT}"
 PGY_LOGIN_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
@@ -245,6 +249,7 @@ SAMPLE_ACCOUNT_HEADER_WORDS = {
     "账号id",
     "小红书号",
     "小红书id",
+    "小红书id号",
     "主页",
     "主页链接",
     "链接",
@@ -257,18 +262,178 @@ SAMPLE_ACCOUNT_HEADER_WORDS = {
 }
 
 
+def _is_xhs_host(host: str) -> bool:
+    host = (host or "").lower().split(":", 1)[0]
+    return host in {"xiaohongshu.com", "xhslink.com", "xhs.cn"} or host.endswith(
+        (".xiaohongshu.com", ".xhslink.com", ".xhs.cn")
+    )
+
+
+class _XhsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow a short-link redirect chain only inside Xiaohongshu domains."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        parsed = urlparse(newurl)
+        if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
+            raise ValueError("短链跳转目标不是小红书主页")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _profile_url_from_link(value: str, resolve_short_link: bool = True) -> str:
+    """Return a canonical XHS profile URL from a long or short homepage link."""
+    text = value.strip().strip("\"'“”‘’")
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
+        raise ValueError("仅支持小红书账号主页长链或短链")
+
+    candidate = text
+    profile_match = re.search(r"/user/profile/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    if not profile_match and resolve_short_link:
+        opener = urllib.request.build_opener(_XhsRedirectHandler())
+        request = urllib.request.Request(
+            text,
+            headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"},
+        )
+        try:
+            with opener.open(request, timeout=15) as response:
+                candidate = response.geturl()
+        except Exception as exc:
+            raise ValueError(f"短链解析失败：{exc}") from exc
+        parsed = urlparse(candidate)
+        if not _is_xhs_host(parsed.hostname or ""):
+            raise ValueError("短链跳转目标不是小红书主页")
+        profile_match = re.search(r"/user/profile/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    if not profile_match:
+        raise ValueError("链接未解析到小红书账号主页，请粘贴账号主页链接")
+    user_id = unquote(profile_match.group(1)).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", user_id):
+        raise ValueError("主页链接中的账号标识无效")
+    return f"https://www.xiaohongshu.com/user/profile/{user_id}"
+
+
+def _note_id_from_link(value: str, resolve_short_link: bool = True) -> str:
+    """Extract a Xiaohongshu note ID from a long or short note link."""
+    text = value.strip().strip("\"'“”‘’")
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
+        raise ValueError("仅支持小红书笔记长链或短链")
+    candidate = text
+    match = re.search(r"/(?:explore|discovery/item)/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    if not match and resolve_short_link:
+        opener = urllib.request.build_opener(_XhsRedirectHandler())
+        request = urllib.request.Request(
+            text,
+            headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"},
+        )
+        try:
+            with opener.open(request, timeout=15) as response:
+                candidate = response.geturl()
+        except Exception as exc:
+            raise ValueError(f"短链解析失败：{exc}") from exc
+        parsed = urlparse(candidate)
+        match = re.search(r"/(?:explore|discovery/item)/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("链接未解析到小红书笔记，请粘贴笔记链接")
+    note_id = unquote(match.group(1)).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", note_id):
+        raise ValueError("笔记链接中的笔记标识无效")
+    return note_id
+
+
+def _split_sentiment_keywords(raw: str) -> List[str]:
+    keywords: List[str] = []
+    seen = set()
+    for item in re.split(r"[\n\r,，;；]+", raw or ""):
+        value = item.strip()
+        if not value:
+            continue
+        if len(value) > 80:
+            raise ValueError(f"关键词过长：{value[:30]}...")
+        key = value.casefold()
+        if key not in seen:
+            seen.add(key)
+            keywords.append(value)
+    if not keywords:
+        raise ValueError("请至少填写一个舆情风险关键词")
+    if len(keywords) > 100:
+        raise ValueError("舆情风险关键词最多支持 100 个")
+    return keywords
+
+
+def _escape_formula_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _normalize_sentiment_risk_groups(raw_groups: List[Any], legacy_keywords: str = "") -> List[Dict[str, Any]]:
+    """Validate editable risk categories while retaining compatibility with the old keyword list."""
+    groups = raw_groups or []
+    if not groups and legacy_keywords:
+        groups = [{"name": "电商风险", "keywords": legacy_keywords}]
+    result: List[Dict[str, Any]] = []
+    seen_names = set()
+    for raw_group in groups:
+        name = str(getattr(raw_group, "name", None) or (raw_group.get("name") if isinstance(raw_group, dict) else "")).strip()
+        keywords_raw = getattr(raw_group, "keywords", None)
+        if keywords_raw is None and isinstance(raw_group, dict):
+            keywords_raw = raw_group.get("keywords", "")
+        if not name:
+            raise ValueError("风险类型名称不能为空")
+        if len(name) > 40 or any(char in name for char in "\r\n[]"):
+            raise ValueError(f"风险类型名称无效：{name[:30]}")
+        if name == "舆情风险":
+            raise ValueError("风险类型名称不能使用保留列名“舆情风险”")
+        name_key = name.casefold()
+        if name_key in seen_names:
+            raise ValueError(f"风险类型名称重复：{name}")
+        seen_names.add(name_key)
+        if isinstance(keywords_raw, list):
+            keywords_raw = ",".join(str(keyword) for keyword in keywords_raw)
+        result.append({"name": name, "keywords": _split_sentiment_keywords(str(keywords_raw or ""))})
+    if not result:
+        raise ValueError("请至少保留一个风险类型分组")
+    if len(result) > 20:
+        raise ValueError("风险类型分组最多支持 20 组")
+    return result
+
+
+def _risk_group_field_name(group_name: str) -> str:
+    return f"风险-{group_name}"
+
+
+def _risk_group_condition(keywords: List[str]) -> str:
+    conditions = ", ".join(f'CONTAINTEXT([评论内容], "{_escape_formula_string(keyword)}")' for keyword in keywords)
+    return f"OR({conditions})"
+
+
+def _risk_group_formula(group: Dict[str, Any]) -> str:
+    return f'IF({_risk_group_condition(group["keywords"])}, "{_escape_formula_string(group["name"])}", "")'
+
+
+def _sentiment_risk_formula(groups: List[Any]) -> str:
+    """Return the aggregate risk label; a comment can match more than one category."""
+    if groups and isinstance(groups[0], str):
+        normalized = [{"name": "电商风险", "keywords": groups}]
+    elif groups and isinstance(groups[0], dict) and isinstance(groups[0].get("keywords"), list):
+        normalized = groups
+    else:
+        normalized = _normalize_sentiment_risk_groups(groups)
+    if len(normalized) == 1:
+        return _risk_group_formula(normalized[0])
+    matches = [
+        f'IF({_risk_group_condition(group["keywords"])}, "{_escape_formula_string(group["name"])}、", "")'
+        for group in normalized
+    ]
+    return f'REGEXREPLACE(CONCATENATE({", ".join(matches)}), "、$", "")'
+
+
 def _looks_like_sample_account(value: str) -> bool:
     text = value.strip().strip("\"'“”‘’")
     if not text:
         return False
     if text.lower() in SAMPLE_ACCOUNT_HEADER_WORDS:
         return False
-    lower = text.lower()
-    if any(marker in lower for marker in ("xiaohongshu.com", "xhslink.com", "xhs.cn", "/user/profile/")):
-        return True
-    if re.search(r"\s", text):
-        return False
-    return bool(re.fullmatch(r"[A-Za-z0-9_.-]{4,80}", text))
+    parsed = urlparse(text)
+    return parsed.scheme in {"http", "https"} and _is_xhs_host(parsed.hostname or "")
 
 
 def _dedupe_sample_accounts(values: List[str]) -> List[str]:
@@ -661,7 +826,9 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
     return [
         f.get("name")
         for f in fields
-        if isinstance(f, dict) and f.get("name") and f.get("type") not in {"not_support", "attachment"}
+        if isinstance(f, dict) and f.get("name") and f.get("type") not in {
+            "not_support", "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by",
+        }
     ]
 
 
@@ -682,17 +849,17 @@ async def _read_table_field_defs(base_token: str, table_id: str) -> List[Dict[st
 
 
 async def _create_base_field(base_token: str, table_id: str, field: Dict[str, Any]) -> None:
-    await _run_lark_cli(
-        [
-            _find_lark_cli(),
-            "base", "+field-create",
-            "--as", "user",
-            "--base-token", base_token,
-            "--table-id", table_id,
-            "--json", json.dumps(field, ensure_ascii=False),
-        ],
-        timeout_sec=45,
-    )
+    command = [
+        _find_lark_cli(),
+        "base", "+field-create",
+        "--as", "user",
+        "--base-token", base_token,
+        "--table-id", table_id,
+        "--json", json.dumps(field, ensure_ascii=False),
+    ]
+    if field.get("type") == "formula":
+        command.append("--i-have-read-guide")
+    await _run_lark_cli(command, timeout_sec=45)
 
 
 async def _update_base_field(base_token: str, table_id: str, field_id: str, field: Dict[str, Any]) -> None:
@@ -758,6 +925,13 @@ def _attachment_field(name: str) -> Dict[str, Any]:
     return {"name": name, "type": "attachment"}
 
 
+def _formula_field(name: str, expression: str, description: str = "") -> Dict[str, Any]:
+    field = {"name": name, "type": "formula", "expression": expression}
+    if description:
+        field["description"] = description
+    return field
+
+
 def _creator_type_field() -> Dict[str, Any]:
     return {
         "name": "目标/推荐博主",
@@ -782,8 +956,6 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("笔记类型"),
         _text_field("笔记标题"),
         _text_field("笔记内容"),
-        _text_field("笔记封面"),
-        _text_field("笔记图片1"),
         _text_field("笔记tag"),
         _number_field("点赞"),
         _number_field("收藏数"),
@@ -793,7 +965,7 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _number_field("曝光量"),
         _number_field("总互动数据（赞+藏+评，不算分享）"),
         _datetime_field("采集数据时间"),
-        _attachment_field("封面文件"),
+        _attachment_field("封面附件"),
     ]
 
 
@@ -809,6 +981,7 @@ def _note_recreation_fields() -> List[Dict[str, Any]]:
         _datetime_field("采集时间"),
         _text_field("博主主页"),
         _text_field("标题改写"),
+        _text_field("图片改写"),
         _text_field("关键词"),
         _number_field("点赞数"),
         _number_field("评论数"),
@@ -817,12 +990,145 @@ def _note_recreation_fields() -> List[Dict[str, Any]]:
         _datetime_field("首发时间"),
         _number_field("分享数"),
         _number_field("博主粉丝数"),
-        _text_field("封面图"),
+        _attachment_field("封面附件"),
         _text_field("已使用账号记录"),
         _text_field("项目名"),
         _text_field("正文改写"),
+        _text_field("二次调整口令"),
+        _text_field("二次标题改写"),
+        _text_field("二次正文改写"),
+        _text_field("二次图片改写"),
         _text_field("话题标签"),
     ]
+
+
+async def _ensure_note_recreation_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    """Add newly introduced display-only recreation fields to an existing project table."""
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_names = {str(field.get("name")) for field in existing if field.get("name")}
+    for field in _note_recreation_fields():
+        if field["name"] not in existing_names:
+            await _create_base_field(base_token, table_id, field)
+    return await _read_table_field_defs(base_token, table_id)
+
+
+_NOTE_RECREATION_FIELD_ALIASES = {
+    "project_name": ["项目名", "归属项目"],
+    "keyword": ["关键词", "检索关键词", "来源关键词"],
+    "original_title": ["标题", "笔记标题"],
+    "original_body": ["内容", "笔记内容", "正文"],
+    "original_images": ["封面附件", "封面图", "笔记封面", "图片", "原图"],
+    "rewrite_title": ["标题改写", "改写标题"],
+    "rewrite_body": ["正文改写", "内容改写", "改写正文"],
+    "rewrite_images": ["图片改写", "封面改写", "图片改写结果"],
+    "score": ["改写打分", "改写评分", "评分"],
+    "adjustment_prompt": ["二次调整口令", "二次改写口令", "二次调整指令"],
+    "second_title": ["二次标题改写", "二次改写标题"],
+    "second_body": ["二次正文改写", "二次改写正文"],
+    "second_images": ["二次图片改写", "二次图片改写结果"],
+    "note_url": ["笔记链接", "发布笔记链接"],
+}
+
+
+def _recreation_cell_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, dict):
+        return "\n".join(_recreation_cell_text(item) for item in value.values() if item not in (None, ""))
+    if isinstance(value, list):
+        return "\n".join(_recreation_cell_text(item) for item in value if item not in (None, ""))
+    return str(value).strip()
+
+
+def _recreation_image_urls(value: Any) -> List[str]:
+    urls: List[str] = []
+    if isinstance(value, dict):
+        for key in ("url", "tmp_url", "link", "download_url"):
+            if value.get(key):
+                urls.extend(_recreation_image_urls(value[key]))
+        if not urls:
+            for item in value.values():
+                urls.extend(_recreation_image_urls(item))
+    elif isinstance(value, list):
+        for item in value:
+            urls.extend(_recreation_image_urls(item))
+    else:
+        urls.extend(re.findall(r"https?://[^\s,，;；\]\)]+", _recreation_cell_text(value)))
+    return list(dict.fromkeys(urls))
+
+
+def _map_note_recreation_case(row: Dict[str, Any]) -> Dict[str, Any]:
+    def pick(key: str) -> Any:
+        return next((row[name] for name in _NOTE_RECREATION_FIELD_ALIASES[key] if row.get(name) not in (None, "")), "")
+
+    return {
+        "project_name": _recreation_cell_text(pick("project_name")),
+        "keyword": _recreation_cell_text(pick("keyword")),
+        "original": {
+            "title": _recreation_cell_text(pick("original_title")),
+            "body": _recreation_cell_text(pick("original_body")),
+            "images": _recreation_image_urls(pick("original_images")),
+            "image_note": _recreation_cell_text(pick("original_images")),
+        },
+        "rewrite": {
+            "title": _recreation_cell_text(pick("rewrite_title")),
+            "body": _recreation_cell_text(pick("rewrite_body")),
+            "images": _recreation_image_urls(pick("rewrite_images")),
+            "image_note": _recreation_cell_text(pick("rewrite_images")),
+        },
+        "score": _recreation_cell_text(pick("score")),
+        "second_adjustment": {
+            "prompt": _recreation_cell_text(pick("adjustment_prompt")),
+            "title": _recreation_cell_text(pick("second_title")),
+            "body": _recreation_cell_text(pick("second_body")),
+            "images": _recreation_image_urls(pick("second_images")),
+            "image_note": _recreation_cell_text(pick("second_images")),
+        },
+        "note_url": _recreation_cell_text(pick("note_url")),
+    }
+
+
+async def _read_note_recreation_cases(
+    base_token: str, table_id: str, project_name: str = "", limit: int = 100,
+) -> Dict[str, Any]:
+    """Read only rewritten cases, with filtering performed by Base before rendering."""
+    fields = await _read_table_field_defs(base_token, table_id)
+    field_names = [str(field["name"]) for field in fields if field.get("name")]
+    available = set(field_names)
+    rewrite_fields = [
+        name
+        for alias in ("rewrite_title", "rewrite_body", "rewrite_images", "second_title", "second_body", "second_images")
+        for name in _NOTE_RECREATION_FIELD_ALIASES[alias]
+        if name in available
+    ]
+    if not rewrite_fields:
+        return {"cases": [], "has_more": False, "fields": field_names}
+    rewritten_filter = {"logic": "or", "conditions": [[name, "non_empty"] for name in rewrite_fields]}
+    project_field = next((name for name in _NOTE_RECREATION_FIELD_ALIASES["project_name"] if name in available), "")
+    filter_json: Dict[str, Any] = rewritten_filter
+    if project_name.strip() and project_field:
+        # Base filter JSON is one-level only. Project scoping is pushed down first;
+        # the mapped rows below retain only rewritten cases.
+        filter_json = {"logic": "and", "conditions": [[project_field, "==", project_name.strip()]]}
+    cmd = [
+        _find_lark_cli(), "base", "+record-list", "--as", "user", "--format", "json",
+        "--base-token", base_token, "--table-id", table_id,
+        "--filter-json", json.dumps(filter_json, ensure_ascii=False),
+        "--limit", str(max(1, min(limit, 200))),
+    ]
+    for field_name in field_names:
+        cmd.extend(["--field-id", field_name])
+    payload = await _run_lark_cli(cmd, timeout_sec=60)
+    data = payload.get("data") or {}
+    response_fields = data.get("fields") or field_names
+    cases = []
+    for values in data.get("data") or []:
+        if not isinstance(values, list):
+            continue
+        mapped = _map_note_recreation_case({name: value for name, value in zip(response_fields, values)})
+        if mapped["rewrite"]["title"] or mapped["rewrite"]["body"] or mapped["rewrite"]["image_note"] or mapped["second_adjustment"]["title"] or mapped["second_adjustment"]["body"] or mapped["second_adjustment"]["image_note"]:
+            cases.append(mapped)
+    return {"cases": cases, "has_more": bool(data.get("has_more")), "fields": response_fields}
 
 
 def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
@@ -831,9 +1137,7 @@ def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("笔记链接"),
         _text_field("笔记标题"),
         _number_field("评论总数"),
-        _text_field("评论区敏感词"),
-        _text_field("评论区敏感词监测（是/否）"),
-        _text_field("评论区分析"),
+        _formula_field("舆情风险", "\"\"", "笔记舆情监控自动汇总的风险类型"),
         _text_field("首评评论用户"),
         _text_field("IP属地"),
         _datetime_field("评论时间"),
@@ -848,6 +1152,59 @@ def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
 
 def _comments_fields() -> List[Dict[str, Any]]:
     return _sentiment_monitor_fields()
+
+
+async def _upsert_sentiment_formula_field(base_token: str, table_id: str, current: Dict[str, Any] | None, desired: Dict[str, Any]) -> None:
+    """Create or update one Base formula field after its structure has been read."""
+    command = [
+        _find_lark_cli(),
+        "base",
+        "+field-create" if not current else "+field-update",
+        "--as",
+        "user",
+        "--base-token",
+        base_token,
+        "--table-id",
+        table_id,
+    ]
+    if current:
+        if not current.get("id"):
+            raise HTTPException(status_code=400, detail=f"现有字段“{desired['name']}”缺少 field_id，无法更新公式")
+        command.extend(["--field-id", str(current["id"]), "--yes"])
+    command.extend(["--json", json.dumps(desired, ensure_ascii=False), "--i-have-read-guide"])
+    await _run_lark_cli(command, timeout_sec=45)
+
+
+async def _ensure_sentiment_monitor_fields(base_token: str, table_id: str, risk_groups: List[Any]) -> List[Dict[str, Any]]:
+    """Keep writable comment fields and synchronize one formula column per risk group."""
+    groups = _normalize_sentiment_risk_groups(risk_groups)
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
+    for field in _sentiment_monitor_fields():
+        if field["name"] != "舆情风险" and field["name"] not in existing_by_name:
+            await _create_base_field(base_token, table_id, field)
+
+    summary = _formula_field("舆情风险", _sentiment_risk_formula(groups), "笔记舆情监控自动汇总的风险类型")
+    await _upsert_sentiment_formula_field(base_token, table_id, existing_by_name.get("舆情风险"), summary)
+    active_group_fields = set()
+    for group in groups:
+        name = _risk_group_field_name(group["name"])
+        active_group_fields.add(name)
+        desired = _formula_field(name, _risk_group_formula(group), "笔记舆情监控风险分组自动规则")
+        await _upsert_sentiment_formula_field(base_token, table_id, existing_by_name.get(name), desired)
+
+    # Preserve removed group columns for existing Base views, but clear their formula so deleted rules stop matching.
+    for name, field in existing_by_name.items():
+        description = str(field.get("description") or "")
+        if (
+            field.get("type") == "formula"
+            and name.startswith("风险-")
+            and "笔记舆情监控风险分组自动规则" in description
+            and name not in active_group_fields
+        ):
+            disabled = _formula_field(name, "\"\"", "笔记舆情监控风险分组自动规则（已停用）")
+            await _upsert_sentiment_formula_field(base_token, table_id, field, disabled)
+    return await _read_table_field_defs(base_token, table_id)
 
 
 def _creator_selection_fields() -> List[Dict[str, Any]]:
@@ -960,6 +1317,15 @@ def _account_content_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("兴趣TOP8"),
         _datetime_field("最新笔记更新时间"),
         _datetime_field("采集博主数据日期"),
+    ]
+
+
+def _account_content_monitor_public_field_names() -> List[str]:
+    """The public-profile report deliberately contains only fields available without Pugongying."""
+    return [
+        "达人昵称", "小红书号", "主页链接", "蒲公英主页链接",
+        "发布笔记倒序（发布时间由近及远）", "笔记链接", "笔记标题", "笔记封面",
+        "笔记tag", "点赞", "收藏", "评论", "笔记总互动量（点赞+收藏+评论）",
     ]
 
 
@@ -1076,6 +1442,150 @@ def _read_local_rows(file_path: Path) -> List[Dict[str, Any]]:
     raise HTTPException(status_code=400, detail=f"不支持的文件类型：{file_path.suffix}，仅支持 jsonl/json/csv/xlsx/xls")
 
 
+def _account_monitor_public_row(source: Dict[str, Any]) -> Dict[str, Any]:
+    fields = _account_content_monitor_public_field_names()
+    return dict(zip(fields, _row_to_table_values(source, fields, "notes")))
+
+
+def _account_monitor_pgy_row(source: Dict[str, Any], summary: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Combine one public note with account-level Pugongying metrics.
+
+    Pugongying exposes creator metrics, while the public crawler exposes the
+    individual note. Repeating the creator metrics for each of the 20 notes
+    keeps the report flat and matches the customer-provided sheet layout.
+    """
+    fields = [field["name"] for field in _account_content_monitor_fields()]
+    result: Dict[str, Any] = {}
+    if summary:
+        metrics = dict(summary.get("target_metrics") or {})
+        # pgy_automation uses fans_num internally, while the reusable Base
+        # mapper historically calls the same metric fans_count.
+        if metrics.get("fans_num") not in (None, ""):
+            metrics.setdefault("fans_count", metrics["fans_num"])
+        result.update(dict(zip(fields, _pgy_row_to_values(metrics, fields))))
+        result["蒲公英主页链接"] = summary.get("url") or result.get("蒲公英主页链接", "")
+        result["小红书号"] = summary.get("red_id") or result.get("小红书号", "")
+        result["达人昵称"] = summary.get("nickname") or result.get("达人昵称", "")
+    # Only note-level public fields take priority. Do not map the whole 68
+    # fields from the public crawler, otherwise missing Pugongying metrics are
+    # converted to zero and overwrite the backend values.
+    result.update(_account_monitor_public_row(source))
+    # A Pugongying lookup can provide the proper red ID and its own detail-page
+    # URL even when the public crawler only returned the profile user ID.
+    if summary:
+        result["蒲公英主页链接"] = summary.get("url") or result.get("蒲公英主页链接", "")
+        result["小红书号"] = summary.get("red_id") or result.get("小红书号", "")
+    return result
+
+
+def _account_monitor_creator_key(row: Dict[str, Any]) -> str:
+    return str(
+        row.get("author_user_id")
+        or row.get("user_id")
+        or row.get("账号ID")
+        or row.get("author_nickname")
+        or row.get("nickname")
+        or ""
+    ).strip().lower()
+
+
+def _account_monitor_creator_name(row: Dict[str, Any]) -> str:
+    return str(row.get("author_nickname") or row.get("nickname") or row.get("达人昵称") or "").strip()
+
+
+def _write_account_monitor_report(rows: List[Dict[str, Any]], report_mode: str, job_id: str) -> Path:
+    fields = (
+        [field["name"] for field in _account_content_monitor_fields()]
+        if report_mode == "pgy"
+        else _account_content_monitor_public_field_names()
+    )
+    # The workbook is an implementation detail used for Base synchronization;
+    # the customer-facing result lives in the Web UI and Feishu Base only.
+    report_root = temp_dir() / "account_monitor"
+    report_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = "含蒲公英" if report_mode == "pgy" else "公开数据"
+    output_path = report_root / f"账号内容监测_{suffix}_{timestamp}_{job_id[:8]}.xlsx"
+    try:
+        import pandas as pd  # type: ignore
+
+        pd.DataFrame(rows, columns=fields).to_excel(output_path, index=False)
+    except Exception as exc:
+        raise RuntimeError(f"生成账号内容监测 Excel 失败：{exc}") from exc
+    return output_path
+
+
+async def _build_account_monitor_report(job_id: str, report_mode: str, base_token: str = "", table_id: str = "") -> None:
+    job = account_monitor_jobs[job_id]
+    try:
+        job.update({"status": "crawling", "stage": "正在抓取各账号最近 20 篇笔记", "error": ""})
+        if not await _wait_crawler_idle(timeout_sec=1800):
+            raise RuntimeError("等待账号笔记抓取完成超时")
+        source_path = _latest_local_file("notes", "creator")
+        source_rows = _read_local_rows(source_path)
+        if not source_rows:
+            raise RuntimeError("抓取完成但没有可生成报表的笔记数据")
+
+        summaries: Dict[str, Dict[str, Any]] = {}
+        pgy_errors: List[str] = []
+        if report_mode == "pgy":
+            creators: Dict[str, str] = {}
+            for row in source_rows:
+                key = _account_monitor_creator_key(row)
+                name = _account_monitor_creator_name(row)
+                if key and name:
+                    creators.setdefault(key, name)
+            if not creators:
+                raise RuntimeError("公开笔记数据中未识别到达人昵称，无法匹配蒲公英数据")
+            total = len(creators)
+            for index, (key, nickname) in enumerate(creators.items(), start=1):
+                job.update({"status": "enriching", "stage": f"正在补充蒲公英指标（{index}/{total}）：{nickname}"})
+                result = await _run_pgy_automation(
+                    ["run-kol", "--api-only", "--nickname", nickname, "--similar-detail-limit", "0"],
+                    timeout_sec=240,
+                )
+                summary_path = ((result.get("outputs") or {}).get("summary") or "").strip()
+                if result.get("status") == "error" or result.get("returncode") or not summary_path:
+                    pgy_errors.append(f"{nickname}: {str(result.get('error') or '未返回蒲公英数据')[:160]}")
+                    continue
+                try:
+                    summaries[key] = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+                except Exception as exc:
+                    pgy_errors.append(f"{nickname}: 读取蒲公英结果失败（{exc}）")
+
+        job.update({"status": "exporting", "stage": "正在生成账号内容监测表"})
+        report_rows = [
+            _account_monitor_pgy_row(row, summaries.get(_account_monitor_creator_key(row)))
+            if report_mode == "pgy"
+            else _account_monitor_public_row(row)
+            for row in source_rows
+        ]
+        report_path = _write_account_monitor_report(report_rows, report_mode, job_id)
+        sync_result: Dict[str, Any] = {"status": "skipped", "reason": "未绑定账号内容监测表"}
+        if base_token and table_id:
+            job.update({"status": "syncing", "stage": "正在同步至账号内容监测表"})
+            sync_result = await sync_local_to_base(
+                LocalToBaseSyncRequest(
+                    base_token=base_token,
+                    table_id=table_id,
+                    data_type="notes",
+                    crawler_type_hint="creator",
+                    file_path=str(report_path),
+                )
+            )
+        job.update({
+            "status": "completed",
+            "stage": "账号内容监测表已同步" if sync_result.get("status") == "ok" else "账号内容监测表已生成",
+            "report_path": str(report_path),
+            "row_count": len(report_rows),
+            "source_path": str(source_path),
+            "pgy_errors": pgy_errors,
+            "sync_result": sync_result,
+        })
+    except Exception as exc:
+        job.update({"status": "error", "stage": "生成失败", "error": str(exc)})
+
+
 def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type: str) -> List[Any]:
     alias_map = {
         "标题": ["title", "笔记标题"],
@@ -1174,12 +1684,11 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                 value = "图文"
             elif note_type_text in {"video", "视频"}:
                 value = "视频"
-        if field_name in {"笔记封面", "封面图"} and isinstance(value, list):
-            value = value[0] if value else ""
-        if field_name == "笔记图片1" and isinstance(value, list):
-            value = value[0] if value else ""
-        if field_name in {"笔记封面", "封面图", "笔记图片1"} and isinstance(value, str) and "," in value:
-            value = value.split(",", 1)[0].strip()
+        # Cover media is uploaded to the attachment field after the record is
+        # created.  Never mirror its CDN URL into a text column: those links
+        # expire and cannot be used for downstream image rewriting.
+        if field_name in {"笔记封面", "封面图", "笔记图片1"}:
+            value = ""
         if field_name in {"笔记tag", "话题标签"} and isinstance(value, list):
             value = ",".join(str(item) for item in value if item not in ("", None))
         if field_name == "评论图片" and isinstance(value, list):
@@ -1277,10 +1786,10 @@ def _cover_url_from_row(row: Dict[str, Any]) -> str:
     return ""
 
 
-def _local_cover_file_from_row(row: Dict[str, Any]) -> Path | None:
+def _local_cover_files_from_row(row: Dict[str, Any]) -> List[Path]:
     note_id = str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
     if not note_id:
-        return None
+        return []
     project_root = Path(__file__).resolve().parents[2]
     roots = [
         data_dir() / "xhs" / "images" / note_id,
@@ -1291,11 +1800,19 @@ def _local_cover_file_from_row(row: Dict[str, Any]) -> Path | None:
     for root in roots:
         if not root.exists() or not root.is_dir():
             continue
-        for pattern in ("0.*", "*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.mp4"):
-            candidates = sorted(path for path in root.glob(pattern) if path.is_file())
-            if candidates:
-                return candidates[0]
-    return None
+        candidates = sorted(
+            (path for path in root.iterdir() if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4"}),
+            key=lambda path: (not path.stem.isdigit(), int(path.stem) if path.stem.isdigit() else path.name),
+        )
+        if candidates:
+            return candidates
+    return []
+
+
+def _local_cover_file_from_row(row: Dict[str, Any]) -> Path | None:
+    """Backward-compatible helper for callers that only need the first cover."""
+    files = _local_cover_files_from_row(row)
+    return files[0] if files else None
 
 
 def _suffix_for_download(url: str, content_type: str) -> str:
@@ -1347,30 +1864,17 @@ async def _upload_cover_file_if_available(
     row: Dict[str, Any],
     attachment_field_ids: Dict[str, str],
 ) -> tuple[bool, str]:
-    cover_field_id = attachment_field_ids.get("封面文件", "")
+    cover_field_id = attachment_field_ids.get("封面附件") or attachment_field_ids.get("封面文件", "")
     if not cover_field_id:
         return False, ""
-    local_cover = _local_cover_file_from_row(row)
-    if local_cover:
-        try:
-            await _upload_base_attachment(base_token, table_id, record_id, cover_field_id, str(local_cover))
-            return True, ""
-        except Exception as exc:
-            return False, str(exc)[:300]
-    cover_url = _cover_url_from_row(row)
-    if not cover_url:
-        return False, ""
-    temp_path: Path | None = None
+    local_covers = _local_cover_files_from_row(row)
+    if not local_covers:
+        return False, "未找到本地封面文件，已跳过 URL 写入"
     try:
-        temp_path = await _download_media_to_temp_file(cover_url)
-        await _upload_base_attachment(base_token, table_id, record_id, cover_field_id, str(temp_path))
+        await _upload_base_attachments(base_token, table_id, record_id, cover_field_id, local_covers)
         return True, ""
     except Exception as exc:
         return False, str(exc)[:300]
-    finally:
-        if temp_path:
-            with contextlib.suppress(Exception):
-                temp_path.unlink()
 
 
 def _chunk_table_rows(rows: List[List[Any]], chunk_size: int = 50) -> List[List[List[Any]]]:
@@ -1774,47 +2278,62 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
     return rows
 
 
-async def _upload_base_attachment(base_token: str, table_id: str, record_id: str, field_id: str, file_path: str) -> None:
-    if not file_path:
+async def _upload_base_attachments(
+    base_token: str,
+    table_id: str,
+    record_id: str,
+    field_id: str,
+    file_paths: List[Path],
+) -> None:
+    if not file_paths:
         return
     project_root = Path(__file__).resolve().parents[2]
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = project_root / path
-    path = path.resolve()
-    if not path.exists() or not path.is_file():
-        return
-
-    staged_path: Path | None = None
+    staged_paths: List[Path] = []
+    cli_paths: List[Path] = []
     try:
-        cli_path = path.relative_to(project_root)
-    except ValueError:
-        staging_dir = project_root / ".tmp_lark_uploads"
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        staged_path = staging_dir / f"{uuid4().hex}_{path.name}"
-        shutil.copy2(path, staged_path)
-        cli_path = staged_path.relative_to(project_root)
-
-    try:
-        await _run_lark_cli(
-            [
-                _find_lark_cli(),
-                "base", "+record-upload-attachment",
-                "--as", "user",
-                "--base-token", base_token,
-                "--table-id", table_id,
-                "--record-id", record_id,
-                "--field-id", field_id,
-                "--file", cli_path.as_posix(),
-            ],
-            timeout_sec=60,
-        )
+        for file_path in file_paths:
+            path = Path(file_path)
+            if not path.is_absolute():
+                path = project_root / path
+            path = path.resolve()
+            if not path.exists() or not path.is_file():
+                continue
+            try:
+                cli_path = path.relative_to(project_root)
+            except ValueError:
+                staging_dir = project_root / ".tmp_lark_uploads"
+                staging_dir.mkdir(parents=True, exist_ok=True)
+                staged_path = staging_dir / f"{uuid4().hex}_{path.name}"
+                shutil.copy2(path, staged_path)
+                staged_paths.append(staged_path)
+                cli_path = staged_path.relative_to(project_root)
+            cli_paths.append(cli_path)
+        if not cli_paths:
+            return
+        command = [
+            _find_lark_cli(),
+            "base", "+record-upload-attachment",
+            "--as", "user",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--record-id", record_id,
+            "--field-id", field_id,
+        ]
+        for cli_path in cli_paths:
+            command.extend(["--file", cli_path.as_posix()])
+        await _run_lark_cli(command, timeout_sec=60)
     finally:
-        if staged_path:
+        for staged_path in staged_paths:
             with contextlib.suppress(Exception):
                 staged_path.unlink()
-            with contextlib.suppress(Exception):
-                staged_path.parent.rmdir()
+        staging_dir = project_root / ".tmp_lark_uploads"
+        with contextlib.suppress(Exception):
+            staging_dir.rmdir()
+
+
+async def _upload_base_attachment(base_token: str, table_id: str, record_id: str, field_id: str, file_path: str) -> None:
+    if file_path:
+        await _upload_base_attachments(base_token, table_id, record_id, field_id, [Path(file_path)])
 
 
 async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any]:
@@ -1829,7 +2348,13 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
     field_defs = await _ensure_creator_selection_fields(request.base_token, request.table_id)
     if not field_defs:
         raise HTTPException(status_code=400, detail="目标表没有字段，无法同步")
-    table_fields = [field.get("name") for field in field_defs if field.get("name")]
+    table_fields = [
+        field.get("name")
+        for field in field_defs
+        if field.get("name") and field.get("type") not in {
+            "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by", "not_support",
+        }
+    ]
     field_types = {field.get("name"): field.get("type") for field in field_defs}
     writable_fields = [name for name in table_fields if field_types.get(name) != "attachment"]
     output_dir = str(summary_path.parent)
@@ -2361,6 +2886,199 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
     return {"status": "ok", "message": "样本账号抓取任务已启动", "creator_count": len(creator_id_list), "notes_per_creator": start_request.max_notes_count}
 
 
+@router.post("/account-monitor/start")
+async def start_account_monitor(request: SampleCreatorStartRequest):
+    """Run a fixed 20-note account report and generate the requested Excel layout."""
+    creator_links = _split_creator_inputs(request.creator_ids)
+    if not creator_links:
+        raise HTTPException(status_code=400, detail="请至少提供 1 个小红书账号主页链接")
+    if crawler_manager.process and crawler_manager.process.poll() is None:
+        raise HTTPException(status_code=400, detail="当前已有抓取任务在运行，请等待完成后再启动账号内容监测")
+
+    normalized_links: List[str] = []
+    link_errors: List[str] = []
+    for raw_link in creator_links:
+        try:
+            normalized_links.append(await asyncio.to_thread(_profile_url_from_link, raw_link))
+        except ValueError as exc:
+            link_errors.append(f"{raw_link[:80]}：{exc}")
+    if link_errors:
+        raise HTTPException(status_code=400, detail="主页链接校验失败：" + "；".join(link_errors[:5]))
+    normalized_links = _dedupe_sample_accounts(normalized_links)
+    if not normalized_links:
+        raise HTTPException(status_code=400, detail="未识别到有效的小红书账号主页链接")
+
+    start_request = CrawlerStartRequest(
+        platform=request.platform,
+        login_type=request.login_type,
+        crawler_type="creator",
+        creator_ids=",".join(normalized_links),
+        max_notes_count=20,
+        max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
+        enable_comments=False,
+        enable_sub_comments=False,
+        enable_media=request.enable_media,
+        save_option=request.save_option,
+        cookies=request.cookies,
+        headless=request.headless,
+    )
+    _clear_creator_data_files()
+    success = await crawler_manager.start(start_request)
+    if not success:
+        if crawler_manager.process and crawler_manager.process.poll() is None:
+            raise HTTPException(status_code=400, detail="Crawler is already running")
+        raise HTTPException(status_code=500, detail="Failed to start account monitor crawler")
+
+    job_id = uuid4().hex
+    account_monitor_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "crawling",
+        "stage": "账号笔记抓取已启动",
+        "report_mode": request.report_mode,
+        "creator_count": len(normalized_links),
+        "notes_per_creator": 20,
+        "row_count": 0,
+        "report_path": "",
+        "pgy_errors": [],
+        "error": "",
+        "started_at": datetime.now().isoformat(),
+    }
+    account_monitor_jobs[job_id]["task"] = asyncio.create_task(
+        _build_account_monitor_report(job_id, request.report_mode, request.base_token.strip(), request.table_id.strip())
+    )
+    return {
+        "status": "ok",
+        "message": "账号内容监测任务已启动",
+        "job_id": job_id,
+        "creator_count": len(normalized_links),
+        "notes_per_creator": 20,
+        "report_mode": request.report_mode,
+    }
+
+
+@router.get("/account-monitor/status")
+async def account_monitor_status(job_id: str):
+    job = account_monitor_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="未找到账号内容监测任务")
+    return {
+        key: value
+        for key, value in job.items()
+        if key not in {"task", "report_path", "source_path"}
+    }
+
+
+async def _build_sentiment_monitor_job(job_id: str, request: NoteSentimentStartRequest, risk_groups: List[Dict[str, Any]]) -> None:
+    job = sentiment_monitor_jobs[job_id]
+    try:
+        job.update({"status": "crawling", "stage": "正在抓取笔记评论", "error": ""})
+        if not await _wait_crawler_idle(timeout_sec=1800):
+            raise RuntimeError("等待笔记评论抓取完成超时")
+        job.update({"status": "configuring", "stage": "正在配置多维表格舆情风险规则"})
+        await _ensure_sentiment_monitor_fields(request.base_token, request.table_id, risk_groups)
+        comments_path = _latest_local_file("comments", "detail")
+        job.update({"status": "syncing", "stage": "正在同步评论至笔记舆情监控表"})
+        sync_result = await sync_local_to_base(
+            LocalToBaseSyncRequest(
+                base_token=request.base_token,
+                table_id=request.table_id,
+                data_type="comments",
+                crawler_type_hint="detail",
+                file_path=str(comments_path),
+            )
+        )
+        job.update({
+            "status": "completed",
+        "stage": "评论已同步，各风险类型由多维表格规则自动标记",
+            "sync_result": sync_result,
+        })
+    except Exception as exc:
+        job.update({"status": "error", "stage": "执行失败", "error": str(exc)})
+
+
+@router.post("/sentiment-monitor/start")
+async def start_sentiment_monitor(request: NoteSentimentStartRequest):
+    raw_links = [item.strip() for item in re.split(r"[\n\r,，;；]+", request.note_links or "") if item.strip()]
+    if not raw_links:
+        raise HTTPException(status_code=400, detail="请至少提供 1 个小红书笔记链接")
+    try:
+        risk_groups = _normalize_sentiment_risk_groups(request.risk_groups, request.risk_keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if crawler_manager.process and crawler_manager.process.poll() is None:
+        raise HTTPException(status_code=400, detail="当前已有抓取任务在运行，请等待完成后再启动笔记舆情监控")
+
+    note_ids: List[str] = []
+    errors: List[str] = []
+    for raw_link in raw_links:
+        try:
+            note_ids.append(await asyncio.to_thread(_note_id_from_link, raw_link))
+        except ValueError as exc:
+            errors.append(f"{raw_link[:80]}：{exc}")
+    if errors:
+        raise HTTPException(status_code=400, detail="笔记链接校验失败：" + "；".join(errors[:5]))
+    note_ids = list(dict.fromkeys(note_ids))
+    if not note_ids:
+        raise HTTPException(status_code=400, detail="未识别到有效的小红书笔记链接")
+
+    start_request = CrawlerStartRequest(
+        platform="xhs",
+        login_type=request.login_type,
+        crawler_type="detail",
+        specified_ids=",".join(note_ids),
+        max_notes_count=len(note_ids),
+        max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
+        enable_comments=True,
+        enable_sub_comments=request.enable_sub_comments,
+        enable_media=request.enable_media,
+        save_option=request.save_option,
+        cookies=request.cookies,
+        headless=request.headless,
+    )
+    success = await crawler_manager.start(start_request)
+    if not success:
+        if crawler_manager.process and crawler_manager.process.poll() is None:
+            raise HTTPException(status_code=400, detail="Crawler is already running")
+        raise HTTPException(status_code=500, detail="无法启动笔记评论抓取")
+
+    job_id = uuid4().hex
+    sentiment_monitor_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "crawling",
+        "stage": "笔记评论抓取已启动",
+        "note_count": len(note_ids),
+        "risk_groups": risk_groups,
+        "sync_result": {},
+        "error": "",
+        "started_at": datetime.now().isoformat(),
+    }
+    sentiment_monitor_jobs[job_id]["task"] = asyncio.create_task(_build_sentiment_monitor_job(job_id, request, risk_groups))
+    return {"status": "ok", "message": "笔记舆情监控任务已启动", "job_id": job_id, "note_count": len(note_ids)}
+
+
+@router.post("/sentiment-monitor/sync-rules")
+async def sync_sentiment_monitor_rules(request: SentimentRuleSyncRequest):
+    """Apply risk-category changes to Base immediately, without a crawler run."""
+    try:
+        risk_groups = _normalize_sentiment_risk_groups(request.risk_groups, request.risk_keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _ensure_sentiment_monitor_fields(request.base_token, request.table_id, risk_groups)
+    return {
+        "status": "ok",
+        "message": "风险分组规则已同步至多维表格",
+        "risk_groups": [group["name"] for group in risk_groups],
+    }
+
+
+@router.get("/sentiment-monitor/status")
+async def sentiment_monitor_status(job_id: str):
+    job = sentiment_monitor_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="未找到笔记舆情监控任务")
+    return {key: value for key, value in job.items() if key != "task"}
+
+
 @router.post("/import-sample-accounts")
 async def import_sample_accounts(request: SampleAccountImportRequest):
     filename = (request.filename or "").strip()
@@ -2560,6 +3278,8 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
 
     async def create_or_reuse(table_name: str, fields: List[Dict[str, Any]]) -> Dict[str, Any]:
         if table_name in existing_map:
+            if table_name == request.note_recreation_table_name:
+                await _ensure_note_recreation_fields(request.base_token, existing_map[table_name])
             return {"table_name": table_name, "table_id": existing_map[table_name], "reused": True, "raw": {"table": {"id": existing_map[table_name], "name": table_name}}}
         created = await _create_table_with_fields(request.base_token, table_name, fields)
         created["reused"] = False
@@ -2596,6 +3316,21 @@ async def get_base_info(base_token: str):
     except HTTPException as exc:
         return {"status": "ok", "base_token": token, "name": "", "warning": str(exc.detail)}
     return {"status": "ok", **info}
+
+
+@router.get("/note-recreation/cases")
+async def get_note_recreation_cases(
+    base_token: str,
+    table_id: str,
+    project_name: str = "",
+    limit: int = 100,
+):
+    """Expose project-scoped rewritten note cases for the read-only Web UI."""
+    token = _extract_base_token(base_token)
+    if not token or not table_id.strip():
+        raise HTTPException(status_code=400, detail="缺少笔记二创表的 base_token 或 table_id")
+    result = await _read_note_recreation_cases(token, table_id.strip(), project_name, limit)
+    return {"status": "ok", **result}
 
 
 @router.post("/bootstrap-project")
@@ -2657,7 +3392,9 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
     table_fields = [
         field.get("name")
         for field in field_defs
-        if field.get("name") and field.get("type") not in {"not_support", "attachment"}
+        if field.get("name") and field.get("type") not in {
+            "not_support", "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by",
+        }
     ]
     attachment_field_ids = {
         str(field.get("name")): str(field.get("id"))

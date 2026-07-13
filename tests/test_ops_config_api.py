@@ -28,6 +28,8 @@ def test_ops_config_defaults_to_customer_template_table_names():
     assert OPS_CONFIG_DEFAULT["account_filter_table_name"] == "账号内容监测表"
     assert OPS_CONFIG_DEFAULT["viral_monitor_table_name"] == "平台爆款监测表"
     assert OPS_CONFIG_DEFAULT["note_recreation_table_name"] == "笔记内容二创表"
+    assert OPS_CONFIG_DEFAULT["sentiment_risk_keywords"] == "骗人,差,价格高,贵,jd,pdd"
+    assert OPS_CONFIG_DEFAULT["sentiment_risk_groups"] == '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]'
     assert OPS_CONFIG_DEFAULT["comments_table_name"] == "笔记舆情监控表"
     assert OPS_CONFIG_DEFAULT["collaboration_monitor_table_name"] == "笔记数据监测表"
     assert OPS_CONFIG_DEFAULT["collab_comments_table_name"] == "合作笔记舆情监控表"
@@ -43,8 +45,8 @@ def test_scenario_setup_fields_match_customer_template():
 
     assert viral_fields == [
         "归属项目", "检索关键词", "笔记发布时间", "博主名", "博主ID", "博主粉丝数", "博主主页", "笔记类型",
-        "笔记标题", "笔记内容", "笔记封面", "笔记图片1", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
-        "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "封面文件",
+        "笔记标题", "笔记内容", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
+        "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "封面附件",
     ]
     assert creator_fields[:9] == [
         "目标/推荐博主", "推荐排名", "目标达人昵称", "达人昵称", "小红书号", "主页链接", "蒲公英主页链接",
@@ -59,14 +61,66 @@ def test_scenario_setup_fields_match_customer_template():
         "序号", "达人昵称", "小红书id", "发布笔记链接", "发布时间", "笔记tag", "笔记标题", "点赞", "收藏",
         "评论", "总互动（点赞+收藏+评论）", "分享", "曝光量", "阅读量", "笔记失效/正常（有失效链接作标记）",
     ]
-    assert sentiment_fields[:7] == [
-        "项目名", "笔记链接", "笔记标题", "评论总数", "评论区敏感词", "评论区敏感词监测（是/否）", "评论区分析",
-    ]
+    assert sentiment_fields[:5] == ["项目名", "笔记链接", "笔记标题", "评论总数", "舆情风险"]
+    risk_field = next(field for field in crawler._sentiment_monitor_fields() if field["name"] == "舆情风险")
+    assert risk_field == {
+        "name": "舆情风险",
+        "type": "formula",
+        "expression": "\"\"",
+        "description": "笔记舆情监控自动汇总的风险类型",
+    }
     assert recreation_fields == [
         "收藏数", "当日使用标记", "改写打分", "笔记ID", "博主名", "笔记链接", "标题", "采集时间",
-        "博主主页", "标题改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
-        "分享数", "博主粉丝数", "封面图", "已使用账号记录", "项目名", "正文改写", "话题标签",
+        "博主主页", "标题改写", "图片改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
+        "分享数", "博主粉丝数", "封面附件", "已使用账号记录", "项目名", "正文改写", "二次调整口令",
+        "二次标题改写", "二次正文改写", "二次图片改写", "话题标签",
     ]
+    assert crawler._account_content_monitor_public_field_names() == [
+        "达人昵称", "小红书号", "主页链接", "蒲公英主页链接",
+        "发布笔记倒序（发布时间由近及远）", "笔记链接", "笔记标题", "笔记封面",
+        "笔记tag", "点赞", "收藏", "评论", "笔记总互动量（点赞+收藏+评论）",
+    ]
+
+
+def test_account_monitor_report_rows_keep_public_and_pgy_fields_separate():
+    source = {
+        "author_nickname": "测试达人",
+        "author_user_id": "profile_123",
+        "title": "最新笔记",
+        "note_url": "https://www.xiaohongshu.com/explore/note_1",
+        "liked_count": "10",
+        "collected_count": "20",
+        "comment_count": "3",
+    }
+    public_row = crawler._account_monitor_public_row(source)
+    assert public_row["达人昵称"] == "测试达人"
+    assert public_row["点赞"] == 10
+    assert public_row["笔记总互动量（点赞+收藏+评论）"] == 33
+
+    pgy_row = crawler._account_monitor_pgy_row(source, {
+        "nickname": "蒲公英达人",
+        "red_id": "red_123",
+        "url": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/pgy_123",
+        "target_metrics": {"fans_num": 1234, "daily_imp_median": 88},
+    })
+    assert pgy_row["达人昵称"] == "测试达人"
+    assert pgy_row["小红书号"] == "red_123"
+    assert pgy_row["粉丝数"] == 1234
+    assert pgy_row["日常笔记曝光中位数"] == 88
+    assert pgy_row["点赞"] == 10
+
+
+def test_account_monitor_report_writes_selected_layout(monkeypatch, tmp_path):
+    monkeypatch.setattr(crawler, "temp_dir", lambda: tmp_path)
+
+    report = crawler._write_account_monitor_report(
+        [{"达人昵称": "测试达人", "点赞": 10}], "public", "job_12345678"
+    )
+
+    assert report.exists()
+    assert report.suffix == ".xlsx"
+    import pandas as pd
+    assert list(pd.read_excel(report).columns) == crawler._account_content_monitor_public_field_names()
 
 
 def test_creator_selection_type_field_uses_colored_single_select_options():
@@ -105,8 +159,6 @@ def test_historical_note_row_maps_to_customer_viral_payload():
     assert payload["博主ID"] == "xhs_user_1"
     assert payload["博主粉丝数"] == 12000
     assert payload["笔记类型"] == "图文"
-    assert payload["笔记封面"] == "https://img.example/1.jpg"
-    assert payload["笔记图片1"] == "https://img.example/1.jpg"
     assert payload["笔记tag"] == "护肤,测评"
     assert payload["总互动数据（赞+藏+评，不算分享）"] == 127
 
@@ -142,7 +194,6 @@ def test_historical_note_row_maps_to_customer_recreation_payload():
     assert payload["笔记ID"] == "note_1"
     assert payload["标题"] == "原始标题"
     assert payload["内容"] == "原始正文"
-    assert payload["封面图"] == "https://img.example/1.jpg"
     assert payload["话题标签"] == "户外,路线"
     assert payload["博主粉丝数"] == 12000
     assert payload["笔记类型"] == "视频"
@@ -221,24 +272,27 @@ async def test_upload_cover_file_uses_attachment_field_id(monkeypatch, tmp_path)
     cover_file = tmp_path / "cover.jpg"
     cover_file.write_bytes(b"fake image")
     captured_field_ids = []
+    captured_files = []
 
-    async def fake_upload(base_token, table_id, record_id, field_id, file_path):
+    async def fake_upload(base_token, table_id, record_id, field_id, file_paths):
         captured_field_ids.append(field_id)
+        captured_files.extend(file_paths)
 
-    monkeypatch.setattr(crawler, "_local_cover_file_from_row", lambda row: cover_file)
-    monkeypatch.setattr(crawler, "_upload_base_attachment", fake_upload)
+    monkeypatch.setattr(crawler, "_local_cover_files_from_row", lambda row: [cover_file])
+    monkeypatch.setattr(crawler, "_upload_base_attachments", fake_upload)
 
     uploaded, error = await crawler._upload_cover_file_if_available(
         "app123",
         "tbl123",
         "rec123",
         {"note_id": "note-1"},
-        {"封面文件": "fld5NvqX7K"},
+        {"封面附件": "fld5NvqX7K"},
     )
 
     assert uploaded is True
     assert error == ""
     assert captured_field_ids == ["fld5NvqX7K"]
+    assert captured_files == [cover_file]
 
 
 def test_ops_config_defaults_to_cookie_login_only():
@@ -287,16 +341,16 @@ async def test_base_info_endpoint_soft_fails_when_name_lookup_is_unavailable(mon
 
 
 def test_parse_sample_account_txt_file_dedupes_and_ignores_headers():
-    content = "账号ID\nabc_123\nhttps://www.xiaohongshu.com/user/profile/abc\nabc_123\n".encode("utf-8")
+    content = "主页链接\nhttps://www.xiaohongshu.com/user/profile/abc_123\nhttps://xhslink.com/a1b2\nhttps://www.xiaohongshu.com/user/profile/abc_123\n".encode("utf-8")
 
     accounts = crawler._parse_sample_account_file("accounts.txt", content)
 
-    assert accounts == ["abc_123", "https://www.xiaohongshu.com/user/profile/abc"]
+    assert accounts == ["https://www.xiaohongshu.com/user/profile/abc_123", "https://xhslink.com/a1b2"]
 
 
 @pytest.mark.asyncio
 async def test_import_sample_accounts_endpoint_accepts_base64_txt():
-    content = base64.b64encode("账号ID\nabc_123\nxhs-user-99\n".encode("utf-8")).decode("ascii")
+    content = base64.b64encode("主页链接\nhttps://www.xiaohongshu.com/user/profile/abc_123\nhttps://xhslink.com/a1b2\n".encode("utf-8")).decode("ascii")
 
     result = await crawler.import_sample_accounts(
         crawler.SampleAccountImportRequest(filename="accounts.txt", content_base64=content)
@@ -304,7 +358,136 @@ async def test_import_sample_accounts_endpoint_accepts_base64_txt():
 
     assert result["status"] == "ok"
     assert result["count"] == 2
-    assert result["text"] == "abc_123\nxhs-user-99"
+    assert result["text"] == "https://www.xiaohongshu.com/user/profile/abc_123\nhttps://xhslink.com/a1b2"
+
+
+def test_account_monitor_normalizes_a_long_profile_link():
+    assert crawler._profile_url_from_link(
+        "https://www.xiaohongshu.com/user/profile/abc_123?xsec_token=token"
+    ) == "https://www.xiaohongshu.com/user/profile/abc_123"
+
+
+def test_account_monitor_resolves_a_short_profile_link(monkeypatch):
+    class FakeResponse:
+        def geturl(self):
+            return "https://www.xiaohongshu.com/user/profile/short_123?xsec_token=token"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class FakeOpener:
+        def open(self, _request, timeout):
+            assert timeout == 15
+            return FakeResponse()
+
+    monkeypatch.setattr(crawler.urllib.request, "build_opener", lambda *_handlers: FakeOpener())
+
+    assert crawler._profile_url_from_link("https://xhslink.com/short-link") == "https://www.xiaohongshu.com/user/profile/short_123"
+
+
+def test_sentiment_formula_marks_any_keyword_match():
+    keywords = crawler._split_sentiment_keywords("投诉，质量问题\n欺骗,投诉")
+
+    assert keywords == ["投诉", "质量问题", "欺骗"]
+    assert crawler._sentiment_risk_formula(keywords) == (
+        'IF(OR(CONTAINTEXT([评论内容], "投诉"), CONTAINTEXT([评论内容], "质量问题"), '
+        'CONTAINTEXT([评论内容], "欺骗")), "电商风险", "")'
+    )
+
+
+def test_sentiment_risk_groups_create_per_type_and_summary_formulas():
+    groups = crawler._normalize_sentiment_risk_groups([
+        {"name": "电商风险", "keywords": "骗人,价格高"},
+        {"name": "服务风险", "keywords": "不回复\n拖延"},
+    ])
+
+    assert groups == [
+        {"name": "电商风险", "keywords": ["骗人", "价格高"]},
+        {"name": "服务风险", "keywords": ["不回复", "拖延"]},
+    ]
+    assert crawler._normalize_sentiment_risk_groups(groups) == groups
+    assert crawler._risk_group_field_name("电商风险") == "风险-电商风险"
+    assert crawler._risk_group_formula(groups[0]) == (
+        'IF(OR(CONTAINTEXT([评论内容], "骗人"), CONTAINTEXT([评论内容], "价格高")), "电商风险", "")'
+    )
+    assert crawler._sentiment_risk_formula(groups) == (
+        'REGEXREPLACE(CONCATENATE(IF(OR(CONTAINTEXT([评论内容], "骗人"), '
+        'CONTAINTEXT([评论内容], "价格高")), "电商风险、", ""), '
+        'IF(OR(CONTAINTEXT([评论内容], "不回复"), CONTAINTEXT([评论内容], "拖延")), "服务风险、", "")), "、$", "")'
+    )
+
+
+def test_sentiment_note_link_extracts_note_id():
+    assert crawler._note_id_from_link("https://www.xiaohongshu.com/explore/note_123?xsec_token=token") == "note_123"
+
+
+def test_note_recreation_case_mapping_keeps_before_after_and_second_adjustment():
+    case = crawler._map_note_recreation_case({
+        "项目名": "露营项目",
+        "关键词": "露营帐篷",
+        "标题": "原始标题",
+        "内容": "原始正文",
+        "封面图": "https://cdn.example.com/original.jpg",
+        "标题改写": "第一次标题",
+        "正文改写": "第一次正文",
+        "图片改写": "https://cdn.example.com/rewrite.jpg",
+        "改写打分": 92,
+        "二次调整口令": "更轻松一点",
+        "二次标题改写": "二次标题",
+        "二次正文改写": "二次正文",
+        "二次图片改写": "https://cdn.example.com/second.jpg",
+    })
+
+    assert case["project_name"] == "露营项目"
+    assert case["keyword"] == "露营帐篷"
+    assert case["original"] == {
+        "title": "原始标题", "body": "原始正文", "images": ["https://cdn.example.com/original.jpg"],
+        "image_note": "https://cdn.example.com/original.jpg",
+    }
+    assert case["rewrite"]["title"] == "第一次标题"
+    assert case["rewrite"]["images"] == ["https://cdn.example.com/rewrite.jpg"]
+    assert case["score"] == "92"
+    assert case["second_adjustment"]["prompt"] == "更轻松一点"
+    assert case["second_adjustment"]["title"] == "二次标题"
+
+
+@pytest.mark.asyncio
+async def test_note_recreation_cases_are_project_scoped_and_rewritten_only(monkeypatch):
+    fields = [
+        {"name": "项目名", "type": "text"}, {"name": "关键词", "type": "text"},
+        {"name": "标题", "type": "text"}, {"name": "标题改写", "type": "text"},
+    ]
+    commands = []
+
+    async def fake_fields(_base_token, _table_id):
+        return fields
+
+    async def fake_run(command, timeout_sec=30):
+        commands.append(command)
+        return {"data": {
+            "fields": ["项目名", "关键词", "标题", "标题改写"],
+            "data": [["露营项目", "帐篷", "原始标题", "改写标题"], ["露营项目", "桌椅", "未改写", ""]],
+            "has_more": False,
+        }}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_fields)
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+
+    result = await crawler._read_note_recreation_cases("app_demo", "tbl_recreation", "露营项目")
+
+    assert result["cases"] == [{
+        "project_name": "露营项目", "keyword": "帐篷", "original": {
+            "title": "原始标题", "body": "", "images": [], "image_note": "",
+        }, "rewrite": {"title": "改写标题", "body": "", "images": [], "image_note": ""},
+        "score": "", "second_adjustment": {"prompt": "", "title": "", "body": "", "images": [], "image_note": ""},
+        "note_url": "",
+    }]
+    filter_json = json.loads(commands[0][commands[0].index("--filter-json") + 1])
+    assert filter_json == {"logic": "and", "conditions": [["项目名", "==", "露营项目"]]}
 
 
 @pytest.mark.asyncio

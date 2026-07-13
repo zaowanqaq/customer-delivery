@@ -155,6 +155,32 @@
     .creator-selection-panel { display: none; }
     .creator-selection-panel.active { display: block; }
     .creator-screening-status { min-height: 24px; margin: 10px 0; color: var(--muted); font-size: 13px; }
+    .risk-group-list { display: grid; gap: 12px; }
+    .risk-group { border: 1px solid #e7d8ca; border-radius: 8px; padding: 14px; background: #fff8f0; }
+    .risk-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .risk-group-head strong { font-size: 13px; color: var(--ink); }
+    .risk-group-grid { display: grid; grid-template-columns: minmax(160px, .35fr) minmax(0, 1fr); gap: 12px; }
+    .risk-group-empty { border: 1px dashed #d7c8ba; border-radius: 8px; padding: 14px; color: var(--muted); font-size: 13px; }
+    .recreation-toolbar { display: grid; grid-template-columns: minmax(180px, 280px) auto 1fr; gap: 12px; align-items: end; margin-bottom: 16px; }
+    .recreation-summary { color: var(--muted); font-size: 13px; padding-bottom: 10px; }
+    .recreation-list { display: grid; gap: 18px; }
+    .recreation-case { border: 1px solid var(--line); border-radius: 10px; background: #fffdf9; overflow: hidden; }
+    .recreation-case-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; background: #fff8f0; border-bottom: 1px solid #eadfd4; }
+    .recreation-case-head h3 { margin: 0; font-size: 15px; color: var(--ink); }
+    .recreation-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+    .recreation-tag { border: 1px solid #dccbbd; border-radius: 999px; padding: 4px 8px; color: #5d4638; background: #fffdf9; font-size: 12px; font-weight: 700; }
+    .recreation-score { border-radius: 999px; padding: 5px 10px; background: #f5ddd7; color: var(--accent-strong); font-size: 12px; font-weight: 800; }
+    .recreation-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+    .recreation-side { min-width: 0; padding: 16px; }
+    .recreation-side + .recreation-side { border-left: 1px solid #eadfd4; background: #fff8f1; }
+    .recreation-side h4, .recreation-adjustment h4 { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
+    .recreation-copy { margin: 0; white-space: pre-wrap; color: #514840; font-size: 13px; line-height: 1.7; }
+    .recreation-title { margin: 0 0 10px; color: var(--ink); font-size: 16px; line-height: 1.45; }
+    .recreation-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; margin-top: 12px; }
+    .recreation-images img { width: 100%; height: 132px; object-fit: cover; border-radius: 7px; border: 1px solid #e7d8ca; background: #f4efe8; }
+    .recreation-adjustment { margin: 0 16px 16px; border: 1px solid #e7d8ca; border-radius: 8px; padding: 14px; background: #fff8f0; }
+    .recreation-prompt { margin: 0 0 12px; padding: 10px; border-left: 3px solid var(--accent); background: #fffdf9; white-space: pre-wrap; color: #514840; font-size: 13px; line-height: 1.6; }
+    .recreation-empty { border: 1px dashed #d7c8ba; border-radius: 8px; padding: 32px; color: var(--muted); text-align: center; }
     .creator-screening-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
     .creator-screening-table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: 13px; }
     .creator-screening-table th, .creator-screening-table td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
@@ -231,7 +257,8 @@
       .header { min-height: auto; align-items: flex-start; flex-direction: column; padding: 18px 20px; }
       .content-scroll { padding: 20px; }
       .grid, .monitor-grid { grid-template-columns: 1fr; }
-      .notes-toolbar, .notes-stats, .note-modal-panel { grid-template-columns: 1fr; }
+      .notes-toolbar, .notes-stats, .note-modal-panel, .recreation-toolbar, .recreation-compare, .risk-group-grid { grid-template-columns: 1fr; }
+      .recreation-side + .recreation-side { border-left: 0; border-top: 1px solid #eadfd4; }
       .notes-board { column-count: 2; }
       .note-gallery { min-height: 300px; }
     }
@@ -270,13 +297,14 @@
     <div class="nav">
       <div class="nav-item active" data-step="01" data-tab="tab-project">项目大盘</div>
       <div class="nav-item" data-step="02" data-tab="tab-step3">平台爆款检索</div>
-      <div class="nav-item" data-step="03" data-tab="tab-huitun">达人智能圈选</div>
-      <div class="nav-item" data-step="04" data-tab="tab-step2">账号内容监测</div>
-      <div class="nav-item" data-step="05" data-tab="tab-step5">笔记数据监测</div>
-      <div class="nav-item" data-step="06" data-tab="tab-config">笔记舆情监控</div>
+      <div class="nav-item" data-step="03" data-tab="tab-recreation">爆款笔记二创</div>
+      <div class="nav-item" data-step="04" data-tab="tab-huitun">达人智能圈选</div>
+      <div class="nav-item" data-step="05" data-tab="tab-step2">账号内容监测</div>
+      <div class="nav-item" data-step="06" data-tab="tab-step5">笔记数据监测</div>
+      <div class="nav-item" data-step="07" data-tab="tab-config">笔记舆情监控</div>
       <!-- 客户交付版默认自动同步，保留手动同步中心供内部排障使用但不在 UI 中展示。 -->
       <div class="nav-item v1-hidden" data-step="07" data-tab="tab-step4" data-internal-manual-sync="true">数据同步中心</div>
-      <div class="nav-item" data-step="07" data-tab="tab-monitor">交付环境与运行日志</div>
+      <div class="nav-item" data-step="08" data-tab="tab-monitor">交付环境与运行日志</div>
     </div>
   </div>
 
@@ -437,9 +465,19 @@
         </div>
         <div id="tab-config" class="tab-pane">
           <section class="card">
-      <h2>笔记舆情监控（公共配置）</h2>
-      <p class="hint">所有抓取任务共用同一套登录、评论和媒体下载参数。二级评论就是楼中楼评论；打不开浏览器时先切换为“显示浏览器窗口”，再运行交付环境检测。</p>
+      <h2>笔记舆情监控</h2>
+      <p class="hint">粘贴小红书笔记链接抓取评论。每个风险类型由多维表格公式自动判断；不提供 AI 评论解读。</p>
       <div class="grid">
+        <div class="row full">
+          <label>笔记链接（逗号或换行）</label>
+          <textarea id="sentiment_note_links" placeholder="每行一个小红书笔记长链或短链"></textarea>
+        </div>
+        <div class="row full">
+          <label>风险类型分组</label>
+          <div id="sentiment_risk_groups" class="risk-group-list"></div>
+          <p class="hint">已预设“电商风险”：骗人、差、价格高、贵、jd、pdd。每个分组都会同步为多维表格中的“风险-分组名”公式列；“舆情风险”列汇总全部命中类型。</p>
+          <div class="btns"><button class="ghost" type="button" onclick="addSentimentRiskGroup()">新增风险类型</button></div>
+        </div>
         <div class="row">
           <label>登录方式</label>
           <select id="login_type">
@@ -500,37 +538,49 @@
         </div>
       </div>
       <div class="btns">
+        <button class="primary" onclick="startSentimentMonitor()">抓取评论并同步舆情表</button>
+        <button class="ghost" onclick="syncSentimentRiskRules()">同步规则到多维表格</button>
         <button class="ghost" onclick="loadConfig()">刷新配置</button>
         <button class="ghost" onclick="saveConfig()">保存配置</button>
         <button class="danger" onclick="stopCrawler()">停止当前抓取</button>
       </div>
+      <div id="sentiment_monitor_status" class="creator-screening-status">等待输入笔记链接和风险类型分组</div>
     </section>
         </div>
         <div id="tab-step2" class="tab-pane">
           <section class="card">
-      <h2>账号内容监测（样本账号抓取）</h2>
-      <p class="hint">提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。</p>
+      <h2>账号内容监测（近 20 篇笔记汇总）</h2>
+      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；支持小红书主页长链和短链，可选择公开数据版或含蒲公英后台指标版。</p>
       <div class="grid">
         <div class="row full">
-          <label>导入样本账号文件（txt / csv / excel）</label>
+          <label>导入样本账号文件（txt / csv / Excel）</label>
           <input id="sample_accounts_file" type="file" accept=".txt,.csv,.xlsx,.xls">
-          <p class="hint">文件格式：txt / csv 每行一个账号主页链接或账号 ID；Excel 每个单元格填写一个账号，表头会自动忽略。</p>
+          <p class="hint">表头固定为「主页链接」；txt / csv 每行一个小红书主页长链或短链，Excel 第一列填写主页链接。表头会自动忽略。</p>
           <div class="btns">
             <button class="ghost" onclick="importSampleAccountsFile()">导入文件到账号列表</button>
+            <button class="ghost" onclick="downloadAccountMonitorTemplate()">下载主页链接模板</button>
           </div>
         </div>
         <div class="row full">
-          <label>样本账号列表（逗号或换行）</label>
-          <textarea id="sample_creator_ids" placeholder="每行一个小红书主页链接或账号 ID"></textarea>
+          <label>样本账号主页链接（逗号或换行）</label>
+          <textarea id="sample_creator_ids" placeholder="每行一个小红书账号主页长链或短链"></textarea>
+        </div>
+        <div class="row">
+          <label>汇总模式</label>
+          <select id="account_monitor_mode">
+            <option value="public">无蒲公英后台：公开数据 13 列</option>
+            <option value="pgy">有蒲公英后台：含后台指标 68 列</option>
+          </select>
         </div>
         <div class="row">
           <label>每个账号抓取篇数</label>
-          <input id="notes_per_creator" type="number" min="1" value="20">
+          <input id="notes_per_creator" type="number" min="20" max="20" value="20" readonly>
         </div>
       </div>
       <div class="btns">
-        <button class="primary" onclick="startSampleCreators()">启动样本账号抓取</button>
+        <button class="primary" onclick="startSampleCreators()">生成账号内容监测表</button>
       </div>
+      <div id="account_monitor_status" class="creator-screening-status">等待导入样本账号</div>
     </section>
         </div>
         <div id="tab-huitun" class="tab-pane">
@@ -711,6 +761,22 @@
             </div>
           </div>
         </div>
+        <div id="tab-recreation" class="tab-pane">
+          <section class="card">
+            <h2>爆款笔记二创</h2>
+            <p class="hint">只读展示当前项目“笔记内容二创表”中已完成的改写结果。改写、评分和二次调整均在多维表格内维护，本页不调用 AI。</p>
+            <div class="recreation-toolbar">
+              <div class="row">
+                <label>按关键词分组筛选</label>
+                <select id="recreation_keyword_filter"><option value="">全部关键词</option></select>
+              </div>
+              <button class="primary" onclick="loadNoteRecreationCases()">加载改写案例</button>
+              <div id="recreation_summary" class="recreation-summary">请选择项目后加载案例</div>
+            </div>
+            <div id="recreation_empty" class="recreation-empty">仅展示已填写标题、正文、图片或二次改写结果的记录。</div>
+            <div id="recreation_cases" class="recreation-list"></div>
+          </section>
+        </div>
         <div id="tab-step4" class="tab-pane">
           <section class="card">
       <h2>步骤4：同步到多维表</h2>
@@ -857,7 +923,8 @@
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
-      "sample_creator_ids", "notes_per_creator",
+      "sample_creator_ids", "notes_per_creator", "account_monitor_mode",
+      "sentiment_note_links", "sentiment_risk_groups",
       "keywords", "start_page", "max_notes_count", "xhs_sort_by", "xhs_note_type", "xhs_publish_time",
       "xhs_search_scope", "xhs_location", "sync_limit", "sync_file_path",
       "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_notes_per_creator",
@@ -870,7 +937,8 @@
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id",
       "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords", "xhs_sort_by",
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
-      "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator",
+      "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator", "account_monitor_mode",
+      "sentiment_note_links", "sentiment_risk_groups",
       "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
       "collab_sync_limit", "pgy_table_id", "pgy_sync_after_run"
     ];
@@ -905,6 +973,9 @@
       cookies: "",
       sample_creator_ids: "",
       notes_per_creator: 20,
+      account_monitor_mode: "public",
+      sentiment_note_links: "",
+      sentiment_risk_groups: '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]',
       keywords: "",
       start_page: 1,
       max_notes_count: 20,
@@ -931,6 +1002,100 @@
       rule_table_id: "",
       rule_name: ""
     };
+
+    const defaultSentimentRiskGroups = [{ name: "电商风险", keywords: "骗人,差,价格高,贵,jd,pdd" }];
+    let sentimentRiskGroups = [...defaultSentimentRiskGroups];
+
+    function normalizeSentimentRiskGroups(groups) {
+      if (!Array.isArray(groups)) return [];
+      return groups.map((group) => ({
+        name: String((group && group.name) || "").trim(),
+        keywords: Array.isArray(group && group.keywords) ? group.keywords.join(",") : String((group && group.keywords) || "").trim()
+      }));
+    }
+
+    function getSentimentRiskGroups() {
+      const host = document.getElementById("sentiment_risk_groups");
+      if (!host) return sentimentRiskGroups;
+      const groups = [...host.querySelectorAll("[data-risk-group]")].map((item) => ({
+        name: item.querySelector("[data-risk-group-name]").value.trim(),
+        keywords: item.querySelector("[data-risk-group-keywords]").value.trim()
+      }));
+      sentimentRiskGroups = normalizeSentimentRiskGroups(groups);
+      return sentimentRiskGroups;
+    }
+
+    function renderSentimentRiskGroups(groups = sentimentRiskGroups) {
+      sentimentRiskGroups = normalizeSentimentRiskGroups(groups);
+      const host = document.getElementById("sentiment_risk_groups");
+      if (!host) return;
+      host.replaceChildren();
+      if (!sentimentRiskGroups.length) {
+        const empty = document.createElement("div");
+        empty.className = "risk-group-empty";
+        empty.textContent = "暂未设置风险类型，请新增一个分组后再同步。";
+        host.appendChild(empty);
+        return;
+      }
+      sentimentRiskGroups.forEach((group, index) => {
+        const card = document.createElement("div");
+        card.className = "risk-group";
+        card.dataset.riskGroup = String(index);
+        const head = document.createElement("div");
+        head.className = "risk-group-head";
+        const title = document.createElement("strong");
+        title.textContent = `风险类型 ${index + 1}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ghost";
+        remove.textContent = "删除分组";
+        remove.addEventListener("click", () => removeSentimentRiskGroup(index));
+        head.append(title, remove);
+        const grid = document.createElement("div");
+        grid.className = "risk-group-grid";
+        const nameRow = document.createElement("div");
+        nameRow.className = "row";
+        const nameLabel = document.createElement("label");
+        nameLabel.textContent = "风险类型";
+        const name = document.createElement("input");
+        name.value = group.name;
+        name.placeholder = "例如：电商风险";
+        name.dataset.riskGroupName = "";
+        nameRow.append(nameLabel, name);
+        const keywordsRow = document.createElement("div");
+        keywordsRow.className = "row";
+        const keywordsLabel = document.createElement("label");
+        keywordsLabel.textContent = "关键词（逗号或换行）";
+        const keywords = document.createElement("textarea");
+        keywords.value = group.keywords;
+        keywords.placeholder = "例如：骗人,差,价格高";
+        keywords.dataset.riskGroupKeywords = "";
+        keywordsRow.append(keywordsLabel, keywords);
+        grid.append(nameRow, keywordsRow);
+        card.append(head, grid);
+        host.appendChild(card);
+      });
+    }
+
+    function setSentimentRiskGroups(raw, legacyKeywords = "") {
+      let groups = [];
+      try { groups = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { groups = []; }
+      groups = normalizeSentimentRiskGroups(groups);
+      if (!groups.length && legacyKeywords) groups = [{ name: "电商风险", keywords: legacyKeywords }];
+      renderSentimentRiskGroups(groups.length ? groups : defaultSentimentRiskGroups);
+    }
+
+    function addSentimentRiskGroup() {
+      const groups = getSentimentRiskGroups();
+      groups.push({ name: "", keywords: "" });
+      renderSentimentRiskGroups(groups);
+    }
+
+    function removeSentimentRiskGroup(index) {
+      const groups = getSentimentRiskGroups();
+      groups.splice(index, 1);
+      renderSentimentRiskGroups(groups);
+    }
 
     let latestCollabJobId = "";
     const statusEl = document.getElementById("status");
@@ -1543,6 +1708,7 @@
         max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         sample_creator_ids: payload.sample_creator_ids,
         notes_per_creator: payload.notes_per_creator,
+        sentiment_risk_groups: payload.sentiment_risk_groups,
         collab_creator_ids: payload.collab_creator_ids,
         collab_notes_per_creator: payload.collab_notes_per_creator,
         collab_interval_hours: payload.collab_interval_hours,
@@ -1557,6 +1723,9 @@
         if (!el || !(k in profile)) return;
         el.value = profile[k] ?? "";
       });
+      if ("sentiment_risk_groups" in profile) {
+        setSentimentRiskGroups(profile.sentiment_risk_groups);
+      }
       refreshProjectBindings().catch((e) => log("项目映射刷新失败: " + e.message));
     }
 
@@ -1625,6 +1794,9 @@
       if (currentProjectKey && projectProfiles[currentProjectKey]) {
         applyProjectProfile(projectProfiles[currentProjectKey]);
       }
+      const profileRiskGroups = currentProjectKey && projectProfiles[currentProjectKey]
+        ? projectProfiles[currentProjectKey].sentiment_risk_groups : "";
+      setSentimentRiskGroups(profileRiskGroups || config.sentiment_risk_groups, config.sentiment_risk_keywords || "");
       const nicknameInput = document.getElementById("pgy_nickname");
       const redIdInput = document.getElementById("pgy_red_id");
       if (nicknameInput) nicknameInput.value = "";
@@ -1668,6 +1840,9 @@
         cookies: document.getElementById("cookies").value.trim(),
         sample_creator_ids: document.getElementById("sample_creator_ids").value.trim(),
         notes_per_creator: Number(document.getElementById("notes_per_creator").value || 20),
+        account_monitor_mode: document.getElementById("account_monitor_mode").value || "public",
+        sentiment_note_links: document.getElementById("sentiment_note_links").value.trim(),
+        sentiment_risk_groups: JSON.stringify(getSentimentRiskGroups()),
         keywords: document.getElementById("keywords").value.trim(),
         start_page: Number(document.getElementById("start_page").value || 1),
         max_notes_count: Number(document.getElementById("max_notes_count").value || 20),
@@ -2004,11 +2179,237 @@
       }
     }
 
+    let noteRecreationCases = [];
+
+    function isSafeRemoteUrl(value) {
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" || url.protocol === "http:";
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function appendRecreationImages(parent, images) {
+      const safeImages = (images || []).filter(isSafeRemoteUrl);
+      if (!safeImages.length) return;
+      const wrap = document.createElement("div");
+      wrap.className = "recreation-images";
+      safeImages.forEach((url) => {
+        const image = document.createElement("img");
+        image.src = url;
+        image.alt = "笔记图片";
+        image.loading = "lazy";
+        wrap.appendChild(image);
+      });
+      parent.appendChild(wrap);
+    }
+
+    function createRecreationSide(label, content, tone = "original") {
+      const side = document.createElement("section");
+      side.className = "recreation-side";
+      const heading = document.createElement("h4");
+      heading.textContent = label;
+      const title = document.createElement("h5");
+      title.className = "recreation-title";
+      title.textContent = content.title || "未填写标题";
+      const body = document.createElement("p");
+      body.className = "recreation-copy";
+      body.textContent = content.body || "未填写正文";
+      side.append(heading, title, body);
+      appendRecreationImages(side, content.images);
+      if (content.image_note && !(content.images || []).length) {
+        const imageNote = document.createElement("p");
+        imageNote.className = "recreation-copy";
+        imageNote.textContent = `图片信息：${content.image_note}`;
+        side.appendChild(imageNote);
+      }
+      return side;
+    }
+
+    function renderNoteRecreationCases() {
+      const keyword = document.getElementById("recreation_keyword_filter").value;
+      const cases = keyword ? noteRecreationCases.filter((item) => item.keyword === keyword) : noteRecreationCases;
+      const host = document.getElementById("recreation_cases");
+      const empty = document.getElementById("recreation_empty");
+      host.replaceChildren();
+      empty.style.display = cases.length ? "none" : "block";
+      document.getElementById("recreation_summary").textContent = cases.length
+        ? `展示 ${cases.length} 个已改写案例${keyword ? ` · 关键词：${keyword}` : ""}`
+        : "暂无符合条件的已改写案例";
+      cases.forEach((item, index) => {
+        const card = document.createElement("article");
+        card.className = "recreation-case";
+        const head = document.createElement("header");
+        head.className = "recreation-case-head";
+        const title = document.createElement("h3");
+        title.textContent = `${index + 1}. ${item.original.title || item.rewrite.title || "未命名笔记"}`;
+        const meta = document.createElement("div");
+        meta.className = "recreation-meta";
+        if (item.project_name) {
+          const project = document.createElement("span");
+          project.className = "recreation-tag";
+          project.textContent = item.project_name;
+          meta.appendChild(project);
+        }
+        if (item.keyword) {
+          const keywordTag = document.createElement("span");
+          keywordTag.className = "recreation-tag";
+          keywordTag.textContent = item.keyword;
+          meta.appendChild(keywordTag);
+        }
+        if (item.score) {
+          const score = document.createElement("span");
+          score.className = "recreation-score";
+          score.textContent = `改写评分：${item.score}`;
+          meta.appendChild(score);
+        }
+        if (isSafeRemoteUrl(item.note_url)) {
+          const link = document.createElement("a");
+          link.className = "recreation-tag";
+          link.href = item.note_url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = "打开原笔记";
+          meta.appendChild(link);
+        }
+        head.append(title, meta);
+        const compare = document.createElement("div");
+        compare.className = "recreation-compare";
+        compare.append(
+          createRecreationSide("改写前", item.original),
+          createRecreationSide("第一次改写", item.rewrite)
+        );
+        card.append(head, compare);
+        const second = item.second_adjustment || {};
+        if (second.prompt || second.title || second.body || second.image_note || (second.images || []).length) {
+          const adjustment = document.createElement("section");
+          adjustment.className = "recreation-adjustment";
+          const adjustmentTitle = document.createElement("h4");
+          adjustmentTitle.textContent = "二次调整（由多维表格映射）";
+          adjustment.appendChild(adjustmentTitle);
+          if (second.prompt) {
+            const prompt = document.createElement("p");
+            prompt.className = "recreation-prompt";
+            prompt.textContent = `调整口令：${second.prompt}`;
+            adjustment.appendChild(prompt);
+          }
+          const secondary = document.createElement("div");
+          secondary.className = "recreation-compare";
+          secondary.append(createRecreationSide("二次改写结果", second));
+          adjustment.appendChild(secondary);
+          card.appendChild(adjustment);
+        }
+        host.appendChild(card);
+      });
+    }
+
+    async function loadNoteRecreationCases() {
+      if (!ensureReady()) return;
+      const payload = resolveProjectPayload(getFormData());
+      if (!payload.note_recreation_table_id) {
+        document.getElementById("recreation_summary").textContent = "请先在项目大盘绑定笔记内容二创表";
+        return;
+      }
+      document.getElementById("recreation_summary").textContent = "正在从多维表格读取已改写案例…";
+      try {
+        const params = new URLSearchParams({
+          base_token: payload.sync_base_token,
+          table_id: payload.note_recreation_table_id,
+          project_name: payload.project_name || "",
+          limit: "100"
+        });
+        const res = await fetch(`/api/crawler/note-recreation/cases?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") throw new Error(data.detail || "读取改写案例失败");
+        noteRecreationCases = Array.isArray(data.cases) ? data.cases : [];
+        const select = document.getElementById("recreation_keyword_filter");
+        const selected = select.value;
+        const keywords = [...new Set(noteRecreationCases.map((item) => item.keyword).filter(Boolean))];
+        select.replaceChildren();
+        const all = document.createElement("option");
+        all.value = "";
+        all.textContent = "全部关键词";
+        select.appendChild(all);
+        keywords.forEach((keyword) => {
+          const option = document.createElement("option");
+          option.value = keyword;
+          option.textContent = keyword;
+          select.appendChild(option);
+        });
+        select.value = keywords.includes(selected) ? selected : "";
+        renderNoteRecreationCases();
+        if (data.has_more) {
+          document.getElementById("recreation_summary").textContent += "（当前最多展示 100 条）";
+        }
+      } catch (e) {
+        noteRecreationCases = [];
+        renderNoteRecreationCases();
+        document.getElementById("recreation_summary").textContent = "读取失败：" + (e.message || e);
+        log("爆款笔记二创案例读取失败: " + (e.message || e));
+      }
+    }
+
+    document.getElementById("recreation_keyword_filter").addEventListener("change", renderNoteRecreationCases);
+
+    function downloadAccountMonitorTemplate() {
+      const csv = "主页链接\n";
+      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "账号内容监测_主页链接模板.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    }
+
+    let accountMonitorJobId = null;
+    let accountMonitorTimer = null;
+
+    function setAccountMonitorStatus(message) {
+      document.getElementById("account_monitor_status").textContent = message;
+    }
+
+    function stopAccountMonitorPolling() {
+      if (accountMonitorTimer) clearInterval(accountMonitorTimer);
+      accountMonitorTimer = null;
+    }
+
+    async function refreshAccountMonitorJob() {
+      if (!accountMonitorJobId) return;
+      try {
+        const res = await fetch(`/api/crawler/account-monitor/status?job_id=${encodeURIComponent(accountMonitorJobId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "任务状态读取失败");
+        const modeLabel = data.report_mode === "pgy" ? "含蒲公英后台指标" : "公开数据";
+        setAccountMonitorStatus(`${modeLabel}：${data.stage || data.status}`);
+        if (data.status === "completed") {
+          stopAccountMonitorPolling();
+          const sync = data.sync_result || {};
+          if ((data.pgy_errors || []).length) log(`蒲公英补充完成，但有 ${data.pgy_errors.length} 个账号未获取到后台数据：${data.pgy_errors.join("；")}`);
+          if (sync.status === "ok") {
+            setAccountMonitorStatus(`已同步 ${data.row_count || 0} 条记录至账号内容监测表（新增 ${sync.created || 0}，更新 ${sync.updated || 0}）`);
+          } else {
+            setAccountMonitorStatus(`已生成 ${data.row_count || 0} 条记录；请先在项目大盘绑定账号内容监测表`);
+          }
+        } else if (data.status === "error") {
+          stopAccountMonitorPolling();
+          setAccountMonitorStatus("生成失败：" + (data.error || "未知错误"));
+          log("账号内容监测生成失败: " + (data.error || "未知错误"));
+        }
+      } catch (e) {
+        stopAccountMonitorPolling();
+        setAccountMonitorStatus("任务状态读取失败");
+        log("账号内容监测状态读取失败: " + (e.message || e));
+      }
+    }
+
     async function startSampleCreators() {
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
       if (!payload.sample_creator_ids) {
-        log("请先填写样本账号列表");
+        log("请先填写样本账号主页链接");
         return;
       }
       await saveConfig();
@@ -2016,25 +2417,153 @@
         platform: "xhs",
         login_type: payload.login_type,
         creator_ids: payload.sample_creator_ids,
-        notes_per_creator: payload.notes_per_creator,
+        notes_per_creator: 20,
         max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         enable_comments: payload.enable_comments,
         enable_sub_comments: payload.enable_sub_comments,
         enable_media: payload.enable_media,
         save_option: payload.save_option,
         cookies: payload.cookies,
-        headless: payload.headless
+        headless: payload.headless,
+        report_mode: payload.account_monitor_mode,
+        base_token: payload.sync_base_token,
+        table_id: payload.account_filter_table_id
       };
-      const res = await fetch("/api/crawler/start-sample-creators", {
+      const res = await fetch("/api/crawler/account-monitor/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
       const result = await res.json();
-      log("样本账号抓取启动结果: " + JSON.stringify(result));
+      log("账号内容监测启动结果: " + JSON.stringify(result));
       if (res.ok && result.status === "ok") {
+        accountMonitorJobId = result.job_id;
+        setAccountMonitorStatus("任务已启动：正在解析主页链接并抓取账号最近 20 篇笔记");
         startProgressMonitor();
-        waitCrawlerIdleThenAutoSync("sample");
+        stopAccountMonitorPolling();
+        accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);
+        await refreshAccountMonitorJob();
+      } else {
+        setAccountMonitorStatus("启动失败：" + (result.detail || "未知错误"));
+      }
+    }
+
+    let sentimentMonitorJobId = null;
+    let sentimentMonitorTimer = null;
+
+    function setSentimentMonitorStatus(message) {
+      document.getElementById("sentiment_monitor_status").textContent = message;
+    }
+
+    function stopSentimentMonitorPolling() {
+      if (sentimentMonitorTimer) clearInterval(sentimentMonitorTimer);
+      sentimentMonitorTimer = null;
+    }
+
+    async function refreshSentimentMonitorJob() {
+      if (!sentimentMonitorJobId) return;
+      try {
+        const res = await fetch(`/api/crawler/sentiment-monitor/status?job_id=${encodeURIComponent(sentimentMonitorJobId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "任务状态读取失败");
+        setSentimentMonitorStatus(data.stage || data.status);
+        if (data.status === "completed") {
+          stopSentimentMonitorPolling();
+          const sync = data.sync_result || {};
+          log(`笔记舆情监控完成：新增 ${sync.created || 0} 条，更新 ${sync.updated || 0} 条；命中关键词的评论会在对应风险类型列和“舆情风险”汇总列自动标记。`);
+        } else if (data.status === "error") {
+          stopSentimentMonitorPolling();
+          setSentimentMonitorStatus("执行失败：" + (data.error || "未知错误"));
+          log("笔记舆情监控失败: " + (data.error || "未知错误"));
+        }
+      } catch (e) {
+        stopSentimentMonitorPolling();
+        setSentimentMonitorStatus("任务状态读取失败");
+        log("笔记舆情监控状态读取失败: " + (e.message || e));
+      }
+    }
+
+    async function startSentimentMonitor() {
+      if (!ensureReady()) return;
+      const payload = resolveProjectPayload(getFormData());
+      if (!payload.sentiment_note_links) {
+        log("请先填写小红书笔记链接");
+        return;
+      }
+      const riskGroups = getSentimentRiskGroups();
+      if (!riskGroups.length || riskGroups.some((group) => !group.name || !group.keywords)) {
+        log("请为每个风险类型填写名称和至少一个关键词");
+        return;
+      }
+      if (!payload.sync_base_token || !payload.sync_comments_table_id) {
+        log("请先在项目大盘绑定笔记舆情监控表");
+        return;
+      }
+      await saveConfig();
+      const body = {
+        note_links: payload.sentiment_note_links,
+        risk_groups: riskGroups,
+        base_token: payload.sync_base_token,
+        table_id: payload.sync_comments_table_id,
+        login_type: payload.login_type,
+        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+        enable_sub_comments: payload.enable_sub_comments,
+        enable_media: payload.enable_media,
+        save_option: payload.save_option,
+        cookies: payload.cookies,
+        headless: payload.headless
+      };
+      const res = await fetch("/api/crawler/sentiment-monitor/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const result = await res.json();
+      if (!res.ok || result.status !== "ok") {
+        const message = result.detail || "启动失败";
+        setSentimentMonitorStatus("启动失败：" + message);
+        log("笔记舆情监控启动失败: " + message);
+        return;
+      }
+      sentimentMonitorJobId = result.job_id;
+      setSentimentMonitorStatus(`任务已启动：正在抓取 ${result.note_count || 0} 篇笔记的评论`);
+      startProgressMonitor();
+      stopSentimentMonitorPolling();
+      sentimentMonitorTimer = setInterval(refreshSentimentMonitorJob, 2000);
+      await refreshSentimentMonitorJob();
+    }
+
+    async function syncSentimentRiskRules() {
+      if (!ensureReady()) return;
+      const payload = resolveProjectPayload(getFormData());
+      const riskGroups = getSentimentRiskGroups();
+      if (!riskGroups.length || riskGroups.some((group) => !group.name || !group.keywords)) {
+        log("请为每个风险类型填写名称和至少一个关键词");
+        return;
+      }
+      if (!payload.sync_base_token || !payload.sync_comments_table_id) {
+        log("请先在项目大盘绑定笔记舆情监控表");
+        return;
+      }
+      await saveConfig();
+      setSentimentMonitorStatus("正在同步风险分组规则到多维表格");
+      try {
+        const res = await fetch("/api/crawler/sentiment-monitor/sync-rules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_token: payload.sync_base_token,
+            table_id: payload.sync_comments_table_id,
+            risk_groups: riskGroups
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || result.status !== "ok") throw new Error(result.detail || "同步失败");
+        setSentimentMonitorStatus(`规则已同步：${(result.risk_groups || []).join("、")}`);
+        log("风险分组规则已同步至多维表格：" + (result.risk_groups || []).join("、"));
+      } catch (e) {
+        setSentimentMonitorStatus("规则同步失败：" + (e.message || e));
+        log("风险分组规则同步失败: " + (e.message || e));
       }
     }
 
@@ -2746,6 +3275,9 @@
         startNotesAutoRefresh();
       } else {
         stopNotesAutoRefresh();
+      }
+      if (targetId === "tab-recreation") {
+        loadNoteRecreationCases();
       }
     }
 
