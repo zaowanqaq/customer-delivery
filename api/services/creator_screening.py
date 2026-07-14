@@ -25,6 +25,18 @@ REQUIRED_CREATOR_COLUMNS = ("达人昵称", "博主ID", "主页链接", "达人�
 DEFAULT_OPENROUTER_VISION_MODEL = "google/gemma-4-31b-it:free"
 DEFAULT_SILICONFLOW_KIMI_MODEL = "Pro/moonshotai/Kimi-K2.6"
 SILICONFLOW_CHAT_COMPLETIONS_URL = "https://api.siliconflow.cn/v1/chat/completions"
+SCREENING_PAGE_NAME_PREFIX = "mediacrawler_creator_screening"
+DEFAULT_SCREENING_CONCURRENCY = 2
+MAX_SCREENING_CONCURRENCY = 3
+
+
+def screening_concurrency() -> int:
+    """Return the bounded number of independent profile-capture workers."""
+    try:
+        configured = int(os.getenv("CREATOR_SCREENING_CONCURRENCY", str(DEFAULT_SCREENING_CONCURRENCY)))
+    except ValueError:
+        configured = DEFAULT_SCREENING_CONCURRENCY
+    return max(1, min(configured, MAX_SCREENING_CONCURRENCY))
 
 
 @dataclass
@@ -104,7 +116,7 @@ class ScreeningJob:
                 "pending": max(0, len(self.candidates) - self.completed),
                 "exceptions": exceptions,
             },
-            "results": [item.to_row() for item in self.results],
+            "results": [item.to_row() for item in sorted(self.results, key=lambda item: item.candidate.index)],
         }
 
 
@@ -280,7 +292,7 @@ def profile_url_for(candidate: CreatorCandidateInput) -> str:
     return "https://www.xiaohongshu.com/user/profile/" + quote(candidate.blogger_id, safe="")
 
 
-async def collect_profile_snapshot(candidate: CreatorCandidateInput, job_id: str) -> ProfileSnapshot:
+async def collect_profile_snapshot(candidate: CreatorCandidateInput, job_id: str, worker_index: int = 0) -> ProfileSnapshot:
     project_root = Path(__file__).resolve().parents[2]
     output_dir = temp_dir() / "creator_screening" / job_id / str(candidate.index)
     command = [
@@ -290,6 +302,8 @@ async def collect_profile_snapshot(candidate: CreatorCandidateInput, job_id: str
         profile_url_for(candidate),
         "--output-dir",
         str(output_dir),
+        "--screening-page-name",
+        f"{SCREENING_PAGE_NAME_PREFIX}_{worker_index + 1}",
     ]
     python_path = os.pathsep.join(filter(None, [str(project_root), os.environ.get("PYTHONPATH", "")]))
     try:
@@ -348,9 +362,12 @@ class CreatorScreeningJobManager:
                 job.completed += 1
             job.finished = True
             return
-        for candidate in job.candidates:
+        next_candidate = 0
+        next_candidate_lock = asyncio.Lock()
+
+        async def process_candidate(candidate: CreatorCandidateInput, worker_index: int) -> None:
             try:
-                snapshot = await self._snapshot_collector(candidate, job.id)
+                snapshot = await self._snapshot_collector(candidate, job.id, worker_index)
                 decision = await self._ai.evaluate(rules, snapshot)
                 job.results.append(
                     ScreeningResult(
@@ -367,6 +384,20 @@ class CreatorScreeningJobManager:
             except Exception as exc:
                 job.results.append(ScreeningResult(candidate, "异常", profile_url_for(candidate), reason=f"初筛失败：{type(exc).__name__}"))
             job.completed += 1
+
+        async def worker(worker_index: int) -> None:
+            nonlocal next_candidate
+            while True:
+                async with next_candidate_lock:
+                    if next_candidate >= len(job.candidates):
+                        return
+                    candidate = job.candidates[next_candidate]
+                    next_candidate += 1
+                await process_candidate(candidate, worker_index)
+
+        worker_count = min(screening_concurrency(), len(job.candidates))
+        if worker_count:
+            await asyncio.gather(*(worker(worker_index) for worker_index in range(worker_count)))
         job.finished = True
 
 

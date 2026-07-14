@@ -163,7 +163,7 @@ async def test_screening_reuses_one_marked_browser_tab():
             if script == "window.name":
                 return self.name
             assert "window.name =" in script
-            self.name = SCREENING_PAGE_NAME
+            self.name = json.loads(script.split("=", 1)[1].strip())
 
     class FakeContext:
         def __init__(self):
@@ -177,11 +177,13 @@ async def test_screening_reuses_one_marked_browser_tab():
             return page
 
     context = FakeContext()
-    first_page = await _get_or_create_screening_page(context)
-    second_page = await _get_or_create_screening_page(context)
+    first_page = await _get_or_create_screening_page(context, "worker-1")
+    second_page = await _get_or_create_screening_page(context, "worker-1")
+    other_worker_page = await _get_or_create_screening_page(context, "worker-2")
 
     assert first_page is second_page
-    assert context.new_page_calls == 1
+    assert first_page is not other_worker_page
+    assert context.new_page_calls == 2
 
 
 def test_profile_ip_is_extracted_from_profile_header_text():
@@ -201,6 +203,7 @@ async def test_snapshot_subprocess_inherits_project_pythonpath(monkeypatch, tmp_
 
     async def fake_create_subprocess_exec(*command, **kwargs):
         captured["env"] = kwargs.get("env")
+        captured["command"] = command
         return FakeProcess()
 
     monkeypatch.setattr(creator_screening, "temp_dir", lambda: tmp_path)
@@ -209,10 +212,12 @@ async def test_snapshot_subprocess_inherits_project_pythonpath(monkeypatch, tmp_
     snapshot = await creator_screening.collect_profile_snapshot(
         CreatorCandidateInput(index=1, profile_url="https://www.xiaohongshu.com/user/profile/a"),
         "job-1",
+        worker_index=1,
     )
 
     assert snapshot.status == "ok"
     assert captured["env"]["PYTHONPATH"].split(";")[0] == str(creator_screening.Path(creator_screening.__file__).resolve().parents[2])
+    assert captured["command"][captured["command"].index("--screening-page-name") + 1] == "mediacrawler_creator_screening_2"
 
 
 def test_snapshot_uses_the_workbench_xhs_login_profile(monkeypatch, tmp_path):

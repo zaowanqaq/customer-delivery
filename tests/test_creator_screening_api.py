@@ -31,7 +31,7 @@ class FakeAI:
         )
 
 
-async def fake_snapshot(candidate, job_id):
+async def fake_snapshot(candidate, job_id, worker_index=0):
     return ProfileSnapshot(
         profile_url=candidate.profile_url or "https://www.xiaohongshu.com/user/profile/" + candidate.blogger_id,
         visible_text="IP属地：浙江 线下打卡",
@@ -90,6 +90,33 @@ async def test_unknown_job_returns_not_found(monkeypatch):
 
     with pytest.raises(creator_screening.HTTPException, match="任务不存在"):
         await creator_screening.get_job("missing")
+
+
+@pytest.mark.asyncio
+async def test_job_runs_profiles_with_bounded_parallel_workers_and_keeps_input_order(monkeypatch):
+    active_workers = 0
+    peak_workers = 0
+
+    async def parallel_snapshot(candidate, job_id, worker_index=0):
+        nonlocal active_workers, peak_workers
+        active_workers += 1
+        peak_workers = max(peak_workers, active_workers)
+        await asyncio.sleep(0.01)
+        active_workers -= 1
+        return ProfileSnapshot(profile_url=candidate.profile_url, visible_text="IP属地：浙江", ip_location="浙江")
+
+    monkeypatch.setenv("CREATOR_SCREENING_CONCURRENCY", "2")
+    manager = CreatorScreeningJobManager(ai=FakeAI(), snapshot_collector=parallel_snapshot)
+    candidates = [
+        CreatorCandidateInput(index=index, nickname=f"达人{index}", blogger_id=str(index), profile_url=f"https://xhs.test/{index}")
+        for index in (1, 2, 3)
+    ]
+
+    job = await manager.start("浙江线下打卡", candidates)
+    await job.task
+
+    assert peak_workers == 2
+    assert [row["序号"] for row in job.to_payload()["results"]] == [1, 2, 3]
 
 
 @pytest.mark.asyncio

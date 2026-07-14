@@ -75,16 +75,16 @@ async def _dismiss_login_prompt(page: Page) -> None:
     await page.wait_for_timeout(300)
 
 
-async def _get_or_create_screening_page(context) -> Page:
-    """Reuse one marked tab so a screening job does not accumulate XHS tabs."""
+async def _get_or_create_screening_page(context, page_name: str = SCREENING_PAGE_NAME) -> Page:
+    """Reuse a worker's marked tab so screening does not accumulate XHS tabs."""
     for existing_page in context.pages:
         try:
-            if await existing_page.evaluate("window.name") == SCREENING_PAGE_NAME:
+            if await existing_page.evaluate("window.name") == page_name:
                 return existing_page
         except Exception:
             continue
     page = await context.new_page()
-    await page.evaluate(f"window.name = {json.dumps(SCREENING_PAGE_NAME)}")
+    await page.evaluate(f"window.name = {json.dumps(page_name)}")
     return page
 
 
@@ -136,7 +136,12 @@ async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path
         return ProfileSnapshot(profile_url=profile_url, status="异常", error=f"主页访问失败：{type(exc).__name__}")
 
 
-async def capture_profile_with_browser(profile_url: str, output_dir: Path, cdp_endpoint: str = "") -> ProfileSnapshot:
+async def capture_profile_with_browser(
+    profile_url: str,
+    output_dir: Path,
+    cdp_endpoint: str = "",
+    screening_page_name: str = SCREENING_PAGE_NAME,
+) -> ProfileSnapshot:
     launcher: BrowserLauncher | None = None
     try:
         async with async_playwright() as playwright:
@@ -156,7 +161,7 @@ async def capture_profile_with_browser(profile_url: str, output_dir: Path, cdp_e
                     return ProfileSnapshot(profile_url=profile_url, status="异常", error="浏览器启动超时")
                 browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = await _get_or_create_screening_page(context)
+            page = await _get_or_create_screening_page(context, screening_page_name)
             return await capture_visible_profile(page, profile_url, output_dir)
     except Exception as exc:
         return ProfileSnapshot(profile_url=profile_url, status="异常", error=f"浏览器连接失败：{type(exc).__name__}")
@@ -179,8 +184,11 @@ def main() -> None:
     parser.add_argument("--profile-url", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--cdp", default="")
+    parser.add_argument("--screening-page-name", default=SCREENING_PAGE_NAME)
     args = parser.parse_args()
-    snapshot = asyncio.run(capture_profile_with_browser(args.profile_url, Path(args.output_dir), args.cdp))
+    snapshot = asyncio.run(
+        capture_profile_with_browser(args.profile_url, Path(args.output_dir), args.cdp, args.screening_page_name)
+    )
     print(json.dumps(_snapshot_to_dict(snapshot), ensure_ascii=False))
 
 
