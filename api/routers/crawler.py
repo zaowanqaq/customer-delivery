@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import asyncio
@@ -17,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -980,8 +981,8 @@ def _note_recreation_fields() -> List[Dict[str, Any]]:
         _text_field("标题"),
         _datetime_field("采集时间"),
         _text_field("博主主页"),
-        _text_field("标题改写"),
-        _text_field("图片改写"),
+        _text_field("标题改写.输出结果"),
+        _attachment_field("封面改写"),
         _text_field("关键词"),
         _number_field("点赞数"),
         _number_field("评论数"),
@@ -993,7 +994,7 @@ def _note_recreation_fields() -> List[Dict[str, Any]]:
         _attachment_field("封面附件"),
         _text_field("已使用账号记录"),
         _text_field("项目名"),
-        _text_field("正文改写"),
+        _text_field("正文改写.输出结果"),
         _text_field("二次调整口令"),
         _text_field("二次标题改写"),
         _text_field("二次正文改写"),
@@ -1018,9 +1019,9 @@ _NOTE_RECREATION_FIELD_ALIASES = {
     "original_title": ["标题", "笔记标题"],
     "original_body": ["内容", "笔记内容", "正文"],
     "original_images": ["封面附件", "封面图", "笔记封面", "图片", "原图"],
-    "rewrite_title": ["标题改写", "改写标题"],
-    "rewrite_body": ["正文改写", "内容改写", "改写正文"],
-    "rewrite_images": ["图片改写", "封面改写", "图片改写结果"],
+    "rewrite_title": ["标题改写.输出结果", "标题改写", "改写标题"],
+    "rewrite_body": ["正文改写.输出结果", "正文改写", "内容改写", "改写正文"],
+    "rewrite_images": ["封面改写", "图片改写", "图片改写结果"],
     "score": ["改写打分", "改写评分", "评分"],
     "adjustment_prompt": ["二次调整口令", "二次改写口令", "二次调整指令"],
     "second_title": ["二次标题改写", "二次改写标题"],
@@ -1040,24 +1041,65 @@ def _recreation_cell_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _recreation_image_urls(value: Any) -> List[str]:
-    urls: List[str] = []
-    if isinstance(value, dict):
-        for key in ("url", "tmp_url", "link", "download_url"):
-            if value.get(key):
-                urls.extend(_recreation_image_urls(value[key]))
-        if not urls:
-            for item in value.values():
-                urls.extend(_recreation_image_urls(item))
-    elif isinstance(value, list):
-        for item in value:
-            urls.extend(_recreation_image_urls(item))
-    else:
-        urls.extend(re.findall(r"https?://[^\s,，;；\]\)]+", _recreation_cell_text(value)))
-    return list(dict.fromkeys(urls))
+def _recreation_image_assets(value: Any) -> List[Dict[str, str]]:
+    """Keep both remote URLs and Base attachment tokens for the Web UI."""
+    assets: List[Dict[str, str]] = []
+
+    def add_asset(url: str = "", file_token: str = "", name: str = "") -> None:
+        identity = url or file_token
+        if not identity or any((item.get("url") or item.get("file_token")) == identity for item in assets):
+            return
+        assets.append({"url": url, "file_token": file_token, "name": name})
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            urls = [str(item[key]).strip() for key in ("url", "tmp_url", "link", "download_url") if item.get(key)]
+            for url in urls:
+                add_asset(url=url)
+            file_token = str(item.get("file_token") or "").strip()
+            if file_token:
+                add_asset(file_token=file_token, name=str(item.get("name") or "").strip())
+            for key, nested in item.items():
+                if key not in {"url", "tmp_url", "link", "download_url", "file_token", "name"}:
+                    visit(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                visit(nested)
+        else:
+            for url in re.findall(r"https?://[^\s,，;；\]\)]+", _recreation_cell_text(item)):
+                add_asset(url=url)
+
+    visit(value)
+    return assets
 
 
-def _map_note_recreation_case(row: Dict[str, Any]) -> Dict[str, Any]:
+def _note_recreation_attachment_url(
+    base_token: str, table_id: str, record_id: str, file_token: str, filename: str,
+) -> str:
+    return "/api/crawler/note-recreation/attachment?" + urlencode({
+        "base_token": base_token,
+        "table_id": table_id,
+        "record_id": record_id,
+        "file_token": file_token,
+        "filename": filename,
+    })
+
+
+def _recreation_image_assets_with_preview(
+    value: Any, base_token: str = "", table_id: str = "", record_id: str = "",
+) -> List[Dict[str, str]]:
+    assets = _recreation_image_assets(value)
+    for asset in assets:
+        if asset["file_token"] and record_id and base_token and table_id:
+            asset["url"] = _note_recreation_attachment_url(
+                base_token, table_id, record_id, asset["file_token"], asset["name"],
+            )
+    return assets
+
+
+def _map_note_recreation_case(
+    row: Dict[str, Any], base_token: str = "", table_id: str = "", record_id: str = "",
+) -> Dict[str, Any]:
     def pick(key: str) -> Any:
         return next((row[name] for name in _NOTE_RECREATION_FIELD_ALIASES[key] if row.get(name) not in (None, "")), "")
 
@@ -1067,13 +1109,17 @@ def _map_note_recreation_case(row: Dict[str, Any]) -> Dict[str, Any]:
         "original": {
             "title": _recreation_cell_text(pick("original_title")),
             "body": _recreation_cell_text(pick("original_body")),
-            "images": _recreation_image_urls(pick("original_images")),
+            "images": _recreation_image_assets_with_preview(
+                pick("original_images"), base_token, table_id, record_id,
+            ),
             "image_note": _recreation_cell_text(pick("original_images")),
         },
         "rewrite": {
             "title": _recreation_cell_text(pick("rewrite_title")),
             "body": _recreation_cell_text(pick("rewrite_body")),
-            "images": _recreation_image_urls(pick("rewrite_images")),
+            "images": _recreation_image_assets_with_preview(
+                pick("rewrite_images"), base_token, table_id, record_id,
+            ),
             "image_note": _recreation_cell_text(pick("rewrite_images")),
         },
         "score": _recreation_cell_text(pick("score")),
@@ -1081,7 +1127,9 @@ def _map_note_recreation_case(row: Dict[str, Any]) -> Dict[str, Any]:
             "prompt": _recreation_cell_text(pick("adjustment_prompt")),
             "title": _recreation_cell_text(pick("second_title")),
             "body": _recreation_cell_text(pick("second_body")),
-            "images": _recreation_image_urls(pick("second_images")),
+            "images": _recreation_image_assets_with_preview(
+                pick("second_images"), base_token, table_id, record_id,
+            ),
             "image_note": _recreation_cell_text(pick("second_images")),
         },
         "note_url": _recreation_cell_text(pick("note_url")),
@@ -1122,13 +1170,32 @@ async def _read_note_recreation_cases(
     data = payload.get("data") or {}
     response_fields = data.get("fields") or field_names
     cases = []
-    for values in data.get("data") or []:
-        if not isinstance(values, list):
+    rows = data.get("items") or data.get("records") or data.get("data") or []
+    for values in rows:
+        record_id = ""
+        if isinstance(values, list):
+            row = {name: value for name, value in zip(response_fields, values)}
+        elif isinstance(values, dict):
+            record_id = str(values.get("record_id") or values.get("id") or "")
+            candidate_fields = values.get("fields")
+            row = dict(candidate_fields) if isinstance(candidate_fields, dict) else values
+        else:
             continue
-        mapped = _map_note_recreation_case({name: value for name, value in zip(response_fields, values)})
+        mapped = _map_note_recreation_case(row, base_token, table_id, record_id)
         if mapped["rewrite"]["title"] or mapped["rewrite"]["body"] or mapped["rewrite"]["image_note"] or mapped["second_adjustment"]["title"] or mapped["second_adjustment"]["body"] or mapped["second_adjustment"]["image_note"]:
             cases.append(mapped)
     return {"cases": cases, "has_more": bool(data.get("has_more")), "fields": response_fields}
+
+
+def _note_recreation_attachment_cache_path(
+    base_token: str, table_id: str, record_id: str, file_token: str, filename: str,
+) -> tuple[Path, str]:
+    project_root = Path(__file__).resolve().parents[2]
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).name).strip("._") or f"{file_token}.bin"
+    cache_key = hashlib.sha256(
+        f"{base_token}\0{table_id}\0{record_id}\0{file_token}\0{safe_name}".encode("utf-8")
+    ).hexdigest()
+    return project_root / ".lark_attachment_cache" / cache_key / safe_name, cache_key
 
 
 def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
@@ -3331,6 +3398,37 @@ async def get_note_recreation_cases(
         raise HTTPException(status_code=400, detail="缺少笔记二创表的 base_token 或 table_id")
     result = await _read_note_recreation_cases(token, table_id.strip(), project_name, limit)
     return {"status": "ok", **result}
+
+
+@router.get("/note-recreation/attachment")
+async def get_note_recreation_attachment(
+    base_token: str,
+    table_id: str,
+    record_id: str,
+    file_token: str,
+    filename: str = "",
+):
+    """Download one Base attachment into a local cache for safe image preview."""
+    token = _extract_base_token(base_token)
+    if not all((token, table_id.strip(), record_id.strip(), file_token.strip())):
+        raise HTTPException(status_code=400, detail="缺少二创封面预览所需的附件参数")
+    cache_path, cache_key = _note_recreation_attachment_cache_path(
+        token, table_id.strip(), record_id.strip(), file_token.strip(), filename,
+    )
+    if not cache_path.is_file() or not cache_path.stat().st_size:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        relative_output = f"./.lark_attachment_cache/{cache_key}/{cache_path.name}"
+        await _run_lark_cli(
+            [
+                _find_lark_cli(), "base", "+record-download-attachment", "--as", "user",
+                "--base-token", token, "--table-id", table_id.strip(), "--record-id", record_id.strip(),
+                "--file-token", file_token.strip(), "--output", relative_output, "--overwrite",
+            ],
+            timeout_sec=60,
+        )
+    if not cache_path.is_file() or not cache_path.stat().st_size:
+        raise HTTPException(status_code=404, detail="未下载到二创封面附件")
+    return FileResponse(path=str(cache_path), filename=cache_path.name)
 
 
 @router.post("/bootstrap-project")

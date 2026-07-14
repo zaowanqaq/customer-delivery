@@ -71,8 +71,8 @@ def test_scenario_setup_fields_match_customer_template():
     }
     assert recreation_fields == [
         "收藏数", "当日使用标记", "改写打分", "笔记ID", "博主名", "笔记链接", "标题", "采集时间",
-        "博主主页", "标题改写", "图片改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
-        "分享数", "博主粉丝数", "封面附件", "已使用账号记录", "项目名", "正文改写", "二次调整口令",
+        "博主主页", "标题改写.输出结果", "封面改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
+        "分享数", "博主粉丝数", "封面附件", "已使用账号记录", "项目名", "正文改写.输出结果", "二次调整口令",
         "二次标题改写", "二次正文改写", "二次图片改写", "话题标签",
     ]
     assert crawler._account_content_monitor_public_field_names() == [
@@ -431,9 +431,9 @@ def test_note_recreation_case_mapping_keeps_before_after_and_second_adjustment()
         "标题": "原始标题",
         "内容": "原始正文",
         "封面图": "https://cdn.example.com/original.jpg",
-        "标题改写": "第一次标题",
-        "正文改写": "第一次正文",
-        "图片改写": "https://cdn.example.com/rewrite.jpg",
+        "标题改写.输出结果": "第一次标题",
+        "正文改写.输出结果": "第一次正文",
+        "封面改写": "https://cdn.example.com/rewrite.jpg",
         "改写打分": 92,
         "二次调整口令": "更轻松一点",
         "二次标题改写": "二次标题",
@@ -444,11 +444,11 @@ def test_note_recreation_case_mapping_keeps_before_after_and_second_adjustment()
     assert case["project_name"] == "露营项目"
     assert case["keyword"] == "露营帐篷"
     assert case["original"] == {
-        "title": "原始标题", "body": "原始正文", "images": ["https://cdn.example.com/original.jpg"],
+        "title": "原始标题", "body": "原始正文", "images": [{"url": "https://cdn.example.com/original.jpg", "file_token": "", "name": ""}],
         "image_note": "https://cdn.example.com/original.jpg",
     }
     assert case["rewrite"]["title"] == "第一次标题"
-    assert case["rewrite"]["images"] == ["https://cdn.example.com/rewrite.jpg"]
+    assert case["rewrite"]["images"] == [{"url": "https://cdn.example.com/rewrite.jpg", "file_token": "", "name": ""}]
     assert case["score"] == "92"
     assert case["second_adjustment"]["prompt"] == "更轻松一点"
     assert case["second_adjustment"]["title"] == "二次标题"
@@ -488,6 +488,47 @@ async def test_note_recreation_cases_are_project_scoped_and_rewritten_only(monke
     }]
     filter_json = json.loads(commands[0][commands[0].index("--filter-json") + 1])
     assert filter_json == {"logic": "and", "conditions": [["项目名", "==", "露营项目"]]}
+
+
+@pytest.mark.asyncio
+async def test_note_recreation_attachment_fields_receive_local_preview_urls(monkeypatch):
+    fields = [
+        {"name": "标题", "type": "text"},
+        {"name": "标题改写.输出结果", "type": "text"},
+        {"name": "封面附件", "type": "attachment"},
+        {"name": "封面改写", "type": "attachment"},
+    ]
+
+    async def fake_fields(_base_token, _table_id):
+        return fields
+
+    async def fake_run(_command, timeout_sec=30):
+        return {"data": {
+            "items": [{
+                "record_id": "rec_recreation_1",
+                "fields": {
+                    "标题": "原始标题",
+                    "标题改写.输出结果": "改写标题",
+                    "封面附件": [{"file_token": "file_original", "name": "original.png"}],
+                    "封面改写": [{"file_token": "file_rewrite", "name": "rewrite.png"}],
+                },
+            }],
+            "has_more": False,
+        }}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_fields)
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+
+    result = await crawler._read_note_recreation_cases("app_demo", "tbl_recreation")
+
+    assert result["cases"][0]["rewrite"]["title"] == "改写标题"
+    assert result["cases"][0]["original"]["images"] == [{
+        "url": "/api/crawler/note-recreation/attachment?base_token=app_demo&table_id=tbl_recreation&record_id=rec_recreation_1&file_token=file_original&filename=original.png",
+        "file_token": "file_original",
+        "name": "original.png",
+    }]
+    assert result["cases"][0]["rewrite"]["images"][0]["url"].endswith("file_token=file_rewrite&filename=rewrite.png")
 
 
 @pytest.mark.asyncio

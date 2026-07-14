@@ -170,14 +170,16 @@
     .recreation-meta { display: flex; flex-wrap: wrap; gap: 8px; }
     .recreation-tag { border: 1px solid #dccbbd; border-radius: 999px; padding: 4px 8px; color: #5d4638; background: #fffdf9; font-size: 12px; font-weight: 700; }
     .recreation-score { border-radius: 999px; padding: 5px 10px; background: #f5ddd7; color: var(--accent-strong); font-size: 12px; font-weight: 800; }
-    .recreation-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-    .recreation-side { min-width: 0; padding: 16px; }
-    .recreation-side + .recreation-side { border-left: 1px solid #eadfd4; background: #fff8f1; }
+    .recreation-compare { display: grid; grid-template-columns: repeat(2, minmax(260px, 360px)); gap: 16px; padding: 18px; align-items: start; }
+    .recreation-side { min-width: 0; }
     .recreation-side h4, .recreation-adjustment h4 { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
+    .recreation-note-card { overflow: hidden; border: 1px solid #e0d3c7; border-radius: 9px; background: #fff; box-shadow: 0 8px 18px rgba(70,48,30,.06); }
+    .recreation-cover { height: 220px; display: grid; place-items: center; overflow: hidden; background: #efe5da; color: #8a7664; font-size: 13px; }
+    .recreation-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .recreation-note-copy { padding: 13px 14px 15px; }
     .recreation-copy { margin: 0; white-space: pre-wrap; color: #514840; font-size: 13px; line-height: 1.7; }
-    .recreation-title { margin: 0 0 10px; color: var(--ink); font-size: 16px; line-height: 1.45; }
-    .recreation-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; margin-top: 12px; }
-    .recreation-images img { width: 100%; height: 132px; object-fit: cover; border-radius: 7px; border: 1px solid #e7d8ca; background: #f4efe8; }
+    .recreation-title { margin: 0 0 8px; color: var(--ink); font-size: 16px; line-height: 1.45; }
+    .recreation-image-note { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
     .recreation-adjustment { margin: 0 16px 16px; border: 1px solid #e7d8ca; border-radius: 8px; padding: 14px; background: #fff8f0; }
     .recreation-prompt { margin: 0 0 12px; padding: 10px; border-left: 3px solid var(--accent); background: #fffdf9; white-space: pre-wrap; color: #514840; font-size: 13px; line-height: 1.6; }
     .recreation-empty { border: 1px dashed #d7c8ba; border-radius: 8px; padding: 32px; color: var(--muted); text-align: center; }
@@ -258,7 +260,7 @@
       .content-scroll { padding: 20px; }
       .grid, .monitor-grid { grid-template-columns: 1fr; }
       .notes-toolbar, .notes-stats, .note-modal-panel, .recreation-toolbar, .recreation-compare, .risk-group-grid { grid-template-columns: 1fr; }
-      .recreation-side + .recreation-side { border-left: 0; border-top: 1px solid #eadfd4; }
+      .recreation-compare { justify-content: stretch; }
       .notes-board { column-count: 2; }
       .note-gallery { min-height: 300px; }
     }
@@ -2190,19 +2192,31 @@
       }
     }
 
-    function appendRecreationImages(parent, images) {
-      const safeImages = (images || []).filter(isSafeRemoteUrl);
-      if (!safeImages.length) return;
-      const wrap = document.createElement("div");
-      wrap.className = "recreation-images";
-      safeImages.forEach((url) => {
-        const image = document.createElement("img");
-        image.src = url;
-        image.alt = "笔记图片";
-        image.loading = "lazy";
-        wrap.appendChild(image);
+    function recreationImageUrl(asset) {
+      if (typeof asset === "string") return isSafeRemoteUrl(asset) ? asset : "";
+      const url = asset && typeof asset === "object" ? asset.url : "";
+      return isSafeRemoteUrl(url) || String(url || "").startsWith("/api/") ? url : "";
+    }
+
+    function appendRecreationCover(parent, images) {
+      const cover = document.createElement("div");
+      cover.className = "recreation-cover";
+      const firstImage = (images || []).map(recreationImageUrl).find(Boolean);
+      if (!firstImage) {
+        cover.textContent = "暂无封面预览";
+        parent.appendChild(cover);
+        return false;
+      }
+      const image = document.createElement("img");
+      image.src = firstImage;
+      image.alt = "笔记封面";
+      image.loading = "lazy";
+      image.addEventListener("error", () => {
+        cover.replaceChildren("封面加载失败");
       });
-      parent.appendChild(wrap);
+      cover.appendChild(image);
+      parent.appendChild(cover);
+      return true;
     }
 
     function createRecreationSide(label, content, tone = "original") {
@@ -2210,20 +2224,26 @@
       side.className = "recreation-side";
       const heading = document.createElement("h4");
       heading.textContent = label;
+      const noteCard = document.createElement("article");
+      noteCard.className = "recreation-note-card";
+      const hasCover = appendRecreationCover(noteCard, content.images);
+      const copy = document.createElement("div");
+      copy.className = "recreation-note-copy";
       const title = document.createElement("h5");
       title.className = "recreation-title";
       title.textContent = content.title || "未填写标题";
       const body = document.createElement("p");
       body.className = "recreation-copy";
       body.textContent = content.body || "未填写正文";
-      side.append(heading, title, body);
-      appendRecreationImages(side, content.images);
-      if (content.image_note && !(content.images || []).length) {
+      copy.append(title, body);
+      if (content.image_note && !hasCover) {
         const imageNote = document.createElement("p");
-        imageNote.className = "recreation-copy";
+        imageNote.className = "recreation-image-note";
         imageNote.textContent = `图片信息：${content.image_note}`;
-        side.appendChild(imageNote);
+        copy.appendChild(imageNote);
       }
+      noteCard.appendChild(copy);
+      side.append(heading, noteCard);
       return side;
     }
 

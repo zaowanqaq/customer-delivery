@@ -180,3 +180,4 @@ debug_tools
 
 database/*.db
 .codegraph/
+.lark_attachment_cache/

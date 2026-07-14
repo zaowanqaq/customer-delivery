@@ -60,6 +60,9 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     assert "爆款笔记二创" in html
     assert "仅展示已填写标题、正文、图片或二次改写结果的记录。" in html
     assert "/api/crawler/note-recreation/cases" in html
+    assert "recreationImageUrl" in html
+    assert "recreation-note-card" in html
+    assert "recreation-cover" in html
     assert "本页不调用 AI" in html
     assert "笔记链接（逗号或换行）" in html
     assert "风险类型分组" in html
