@@ -455,10 +455,11 @@ def test_note_recreation_case_mapping_keeps_before_after_and_second_adjustment()
 
 
 @pytest.mark.asyncio
-async def test_note_recreation_cases_are_project_scoped_and_rewritten_only(monkeypatch):
+async def test_note_recreation_cases_are_project_scoped_and_require_a_rewritten_cover(monkeypatch):
     fields = [
         {"name": "项目名", "type": "text"}, {"name": "关键词", "type": "text"},
         {"name": "标题", "type": "text"}, {"name": "标题改写", "type": "text"},
+        {"name": "封面改写", "type": "attachment"},
     ]
     commands = []
 
@@ -468,8 +469,12 @@ async def test_note_recreation_cases_are_project_scoped_and_rewritten_only(monke
     async def fake_run(command, timeout_sec=30):
         commands.append(command)
         return {"data": {
-            "fields": ["项目名", "关键词", "标题", "标题改写"],
-            "data": [["露营项目", "帐篷", "原始标题", "改写标题"], ["露营项目", "桌椅", "未改写", ""]],
+            "fields": ["项目名", "关键词", "标题", "标题改写", "封面改写"],
+            "data": [
+                ["露营项目", "帐篷", "原始标题", "改写标题", [{"file_token": "file_cover", "name": "cover.png"}]],
+                ["露营项目", "桌椅", "未改写", "只有文字改写", ""],
+            ],
+            "record_id_list": ["rec_cover", "rec_text_only"],
             "has_more": False,
         }}
 
@@ -482,7 +487,12 @@ async def test_note_recreation_cases_are_project_scoped_and_rewritten_only(monke
     assert result["cases"] == [{
         "project_name": "露营项目", "keyword": "帐篷", "original": {
             "title": "原始标题", "body": "", "images": [], "image_note": "",
-        }, "rewrite": {"title": "改写标题", "body": "", "images": [], "image_note": ""},
+        }, "rewrite": {
+            "title": "改写标题", "body": "", "images": [{
+                "url": "/api/crawler/note-recreation/attachment?base_token=app_demo&table_id=tbl_recreation&record_id=rec_cover&file_token=file_cover&filename=cover.png",
+                "file_token": "file_cover", "name": "cover.png",
+            }], "image_note": "file_cover\ncover.png",
+        },
         "score": "", "second_adjustment": {"prompt": "", "title": "", "body": "", "images": [], "image_note": ""},
         "note_url": "",
     }]

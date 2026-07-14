@@ -1143,12 +1143,7 @@ async def _read_note_recreation_cases(
     fields = await _read_table_field_defs(base_token, table_id)
     field_names = [str(field["name"]) for field in fields if field.get("name")]
     available = set(field_names)
-    rewrite_fields = [
-        name
-        for alias in ("rewrite_title", "rewrite_body", "rewrite_images", "second_title", "second_body", "second_images")
-        for name in _NOTE_RECREATION_FIELD_ALIASES[alias]
-        if name in available
-    ]
+    rewrite_fields = [name for name in _NOTE_RECREATION_FIELD_ALIASES["rewrite_images"] if name in available]
     if not rewrite_fields:
         return {"cases": [], "has_more": False, "fields": field_names}
     rewritten_filter = {"logic": "or", "conditions": [[name, "non_empty"] for name in rewrite_fields]}
@@ -1171,18 +1166,19 @@ async def _read_note_recreation_cases(
     response_fields = data.get("fields") or field_names
     cases = []
     rows = data.get("items") or data.get("records") or data.get("data") or []
-    for values in rows:
-        record_id = ""
+    record_id_list = data.get("record_id_list") or []
+    for row_index, values in enumerate(rows):
+        record_id = str(record_id_list[row_index] or "") if row_index < len(record_id_list) else ""
         if isinstance(values, list):
             row = {name: value for name, value in zip(response_fields, values)}
         elif isinstance(values, dict):
-            record_id = str(values.get("record_id") or values.get("id") or "")
+            record_id = str(values.get("record_id") or values.get("id") or record_id)
             candidate_fields = values.get("fields")
             row = dict(candidate_fields) if isinstance(candidate_fields, dict) else values
         else:
             continue
         mapped = _map_note_recreation_case(row, base_token, table_id, record_id)
-        if mapped["rewrite"]["title"] or mapped["rewrite"]["body"] or mapped["rewrite"]["image_note"] or mapped["second_adjustment"]["title"] or mapped["second_adjustment"]["body"] or mapped["second_adjustment"]["image_note"]:
+        if mapped["rewrite"]["images"]:
             cases.append(mapped)
     return {"cases": cases, "has_more": bool(data.get("has_more")), "fields": response_fields}
 
