@@ -806,15 +806,10 @@
         <div id="tab-step5" class="tab-pane">
           <section class="card">
       <h2>笔记数据监测</h2>
-      <p class="hint">按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。</p>
       <div class="grid">
         <div class="row full">
           <label>合作博主账号名单（逗号或换行）</label>
           <textarea id="collab_creator_ids" placeholder="每行一个合作博主主页链接或账号 ID"></textarea>
-        </div>
-        <div class="row">
-          <label>每轮每个账号抓取篇数</label>
-          <input id="collab_notes_per_creator" type="number" min="1" value="20">
         </div>
         <div class="row">
           <label>监控频率</label>
@@ -1858,7 +1853,8 @@
         collab_project_name: document.getElementById("collab_project_name").value.trim(),
         collab_source_keyword: document.getElementById("collab_source_keyword").value.trim(),
         collab_creator_ids: document.getElementById("collab_creator_ids").value.trim(),
-        collab_notes_per_creator: Number(document.getElementById("collab_notes_per_creator").value || 20),
+        // 客户需求固定为每位达人最近发布的 20 篇笔记，不在页面暴露可变配置。
+        collab_notes_per_creator: 20,
         collab_interval_hours: Number(document.getElementById("collab_interval_hours").value || 4),
         collab_sync_limit: Number(document.getElementById("collab_sync_limit").value || 20),
         pgy_nickname: "",

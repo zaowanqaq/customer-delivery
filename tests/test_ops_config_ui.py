@@ -137,6 +137,14 @@ def test_project_binding_uses_customer_table_names():
     assert "合作评论表" not in html
 
 
+def test_collaboration_monitor_keeps_latest_twenty_notes_without_exposing_a_count_control():
+    html = _ops_config_text()
+
+    assert "每轮每个账号抓取篇数" not in html
+    assert "按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。" not in html
+    assert "collab_notes_per_creator: 20" in html
+
+
 def test_sample_account_file_import_controls_are_present():
     html = _ops_config_text()
 
