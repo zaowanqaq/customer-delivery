@@ -96,7 +96,14 @@ async def test_unknown_job_returns_not_found(monkeypatch):
 async def test_preflight_reports_missing_model_keys_without_leaking_values(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
 
     result = await creator_screening.preflight()
 
-    assert result == {"deepseek_configured": False, "openrouter_configured": False}
+    assert result == {
+        "deepseek_configured": False,
+        "openrouter_configured": False,
+        "siliconflow_configured": False,
+        "active_provider": "DeepSeek + OpenRouter",
+        "active_model": "google/gemma-4-31b-it:free",
+    }

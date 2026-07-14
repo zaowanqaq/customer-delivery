@@ -2623,6 +2623,10 @@
         const response = await fetch("/api/creator-screening/preflight");
         const data = await response.json();
         if (!response.ok) return;
+        if (data.siliconflow_configured) {
+          setCreatorScreeningStatus(`已配置 ${data.active_provider}（${data.active_model}），将用于需求解析和主页判定。`);
+          return;
+        }
         const missing = [];
         if (!data.deepseek_configured) missing.push("DEEPSEEK_API_KEY");
         if (!data.openrouter_configured) missing.push("OPENROUTER_API_KEY");

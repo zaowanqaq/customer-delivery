@@ -78,6 +78,32 @@ async def test_creator_screening_ai_allows_a_configured_vision_model(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_creator_screening_prefers_siliconflow_kimi_for_requirements_and_vision(monkeypatch):
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "siliconflow-test")
+    monkeypatch.setenv("SILICONFLOW_KIMI_MODEL", "Pro/moonshotai/Kimi-K2.6")
+    client = CreatorScreeningAI(deepseek_key="deepseek-test", openrouter_key="openrouter-test")
+    calls = []
+
+    async def fake_post_json(url, headers, body):
+        calls.append((url, headers, body))
+        if len(calls) == 1:
+            return {"choices": [{"message": {"content": '{"tags":["线下打卡"]}'}}]}
+        return {"choices": [{"message": {"content": '{"status":"符合","matched_tags":["线下打卡"],"reason":"可见打卡内容","evidence":[],"uncertainties":[]}'}}]}
+
+    monkeypatch.setattr(client, "_post_json", fake_post_json)
+    rules = await client.parse_requirement("需要线下打卡达人")
+    result = await client.evaluate(
+        rules,
+        ProfileSnapshot(profile_url="https://www.xiaohongshu.com/user/profile/a", visible_text="线下打卡"),
+    )
+
+    assert result.status == "符合"
+    assert all(call[0] == "https://api.siliconflow.cn/v1/chat/completions" for call in calls)
+    assert all(call[1]["Authorization"] == "Bearer siliconflow-test" for call in calls)
+    assert all(call[2]["model"] == "Pro/moonshotai/Kimi-K2.6" for call in calls)
+
+
+@pytest.mark.asyncio
 async def test_creator_screening_ai_marks_invalid_model_response_as_exception():
     client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
 

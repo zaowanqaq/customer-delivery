@@ -23,6 +23,8 @@ from config.runtime_paths import temp_dir
 
 REQUIRED_CREATOR_COLUMNS = ("达人昵称", "博主ID", "主页链接", "达人价格")
 DEFAULT_OPENROUTER_VISION_MODEL = "google/gemma-4-31b-it:free"
+DEFAULT_SILICONFLOW_KIMI_MODEL = "Pro/moonshotai/Kimi-K2.6"
+SILICONFLOW_CHAT_COMPLETIONS_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
 
 @dataclass
@@ -110,15 +112,23 @@ class CreatorScreeningAI:
     def __init__(self, deepseek_key: str | None = None, openrouter_key: str | None = None):
         self._deepseek_key = deepseek_key if deepseek_key is not None else os.getenv("DEEPSEEK_API_KEY", "")
         self._openrouter_key = openrouter_key if openrouter_key is not None else os.getenv("OPENROUTER_API_KEY", "")
+        self._siliconflow_key = os.getenv("SILICONFLOW_API_KEY", "")
         self._openrouter_vision_model = (
             os.getenv("OPENROUTER_VISION_MODEL", DEFAULT_OPENROUTER_VISION_MODEL).strip()
             or DEFAULT_OPENROUTER_VISION_MODEL
         )
+        self._siliconflow_kimi_model = (
+            os.getenv("SILICONFLOW_KIMI_MODEL", DEFAULT_SILICONFLOW_KIMI_MODEL).strip()
+            or DEFAULT_SILICONFLOW_KIMI_MODEL
+        )
 
-    def configuration_status(self) -> dict[str, bool]:
+    def configuration_status(self) -> dict[str, bool | str]:
         return {
             "deepseek_configured": bool(self._deepseek_key),
             "openrouter_configured": bool(self._openrouter_key),
+            "siliconflow_configured": bool(self._siliconflow_key),
+            "active_provider": "SiliconFlow Kimi" if self._siliconflow_key else "DeepSeek + OpenRouter",
+            "active_model": self._siliconflow_kimi_model if self._siliconflow_key else self._openrouter_vision_model,
         }
 
     @staticmethod
@@ -166,20 +176,24 @@ class CreatorScreeningAI:
         text = requirement.strip()
         if not text:
             raise ValueError("请填写筛选需求")
-        if not self._deepseek_key:
-            raise ValueError("未配置 DEEPSEEK_API_KEY")
-        payload = await self._post_json(
-            "https://api.deepseek.com/chat/completions",
-            {"Authorization": "Bearer " + self._deepseek_key, "Content-Type": "application/json"},
-            {
-                "model": "deepseek-chat",
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": "把用户的小红书达人筛选需求拆为简短、可展示的中文标签。仅返回 JSON：{\\\"tags\\\":[\\\"...\\\"]}。"},
-                    {"role": "user", "content": text},
-                ],
-            },
-        )
+        messages = [
+            {"role": "system", "content": "把用户的小红书达人筛选需求拆为简短、可展示的中文标签。仅返回 JSON：{\\\"tags\\\":[\\\"...\\\"]}。"},
+            {"role": "user", "content": text},
+        ]
+        if self._siliconflow_key:
+            payload = await self._post_json(
+                SILICONFLOW_CHAT_COMPLETIONS_URL,
+                {"Authorization": "Bearer " + self._siliconflow_key, "Content-Type": "application/json"},
+                {"model": self._siliconflow_kimi_model, "response_format": {"type": "json_object"}, "messages": messages},
+            )
+        else:
+            if not self._deepseek_key:
+                raise ValueError("未配置 DEEPSEEK_API_KEY 或 SILICONFLOW_API_KEY")
+            payload = await self._post_json(
+                "https://api.deepseek.com/chat/completions",
+                {"Authorization": "Bearer " + self._deepseek_key, "Content-Type": "application/json"},
+                {"model": "deepseek-chat", "response_format": {"type": "json_object"}, "messages": messages},
+            )
         decoded = json.loads(self._chat_content(payload))
         tags = decoded.get("tags") if isinstance(decoded, dict) else None
         if not isinstance(tags, list):
@@ -210,17 +224,27 @@ class CreatorScreeningAI:
             return ScreeningDecision(status="待人工确认", reason=snapshot.error or "主页可见资料不足")
         if snapshot.status != "ok":
             return ScreeningDecision(status="异常", reason=snapshot.error or "主页快照失败")
-        if not self._openrouter_key:
-            return ScreeningDecision(status="异常", reason="未配置 OPENROUTER_API_KEY")
+        if self._siliconflow_key:
+            provider = "SiliconFlow Kimi"
+            api_url = SILICONFLOW_CHAT_COMPLETIONS_URL
+            api_key = self._siliconflow_key
+            model = self._siliconflow_kimi_model
+        elif self._openrouter_key:
+            provider = "OpenRouter"
+            api_url = "https://openrouter.ai/api/v1/chat/completions"
+            api_key = self._openrouter_key
+            model = self._openrouter_vision_model
+        else:
+            return ScreeningDecision(status="异常", reason="未配置 OPENROUTER_API_KEY 或 SILICONFLOW_API_KEY")
         try:
             payload = await self._post_json(
-                "https://openrouter.ai/api/v1/chat/completions",
-                {"Authorization": "Bearer " + self._openrouter_key, "Content-Type": "application/json"},
-                {"model": self._openrouter_vision_model, "messages": self._vision_message(rules, snapshot)},
+                api_url,
+                {"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
+                {"model": model, "messages": self._vision_message(rules, snapshot)},
             )
             return await self.to_decision(self._chat_content(payload), rules)
         except Exception as exc:
-            return ScreeningDecision(status="异常", reason=f"AI 判定失败：{self._model_error_detail('OpenRouter', exc)}")
+            return ScreeningDecision(status="异常", reason=f"AI 判定失败：{self._model_error_detail(provider, exc)}")
 
     async def to_decision(self, content: str, rules: RequirementRules) -> ScreeningDecision:
         try:
