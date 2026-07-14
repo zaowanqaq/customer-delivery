@@ -16,6 +16,8 @@ def test_creator_selection_tab_embeds_ai_profile_screening_controls():
     assert 'onchange="handleCreatorScreeningFileChange()"' in html
     assert 'id="creator_screening_requirement"' in html
     assert "data.siliconflow_configured" in html
+    assert "details[open][data-screening-row]" in html
+    assert "data-screening-row=" in html
     ai_panel = html.split('id="creator_selection_ai_panel"', 1)[1].split('</section>', 1)[0]
     assert "openCreatorScreeningLogin()" not in ai_panel
     assert "打开小红书登录浏览器" not in ai_panel

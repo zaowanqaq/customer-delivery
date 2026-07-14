@@ -2642,12 +2642,19 @@
         target.innerHTML = '<tr><td colspan="9">暂无结果</td></tr>';
         return;
       }
+      const expandedRows = new Set(
+        Array.from(target.querySelectorAll("details[open][data-screening-row]"))
+          .map((detail) => detail.dataset.screeningRow)
+          .filter(Boolean)
+      );
       target.innerHTML = rows.map((row) => {
+        const rowKey = String(row["序号"] || "");
+        const detailsOpen = expandedRows.has(rowKey) ? " open" : "";
         const detail = row["详情"] || {};
         const evidence = (detail["证据"] || []).map(escapeHtml).join("；") || "无";
         const uncertain = (detail["不确定项"] || []).map(escapeHtml).join("；") || "无";
         const status = escapeHtml(row["是否符合筛选要求"] || "异常");
-        return `<tr><td>${escapeHtml(row["序号"] || "")}</td><td><span class="screening-status ${status}">${status}</span></td><td>${escapeHtml(row["达人昵称"] || "")}</td><td>${escapeHtml(row["博主id"] || "")}</td><td><a href="${escapeHtml(row["主页链接"] || "#")}" target="_blank" rel="noreferrer">打开主页</a></td><td>${escapeHtml(row["ip地"] || "")}</td><td>${escapeHtml(row["达人类型"] || "")}</td><td>${escapeHtml(row["达人价格"] || "")}</td><td class="detail-cell"><details><summary>查看依据</summary><p>${escapeHtml(detail["理由"] || "无")}</p><p>证据：${evidence}</p><p>不确定项：${uncertain}</p></details></td></tr>`;
+        return `<tr><td>${escapeHtml(row["序号"] || "")}</td><td><span class="screening-status ${status}">${status}</span></td><td>${escapeHtml(row["达人昵称"] || "")}</td><td>${escapeHtml(row["博主id"] || "")}</td><td><a href="${escapeHtml(row["主页链接"] || "#")}" target="_blank" rel="noreferrer">打开主页</a></td><td>${escapeHtml(row["ip地"] || "")}</td><td>${escapeHtml(row["达人类型"] || "")}</td><td>${escapeHtml(row["达人价格"] || "")}</td><td class="detail-cell"><details data-screening-row="${escapeHtml(rowKey)}"${detailsOpen}><summary>查看依据</summary><p>${escapeHtml(detail["理由"] || "无")}</p><p>证据：${evidence}</p><p>不确定项：${uncertain}</p></details></td></tr>`;
       }).join("");
     }
 

@@ -184,7 +184,7 @@ class CreatorScreeningAI:
             payload = await self._post_json(
                 SILICONFLOW_CHAT_COMPLETIONS_URL,
                 {"Authorization": "Bearer " + self._siliconflow_key, "Content-Type": "application/json"},
-                {"model": self._siliconflow_kimi_model, "response_format": {"type": "json_object"}, "messages": messages},
+                {"model": self._siliconflow_kimi_model, "response_format": {"type": "json_object"}, "max_tokens": 200, "messages": messages},
             )
         else:
             if not self._deepseek_key:
@@ -192,7 +192,7 @@ class CreatorScreeningAI:
             payload = await self._post_json(
                 "https://api.deepseek.com/chat/completions",
                 {"Authorization": "Bearer " + self._deepseek_key, "Content-Type": "application/json"},
-                {"model": "deepseek-chat", "response_format": {"type": "json_object"}, "messages": messages},
+                {"model": "deepseek-chat", "response_format": {"type": "json_object"}, "max_tokens": 200, "messages": messages},
             )
         decoded = json.loads(self._chat_content(payload))
         tags = decoded.get("tags") if isinstance(decoded, dict) else None
@@ -240,7 +240,7 @@ class CreatorScreeningAI:
             payload = await self._post_json(
                 api_url,
                 {"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
-                {"model": model, "messages": self._vision_message(rules, snapshot)},
+                {"model": model, "max_tokens": 600, "messages": self._vision_message(rules, snapshot)},
             )
             return await self.to_decision(self._chat_content(payload), rules)
         except Exception as exc:

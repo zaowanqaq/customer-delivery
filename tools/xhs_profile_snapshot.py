@@ -100,14 +100,11 @@ def _is_login_only_page(text: str, page_content: str = "") -> bool:
     return any(marker in source for marker in ("手机号登录", "扫码", "获取验证码", "登录后推荐"))
 
 
-async def _save_at_most_two_screenshots(page: Page, output_dir: Path) -> list[str]:
+async def _save_profile_screenshot(page: Page, output_dir: Path) -> list[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for index, full_page in enumerate((False, True), start=1):
-        path = output_dir / f"profile-{index}.png"
-        await page.screenshot(path=str(path), full_page=full_page)
-        paths.append(str(path))
-    return paths
+    path = output_dir / "profile.png"
+    await page.screenshot(path=str(path), full_page=False)
+    return [str(path)]
 
 
 async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path) -> ProfileSnapshot:
@@ -116,11 +113,11 @@ async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path
         await _dismiss_login_prompt(page)
         profile_header_text = (await page.locator("body").inner_text(timeout=5_000)).strip()
         profile_ip_location = extract_profile_ip(profile_header_text)
-        for _ in range(3):
+        for _ in range(2):
             await page.evaluate("window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))")
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(350)
         text = (await page.locator("body").inner_text(timeout=5_000)).strip()
-        screenshots = await _save_at_most_two_screenshots(page, output_dir)
+        screenshots = await _save_profile_screenshot(page, output_dir)
         if _is_login_only_page(text, await page.content()):
             return ProfileSnapshot(
                 profile_url=profile_url,

@@ -64,8 +64,8 @@ async def test_visible_profile_snapshot_limits_scrolls_and_screenshots(tmp_path)
 
     assert snapshot.status == "ok"
     assert snapshot.ip_location == "浙江"
-    assert len(snapshot.screenshot_paths) == 2
-    assert page.scroll_count == 3
+    assert len(snapshot.screenshot_paths) == 1
+    assert page.scroll_count == 2
     assert page.detail_navigation_attempts == 0
 
 
@@ -79,7 +79,7 @@ async def test_login_page_returns_manual_review_snapshot(tmp_path):
 
     assert snapshot.status == "待人工确认"
     assert snapshot.ip_location == ""
-    assert len(snapshot.screenshot_paths) == 2
+    assert len(snapshot.screenshot_paths) == 1
 
 
 @pytest.mark.asyncio

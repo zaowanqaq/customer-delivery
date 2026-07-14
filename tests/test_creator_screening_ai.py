@@ -31,6 +31,7 @@ async def test_creator_screening_ai_uses_requirement_tags_for_creator_type(monke
     assert result.creator_type == "浙江本地｜线下打卡"
     assert calls[0][1]["Authorization"] == "Bearer openrouter-test"
     assert calls[0][2]["model"] == "google/gemma-4-31b-it:free"
+    assert calls[0][2]["max_tokens"] == 600
 
 
 @pytest.mark.asyncio
@@ -101,6 +102,8 @@ async def test_creator_screening_prefers_siliconflow_kimi_for_requirements_and_v
     assert all(call[0] == "https://api.siliconflow.cn/v1/chat/completions" for call in calls)
     assert all(call[1]["Authorization"] == "Bearer siliconflow-test" for call in calls)
     assert all(call[2]["model"] == "Pro/moonshotai/Kimi-K2.6" for call in calls)
+    assert calls[0][2]["max_tokens"] == 200
+    assert calls[1][2]["max_tokens"] == 600
 
 
 @pytest.mark.asyncio
