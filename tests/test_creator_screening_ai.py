@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import httpx
 import pytest
 
 from api.services.creator_screening import (
@@ -30,6 +31,50 @@ async def test_creator_screening_ai_uses_requirement_tags_for_creator_type(monke
     assert result.creator_type == "浙江本地｜线下打卡"
     assert calls[0][1]["Authorization"] == "Bearer openrouter-test"
     assert calls[0][2]["model"] == "google/gemma-4-31b-it:free"
+
+
+@pytest.mark.asyncio
+async def test_creator_screening_ai_shows_openrouter_rate_limit_detail(monkeypatch):
+    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    response = httpx.Response(
+        429,
+        request=request,
+        json={"error": {"message": "Provider returned error", "metadata": {"raw": "model is temporarily rate-limited upstream"}}},
+    )
+
+    async def fake_post_json(url, headers, body):
+        raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    monkeypatch.setattr(client, "_post_json", fake_post_json)
+
+    result = await client.evaluate(
+        RequirementRules(tags=["线下打卡"]),
+        ProfileSnapshot(profile_url="https://www.xiaohongshu.com/user/profile/a", visible_text="IP属地：浙江"),
+    )
+
+    assert result.status == "异常"
+    assert "OpenRouter HTTP 429" in result.reason
+    assert "temporarily rate-limited" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_creator_screening_ai_allows_a_configured_vision_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_VISION_MODEL", "google/gemma-4-31b-it")
+    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+    calls = []
+
+    async def fake_post_json(url, headers, body):
+        calls.append(body)
+        return {"choices": [{"message": {"content": '{"status":"待人工确认","matched_tags":[],"reason":"","evidence":[],"uncertainties":[]}'}}]}
+
+    monkeypatch.setattr(client, "_post_json", fake_post_json)
+    await client.evaluate(
+        RequirementRules(tags=["线下打卡"]),
+        ProfileSnapshot(profile_url="https://www.xiaohongshu.com/user/profile/a", visible_text="IP属地：浙江"),
+    )
+
+    assert calls[0]["model"] == "google/gemma-4-31b-it"
 
 
 @pytest.mark.asyncio

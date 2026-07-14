@@ -22,6 +22,7 @@ from config.runtime_paths import temp_dir
 
 
 REQUIRED_CREATOR_COLUMNS = ("达人昵称", "博主ID", "主页链接", "达人价格")
+DEFAULT_OPENROUTER_VISION_MODEL = "google/gemma-4-31b-it:free"
 
 
 @dataclass
@@ -109,12 +110,38 @@ class CreatorScreeningAI:
     def __init__(self, deepseek_key: str | None = None, openrouter_key: str | None = None):
         self._deepseek_key = deepseek_key if deepseek_key is not None else os.getenv("DEEPSEEK_API_KEY", "")
         self._openrouter_key = openrouter_key if openrouter_key is not None else os.getenv("OPENROUTER_API_KEY", "")
+        self._openrouter_vision_model = (
+            os.getenv("OPENROUTER_VISION_MODEL", DEFAULT_OPENROUTER_VISION_MODEL).strip()
+            or DEFAULT_OPENROUTER_VISION_MODEL
+        )
 
     def configuration_status(self) -> dict[str, bool]:
         return {
             "deepseek_configured": bool(self._deepseek_key),
             "openrouter_configured": bool(self._openrouter_key),
         }
+
+    @staticmethod
+    def _model_error_detail(provider: str, exc: Exception) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            response = exc.response
+            message = ""
+            raw_detail = ""
+            try:
+                payload = response.json()
+                error = payload.get("error") if isinstance(payload, dict) else None
+                if isinstance(error, dict):
+                    message = str(error.get("message") or "").strip()
+                    metadata = error.get("metadata")
+                    if isinstance(metadata, dict):
+                        raw_detail = str(metadata.get("raw") or "").strip()
+            except Exception:
+                pass
+            details = "；".join(part for part in (message, raw_detail) if part)
+            return f"{provider} HTTP {response.status_code}" + (f"：{details[:280]}" if details else "")
+        if isinstance(exc, httpx.RequestError):
+            return f"{provider} 网络请求失败：{type(exc).__name__}"
+        return f"{provider} 响应处理失败：{type(exc).__name__}"
 
     async def _post_json(self, url: str, headers: dict, body: dict) -> dict:
         async with httpx.AsyncClient(timeout=45) as client:
@@ -189,11 +216,11 @@ class CreatorScreeningAI:
             payload = await self._post_json(
                 "https://openrouter.ai/api/v1/chat/completions",
                 {"Authorization": "Bearer " + self._openrouter_key, "Content-Type": "application/json"},
-                {"model": "google/gemma-4-31b-it:free", "messages": self._vision_message(rules, snapshot)},
+                {"model": self._openrouter_vision_model, "messages": self._vision_message(rules, snapshot)},
             )
             return await self.to_decision(self._chat_content(payload), rules)
         except Exception as exc:
-            return ScreeningDecision(status="异常", reason=f"AI 判定失败：{type(exc).__name__}")
+            return ScreeningDecision(status="异常", reason=f"AI 判定失败：{self._model_error_detail('OpenRouter', exc)}")
 
     async def to_decision(self, content: str, rules: RequirementRules) -> ScreeningDecision:
         try:
