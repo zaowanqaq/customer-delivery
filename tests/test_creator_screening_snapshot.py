@@ -6,7 +6,12 @@ import pytest
 from api.schemas.creator_screening import CreatorCandidateInput
 from api.services import creator_screening
 from tools import xhs_profile_snapshot
-from tools.xhs_profile_snapshot import capture_visible_profile, extract_profile_ip
+from tools.xhs_profile_snapshot import (
+    SCREENING_PAGE_NAME,
+    _get_or_create_screening_page,
+    capture_visible_profile,
+    extract_profile_ip,
+)
 
 
 class FakeLocator:
@@ -116,6 +121,67 @@ async def test_login_overlay_is_dismissed_before_profile_is_marked_unavailable(t
 
     assert snapshot.status == "ok"
     assert snapshot.ip_location == "重庆"
+
+
+@pytest.mark.asyncio
+async def test_login_overlay_uses_visible_close_control_when_escape_is_ignored(tmp_path):
+    class LoginOverlayPage(FakePage):
+        def __init__(self):
+            super().__init__(visible_text="登录探索更多内容")
+            self.overlay_open = True
+
+        async def content(self):
+            return "手机号登录 获取验证码" if self.overlay_open else "主页内容"
+
+        async def evaluate(self, script):
+            if "querySelectorAll" in script:
+                self.overlay_open = False
+                self.visible_text = "体坛周报 小红书号：6301714171 IP属地：重庆"
+                return True
+            return await super().evaluate(script)
+
+        async def press(self, key):
+            raise AssertionError("登录浮层有关闭按钮时不应依赖 Escape")
+
+    snapshot = await capture_visible_profile(
+        LoginOverlayPage(),
+        "https://www.xiaohongshu.com/user/profile/a",
+        tmp_path,
+    )
+
+    assert snapshot.status == "ok"
+    assert snapshot.ip_location == "重庆"
+
+
+@pytest.mark.asyncio
+async def test_screening_reuses_one_marked_browser_tab():
+    class FakeScreeningPage:
+        def __init__(self):
+            self.name = ""
+
+        async def evaluate(self, script):
+            if script == "window.name":
+                return self.name
+            assert "window.name =" in script
+            self.name = SCREENING_PAGE_NAME
+
+    class FakeContext:
+        def __init__(self):
+            self.pages = []
+            self.new_page_calls = 0
+
+        async def new_page(self):
+            self.new_page_calls += 1
+            page = FakeScreeningPage()
+            self.pages.append(page)
+            return page
+
+    context = FakeContext()
+    first_page = await _get_or_create_screening_page(context)
+    second_page = await _get_or_create_screening_page(context)
+
+    assert first_page is second_page
+    assert context.new_page_calls == 1
 
 
 def test_profile_ip_is_extracted_from_profile_header_text():

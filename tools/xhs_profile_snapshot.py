@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import re
 import sys
@@ -19,6 +20,7 @@ from tools.browser_launcher import BrowserLauncher
 
 
 LOGIN_MARKERS = ("登录", "验证码", "滑动验证", "请先登录")
+SCREENING_PAGE_NAME = "mediacrawler_creator_screening"
 
 
 def shared_xhs_login_profile_dir() -> Path:
@@ -32,10 +34,58 @@ def configure_utf8_stdout() -> None:
 
 
 async def _dismiss_login_prompt(page: Page) -> None:
+    """Close the non-blocking XHS login overlay when profile data is still visible.
+
+    Some XHS web variants do not bind Escape to the login prompt.  Prefer the
+    visible close control inside the overlay, then retain Escape as a fallback.
+    """
     content = await page.content()
-    if any(marker in content for marker in LOGIN_MARKERS):
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(300)
+    if not any(marker in content for marker in LOGIN_MARKERS):
+        return
+
+    close_script = """
+    () => {
+      const visible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden'
+          && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+      };
+      const overlays = Array.from(document.querySelectorAll(
+        '[role="dialog"], [class*="modal" i], [class*="login" i]'
+      )).filter(visible);
+      for (const overlay of overlays) {
+        const close = overlay.querySelector(
+          '[aria-label*="关闭"], [title*="关闭"], [class*="close" i]'
+        );
+        if (!close || !visible(close)) continue;
+        (close.closest('button, [role="button"]') || close).click();
+        return true;
+      }
+      return false;
+    }
+    """
+    try:
+        closed = bool(await page.evaluate(close_script))
+    except Exception:
+        closed = False
+    if not closed:
+        with contextlib.suppress(Exception):
+            await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+
+
+async def _get_or_create_screening_page(context) -> Page:
+    """Reuse one marked tab so a screening job does not accumulate XHS tabs."""
+    for existing_page in context.pages:
+        try:
+            if await existing_page.evaluate("window.name") == SCREENING_PAGE_NAME:
+                return existing_page
+        except Exception:
+            continue
+    page = await context.new_page()
+    await page.evaluate(f"window.name = {json.dumps(SCREENING_PAGE_NAME)}")
+    return page
 
 
 def extract_profile_ip(text: str) -> str:
@@ -109,7 +159,7 @@ async def capture_profile_with_browser(profile_url: str, output_dir: Path, cdp_e
                     return ProfileSnapshot(profile_url=profile_url, status="异常", error="浏览器启动超时")
                 browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = await context.new_page()
+            page = await _get_or_create_screening_page(context)
             return await capture_visible_profile(page, profile_url, output_dir)
     except Exception as exc:
         return ProfileSnapshot(profile_url=profile_url, status="异常", error=f"浏览器连接失败：{type(exc).__name__}")
