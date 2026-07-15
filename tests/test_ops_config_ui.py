@@ -155,9 +155,9 @@ def test_sample_account_file_import_controls_are_present():
     assert "importSampleAccountsFile()" in html
     assert "/api/crawler/import-sample-accounts" in html
     assert "mergeSampleAccounts" in html
-    assert 'id="account_monitor_mode"' in html
-    assert "无蒲公英后台：公开数据 13 列" in html
-    assert "有蒲公英后台：含后台指标 68 列" in html
+    assert 'id="account_monitor_mode"' not in html
+    assert "蒲公英“找博主”判断该达人是否开通蒲公英主页" in html
+    assert 'account_monitor_mode: "auto"' in html
     assert "/api/crawler/account-monitor/start" in html
     assert "downloadAccountMonitorTemplate()" in html
     assert "账号内容监测_主页链接模板.csv" in html

@@ -1337,6 +1337,8 @@ def _account_content_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("小红书号"),
         _text_field("主页链接"),
         _text_field("蒲公英主页链接"),
+        _text_field("蒲公英主页状态"),
+        _text_field("蒲公英查询依据"),
         _datetime_field("发布笔记倒序（发布时间由近及远）"),
         _text_field("笔记链接"),
         _text_field("笔记标题"),
@@ -1510,7 +1512,9 @@ def _account_monitor_public_row(source: Dict[str, Any]) -> Dict[str, Any]:
     return dict(zip(fields, _row_to_table_values(source, fields, "notes")))
 
 
-def _account_monitor_pgy_row(source: Dict[str, Any], summary: Dict[str, Any] | None) -> Dict[str, Any]:
+def _account_monitor_pgy_row(
+    source: Dict[str, Any], summary: Dict[str, Any] | None, lookup: Dict[str, str] | None = None
+) -> Dict[str, Any]:
     """Combine one public note with account-level Pugongying metrics.
 
     Pugongying exposes creator metrics, while the public crawler exposes the
@@ -1538,6 +1542,9 @@ def _account_monitor_pgy_row(source: Dict[str, Any], summary: Dict[str, Any] | N
     if summary:
         result["蒲公英主页链接"] = summary.get("url") or result.get("蒲公英主页链接", "")
         result["小红书号"] = summary.get("red_id") or result.get("小红书号", "")
+    if lookup:
+        result["蒲公英主页状态"] = lookup.get("status") or "待人工确认"
+        result["蒲公英查询依据"] = lookup.get("evidence") or ""
     return result
 
 
@@ -1559,7 +1566,7 @@ def _account_monitor_creator_name(row: Dict[str, Any]) -> str:
 def _write_account_monitor_report(rows: List[Dict[str, Any]], report_mode: str, job_id: str) -> Path:
     fields = (
         [field["name"] for field in _account_content_monitor_fields()]
-        if report_mode == "pgy"
+        if report_mode in {"pgy", "auto"}
         else _account_content_monitor_public_field_names()
     )
     # The workbook is an implementation detail used for Base synchronization;
@@ -1567,7 +1574,7 @@ def _write_account_monitor_report(rows: List[Dict[str, Any]], report_mode: str, 
     report_root = temp_dir() / "account_monitor"
     report_root.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix = "含蒲公英" if report_mode == "pgy" else "公开数据"
+    suffix = "蒲公英自动判断" if report_mode == "auto" else ("含蒲公英" if report_mode == "pgy" else "公开数据")
     output_path = report_root / f"账号内容监测_{suffix}_{timestamp}_{job_id[:8]}.xlsx"
     try:
         import pandas as pd  # type: ignore
@@ -1590,8 +1597,9 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             raise RuntimeError("抓取完成但没有可生成报表的笔记数据")
 
         summaries: Dict[str, Dict[str, Any]] = {}
+        pgy_lookups: Dict[str, Dict[str, str]] = {}
         pgy_errors: List[str] = []
-        if report_mode == "pgy":
+        if report_mode in {"pgy", "auto"}:
             creators: Dict[str, str] = {}
             for row in source_rows:
                 key = _account_monitor_creator_key(row)
@@ -1604,22 +1612,37 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             for index, (key, nickname) in enumerate(creators.items(), start=1):
                 job.update({"status": "enriching", "stage": f"正在补充蒲公英指标（{index}/{total}）：{nickname}"})
                 result = await _run_pgy_automation(
-                    ["run-kol", "--api-only", "--nickname", nickname, "--similar-detail-limit", "0"],
+                    ["run-kol", "--nickname", nickname, "--similar-detail-limit", "0"],
                     timeout_sec=240,
                 )
                 summary_path = ((result.get("outputs") or {}).get("summary") or "").strip()
+                if result.get("status") == "not_found":
+                    pgy_lookups[key] = {
+                        "status": "无蒲公英主页",
+                        "evidence": f"蒲公英“找博主”按昵称“{nickname}”查询：暂无结果",
+                    }
+                    continue
                 if result.get("status") == "error" or result.get("returncode") or not summary_path:
-                    pgy_errors.append(f"{nickname}: {str(result.get('error') or '未返回蒲公英数据')[:160]}")
+                    reason = str(result.get("error") or "未返回蒲公英数据")[:160]
+                    pgy_lookups[key] = {"status": "待人工确认", "evidence": f"蒲公英查询未完成：{reason}"}
+                    pgy_errors.append(f"{nickname}: {reason}")
                     continue
                 try:
                     summaries[key] = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+                    pgy_lookups[key] = {
+                        "status": "有蒲公英主页",
+                        "evidence": f"蒲公英“找博主”按昵称“{nickname}”查询到结果",
+                    }
                 except Exception as exc:
+                    pgy_lookups[key] = {"status": "待人工确认", "evidence": f"读取蒲公英查询结果失败：{exc}"}
                     pgy_errors.append(f"{nickname}: 读取蒲公英结果失败（{exc}）")
 
         job.update({"status": "exporting", "stage": "正在生成账号内容监测表"})
         report_rows = [
-            _account_monitor_pgy_row(row, summaries.get(_account_monitor_creator_key(row)))
-            if report_mode == "pgy"
+            _account_monitor_pgy_row(
+                row, summaries.get(_account_monitor_creator_key(row)), pgy_lookups.get(_account_monitor_creator_key(row))
+            )
+            if report_mode in {"pgy", "auto"}
             else _account_monitor_public_row(row)
             for row in source_rows
         ]
@@ -1643,6 +1666,9 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             "row_count": len(report_rows),
             "source_path": str(source_path),
             "pgy_errors": pgy_errors,
+            "pgy_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "有蒲公英主页"),
+            "pgy_not_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "无蒲公英主页"),
+            "pgy_review_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "待人工确认"),
             "sync_result": sync_result,
         })
     except Exception as exc:

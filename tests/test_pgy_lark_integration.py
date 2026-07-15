@@ -127,6 +127,12 @@ def test_pgy_detail_attempts_request_daily_and_business_note_metrics():
     assert attempts["business_core_data"][0][2]["business"] == "1"
 
 
+def test_pgy_no_result_uses_page_text_markers():
+    assert pgy_automation.has_no_kol_result("搜索完成，暂无结果")
+    assert pgy_automation.has_no_kol_result("暂未找到相关博主")
+    assert not pgy_automation.has_no_kol_result("已找到 3 位相关博主")
+
+
 def test_pgy_response_classifier_uses_business_request_parameter():
     class Request:
         post_data = '{"business":"1"}'

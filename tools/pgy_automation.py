@@ -542,6 +542,20 @@ def find_kol_from_api_records(records: list[dict], nickname: str, red_id: str = 
     return {}
 
 
+NO_KOL_RESULT_MARKERS = ("暂无结果", "暂未找到相关博主", "未找到相关博主")
+
+
+def has_no_kol_result(text: str) -> bool:
+    """Whether Pugongying explicitly says the nickname has no result.
+
+    This reads the page text collected by the existing browser flow; it is not
+    image/OCR recognition.  The API flow mirrors it by treating an empty kols
+    list as the same outcome.
+    """
+    normalized = "".join(str(text or "").split())
+    return any(marker in normalized for marker in NO_KOL_RESULT_MARKERS)
+
+
 def latest_similar_kols_from_records(records: list[dict], original_user_id: str) -> list[dict]:
     best: list[dict] = []
     for record in records:
@@ -1333,6 +1347,9 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
             _progress("API 模式：搜索达人", "api_search_creator")
             search_payload = first_successful_api_call(request, make_search_attempts(search_keyword), timeout_ms=20_000)
             candidates = extract_kols_from_payload(search_payload)
+            if not candidates:
+                _build_not_found_result(None, inputs["nickname"], target_red_id, "蒲公英接口返回空结果")
+                return True
             list_records = [{"data": {"data": {"kols": candidates}}}]
             kol = find_kol_from_api_records(list_records, inputs["nickname"], target_red_id)
             user_id = kol.get("userId")
@@ -1374,7 +1391,10 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
             _progress("API 模式：保存本地文件", "api_write_outputs")
             outputs = write_api_outputs(matched_name, user_id, detail_data, "", None)
             _progress("达人分析完成", "done")
-            _build_success_result(matched_name, red_id, target_red_id, None, {"api_mode": True, "keyword": search_keyword}, outputs, "")
+            _build_success_result(
+                matched_name, red_id, target_red_id, None,
+                {"api_mode": True, "keyword": search_keyword}, outputs, "",
+            )
             return True
         finally:
             request.dispose()
@@ -1389,6 +1409,19 @@ def _build_login_required_result(page: Page, nickname: str, red_id: str) -> dict
         "url": page.url if not page.is_closed() else "",
         "screenshot": save_screenshot(page, "run_kol_login_required.png"),
         "error": "蒲公英需要登录，请先运行 login 动作",
+    }
+    _json_line(result)
+    return result
+
+
+def _build_not_found_result(page: Optional[Page], nickname: str, red_id: str, evidence: str) -> dict:
+    result = {
+        "status": "not_found",
+        "clicked": True,
+        "nickname": nickname,
+        "red_id": red_id,
+        "url": page.url if page is not None and not page.is_closed() else PGY_KOL_NOTE_URL,
+        "evidence": evidence,
     }
     _json_line(result)
     return result
@@ -1466,6 +1499,10 @@ def action_run_kol(args: argparse.Namespace) -> None:
         _progress(f"搜索达人：{search_keyword}", "search_creator")
         input_meta = fill_nickname_keyword(page, search_keyword)
         page.wait_for_timeout(2500)
+        if has_no_kol_result(visible_text(page, limit=12000)):
+            _build_not_found_result(page, inputs["nickname"], target_red_id, "蒲公英页面显示暂无结果/未找到相关博主")
+            close_browser_session(session, keep_open=args.keep_open)
+            return
 
         _progress("读取搜索结果和相似博主推荐", "extract_search_result")
         kol_result = _extract_kol_data(list_records, inputs["nickname"], target_red_id, page)

@@ -552,7 +552,7 @@
         <div id="tab-step2" class="tab-pane">
           <section class="card">
       <h2>账号内容监测（近 20 篇笔记汇总）</h2>
-      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；支持小红书主页长链和短链，可选择公开数据版或含蒲公英后台指标版。</p>
+      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；支持小红书主页长链和短链，并自动在蒲公英“找博主”判断该达人是否开通蒲公英主页。</p>
       <div class="grid">
         <div class="row full">
           <label>导入样本账号文件（txt / csv / Excel）</label>
@@ -568,11 +568,8 @@
           <textarea id="sample_creator_ids" placeholder="每行一个小红书账号主页长链或短链"></textarea>
         </div>
         <div class="row">
-          <label>汇总模式</label>
-          <select id="account_monitor_mode">
-            <option value="public">无蒲公英后台：公开数据 13 列</option>
-            <option value="pgy">有蒲公英后台：含后台指标 68 列</option>
-          </select>
+          <label>蒲公英主页判断</label>
+          <p class="hint">自动按昵称查询。蒲公英明确显示“暂无结果”或“未找到相关博主”时，结果写入“无蒲公英主页”；查询异常则提示人工确认。</p>
         </div>
         <div class="row">
           <label>每个账号抓取篇数</label>
@@ -970,7 +967,7 @@
       cookies: "",
       sample_creator_ids: "",
       notes_per_creator: 20,
-      account_monitor_mode: "public",
+      account_monitor_mode: "auto",
       sentiment_note_links: "",
       sentiment_risk_groups: '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]',
       keywords: "",
@@ -1837,7 +1834,7 @@
         cookies: document.getElementById("cookies").value.trim(),
         sample_creator_ids: document.getElementById("sample_creator_ids").value.trim(),
         notes_per_creator: Number(document.getElementById("notes_per_creator").value || 20),
-        account_monitor_mode: document.getElementById("account_monitor_mode").value || "public",
+        account_monitor_mode: "auto",
         sentiment_note_links: document.getElementById("sentiment_note_links").value.trim(),
         sentiment_risk_groups: JSON.stringify(getSentimentRiskGroups()),
         keywords: document.getElementById("keywords").value.trim(),
@@ -2398,12 +2395,13 @@
         const res = await fetch(`/api/crawler/account-monitor/status?job_id=${encodeURIComponent(accountMonitorJobId)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "任务状态读取失败");
-        const modeLabel = data.report_mode === "pgy" ? "含蒲公英后台指标" : "公开数据";
+        const modeLabel = data.report_mode === "auto" ? "自动判断蒲公英主页" : (data.report_mode === "pgy" ? "含蒲公英后台指标" : "公开数据");
         setAccountMonitorStatus(`${modeLabel}：${data.stage || data.status}`);
         if (data.status === "completed") {
           stopAccountMonitorPolling();
           const sync = data.sync_result || {};
           if ((data.pgy_errors || []).length) log(`蒲公英补充完成，但有 ${data.pgy_errors.length} 个账号未获取到后台数据：${data.pgy_errors.join("；")}`);
+          log(`蒲公英主页判断：有主页 ${data.pgy_found_count || 0} 个，无主页 ${data.pgy_not_found_count || 0} 个，待人工确认 ${data.pgy_review_count || 0} 个。`);
           if (sync.status === "ok") {
             setAccountMonitorStatus(`已同步 ${data.row_count || 0} 条记录至账号内容监测表（新增 ${sync.created || 0}，更新 ${sync.updated || 0}）`);
           } else {

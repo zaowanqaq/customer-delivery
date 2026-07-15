@@ -102,7 +102,10 @@ class SampleCreatorStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
-    report_mode: Literal["public", "pgy"] = "public"
+    # ``auto`` is the customer-facing default: first collect public notes,
+    # then check the creator in Pugongying's "find creator" result.
+    # Keep the two legacy values accepted for existing API callers.
+    report_mode: Literal["auto", "public", "pgy"] = "auto"
     base_token: str = ""
     table_id: str = ""
 

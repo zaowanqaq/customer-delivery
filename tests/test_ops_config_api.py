@@ -53,9 +53,9 @@ def test_scenario_setup_fields_match_customer_template():
         "内容类目（标签）", "合作行业",
     ]
     assert "合作笔记图文3秒阅读率" in creator_fields
-    assert account_fields[:10] == [
-        "达人昵称", "小红书号", "主页链接", "蒲公英主页链接", "发布笔记倒序（发布时间由近及远）",
-        "笔记链接", "笔记标题", "笔记内容", "笔记封面", "笔记tag",
+    assert account_fields[:12] == [
+        "达人昵称", "小红书号", "主页链接", "蒲公英主页链接", "蒲公英主页状态", "蒲公英查询依据",
+        "发布笔记倒序（发布时间由近及远）", "笔记链接", "笔记标题", "笔记内容", "笔记封面", "笔记tag",
     ]
     assert note_fields == [
         "序号", "达人昵称", "小红书id", "发布笔记链接", "发布时间", "笔记tag", "笔记标题", "点赞", "收藏",
@@ -108,6 +108,12 @@ def test_account_monitor_report_rows_keep_public_and_pgy_fields_separate():
     assert pgy_row["粉丝数"] == 1234
     assert pgy_row["日常笔记曝光中位数"] == 88
     assert pgy_row["点赞"] == 10
+
+    no_pgy_row = crawler._account_monitor_pgy_row(source, None, {
+        "status": "无蒲公英主页", "evidence": "蒲公英“找博主”按昵称查询：暂无结果",
+    })
+    assert no_pgy_row["蒲公英主页状态"] == "无蒲公英主页"
+    assert "暂无结果" in no_pgy_row["蒲公英查询依据"]
 
 
 def test_account_monitor_report_writes_selected_layout(monkeypatch, tmp_path):
