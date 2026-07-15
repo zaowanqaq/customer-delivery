@@ -204,13 +204,39 @@ class CrawlerManager:
 
     def get_status(self) -> dict:
         """Get current status"""
+        login_message = self._latest_login_issue()
         return {
             "status": self.status,
             "platform": self.current_config.platform.value if self.current_config else None,
             "crawler_type": self.current_config.crawler_type.value if self.current_config else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
-            "error_message": None
+            "error_message": login_message,
+            "login_required": bool(login_message),
+            "login_platform": "xhs" if login_message else None,
+            "login_message": login_message,
         }
+
+    def _latest_login_issue(self) -> Optional[str]:
+        """Return a customer-facing XHS login issue derived from recent process output."""
+        if not self.current_config or self.current_config.platform.value != "xhs":
+            return None
+
+        issue_terms = (
+            "登录态不一致",
+            "web_session expired",
+            "api login state invalid",
+            "please manually refresh the browser page and re-login",
+        )
+        for entry in reversed(self._logs[-80:]):
+            message = str(entry.message or "")
+            lowered = message.lower()
+            if any(term in lowered for term in issue_terms):
+                return "小红书登录已失效，请重新登录并读取 Cookie 后再启动抓取"
+            if entry.level == "error" and "预检失败" in message and any(
+                term in lowered for term in ("pong", "auth", "login", "web_session")
+            ):
+                return "小红书登录已失效，请重新登录并读取 Cookie 后再启动抓取"
+        return None
 
     def _build_command(self, config: CrawlerStartRequest) -> list:
         """Build main.py command line arguments"""

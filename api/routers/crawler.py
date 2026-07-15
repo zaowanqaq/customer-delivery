@@ -231,6 +231,17 @@ async def _run_pgy_automation(args: List[str], timeout_sec: int = 240) -> Dict[s
     return payload
 
 
+def _pgy_login_required(result: Dict[str, Any]) -> bool:
+    """Normalize the different login-expired responses emitted by PGY automation."""
+    if result.get("status") == "login_required":
+        return True
+    message = " ".join(
+        str(result.get(key) or "")
+        for key in ("error", "stderr")
+    ).lower()
+    return any(term in message for term in ("需要登录", "未登录", "登录态", "login_required", "login 动作"))
+
+
 def _rule_is_enabled(value) -> bool:
     if value is None:
         return False
@@ -1599,6 +1610,7 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
         summaries: Dict[str, Dict[str, Any]] = {}
         pgy_lookups: Dict[str, Dict[str, str]] = {}
         pgy_errors: List[str] = []
+        pgy_login_accounts: List[str] = []
         if report_mode in {"pgy", "auto"}:
             creators: Dict[str, str] = {}
             for row in source_rows:
@@ -1608,8 +1620,9 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                     creators.setdefault(key, name)
             if not creators:
                 raise RuntimeError("公开笔记数据中未识别到达人昵称，无法匹配蒲公英数据")
-            total = len(creators)
-            for index, (key, nickname) in enumerate(creators.items(), start=1):
+            creator_items = list(creators.items())
+            total = len(creator_items)
+            for index, (key, nickname) in enumerate(creator_items, start=1):
                 job.update({"status": "enriching", "stage": f"正在补充蒲公英指标（{index}/{total}）：{nickname}"})
                 result = await _run_pgy_automation(
                     ["run-kol", "--nickname", nickname, "--similar-detail-limit", "0"],
@@ -1626,6 +1639,24 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                     reason = str(result.get("error") or "未返回蒲公英数据")[:160]
                     pgy_lookups[key] = {"status": "待人工确认", "evidence": f"蒲公英查询未完成：{reason}"}
                     pgy_errors.append(f"{nickname}: {reason}")
+                    if _pgy_login_required(result):
+                        remaining_creators = creator_items[index:]
+                        pgy_login_accounts = [nickname, *(name for _, name in remaining_creators)]
+                        for remaining_key, remaining_name in remaining_creators:
+                            pending_reason = "蒲公英需要登录，待登录后重新判断"
+                            pgy_lookups[remaining_key] = {
+                                "status": "待人工确认",
+                                "evidence": pending_reason,
+                            }
+                            pgy_errors.append(f"{remaining_name}: {pending_reason}")
+                        job.update({
+                            "stage": "蒲公英需要登录，请登录后重新判断",
+                            "pgy_login_required": True,
+                            "pgy_login_accounts": pgy_login_accounts,
+                            "pgy_errors": pgy_errors,
+                            "pgy_review_count": len(pgy_login_accounts),
+                        })
+                        break
                     continue
                 try:
                     summaries[key] = json.loads(Path(summary_path).read_text(encoding="utf-8"))
@@ -1666,6 +1697,8 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             "row_count": len(report_rows),
             "source_path": str(source_path),
             "pgy_errors": pgy_errors,
+            "pgy_login_required": bool(pgy_login_accounts),
+            "pgy_login_accounts": pgy_login_accounts,
             "pgy_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "有蒲公英主页"),
             "pgy_not_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "无蒲公英主页"),
             "pgy_review_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "待人工确认"),
@@ -3029,6 +3062,8 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         "row_count": 0,
         "report_path": "",
         "pgy_errors": [],
+        "pgy_login_required": False,
+        "pgy_login_accounts": [],
         "error": "",
         "started_at": datetime.now().isoformat(),
     }

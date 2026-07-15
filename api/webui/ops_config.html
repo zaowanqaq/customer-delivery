@@ -233,6 +233,13 @@
     .note-modal-content h2 { margin: 0 0 10px; font-size: 22px; line-height: 1.35; }
     .note-modal-content p { color: #514840; line-height: 1.7; white-space: pre-wrap; }
     .note-modal-close { position: absolute; top: 14px; right: 14px; width: 38px; height: 38px; padding: 0; border-radius: 999px; font-size: 20px; z-index: 2; }
+    .workflow-alert { position: fixed; inset: 0; z-index: 140; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(20,16,13,.56); }
+    .workflow-alert.open { display: flex; }
+    .workflow-alert-panel { width: min(560px, 100%); padding: 26px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 28px 70px rgba(0,0,0,.28); }
+    .workflow-alert-kicker { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+    .workflow-alert-panel h2 { margin: 8px 0 10px; font-size: 22px; }
+    .workflow-alert-panel p { margin: 0; color: #514840; line-height: 1.7; white-space: pre-wrap; }
+    .workflow-alert-details { margin: 14px 0 0; padding: 12px 14px; max-height: 180px; overflow: auto; color: #514840; background: rgba(123,86,64,.07); border-radius: 6px; line-height: 1.65; white-space: pre-wrap; }
     .note-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
     .note-detail-item { border: 1px solid #eadfd4; border-radius: 8px; padding: 10px; background: #fff8f0; }
     .note-detail-item span { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
@@ -577,7 +584,7 @@
         </div>
       </div>
       <div class="btns">
-        <button class="primary" onclick="startSampleCreators()">生成账号内容监测表</button>
+        <button id="account_monitor_start_btn" class="primary" onclick="startSampleCreators()">开始监测并判断账号状态</button>
       </div>
       <div id="account_monitor_status" class="creator-screening-status">等待导入样本账号</div>
     </section>
@@ -701,7 +708,7 @@
       <input id="xhs_search_scope" class="v1-hidden" value="不限">
       <input id="xhs_location" class="v1-hidden" value="不限">
       <div class="btns">
-        <button class="primary" onclick="startCrawler()">启动爆款抓取</button>
+        <button id="viral_crawler_start_btn" class="primary" onclick="startCrawler()">开始小红书爆款抓取</button>
       </div>
     </section>
           <section class="card notes-panel">
@@ -887,6 +894,19 @@
     </div>
   </div>
 
+  <div id="workflow_alert" class="workflow-alert" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="workflow_alert_title">
+    <div class="workflow-alert-panel">
+      <div id="workflow_alert_kicker" class="workflow-alert-kicker">需要处理</div>
+      <h2 id="workflow_alert_title">登录提示</h2>
+      <p id="workflow_alert_message"></p>
+      <div id="workflow_alert_details" class="workflow-alert-details v1-hidden"></div>
+      <div class="btns">
+        <button id="workflow_alert_action" class="primary" type="button">去处理</button>
+        <button class="ghost" type="button" onclick="closeWorkflowAlert()">稍后处理</button>
+      </div>
+    </div>
+  </div>
+
 
   <script>
     const API_ORIGIN = window.location.protocol === "file:" ? "http://127.0.0.1:8081" : "";
@@ -907,6 +927,9 @@
     let notesSearchTimer = null;
     let currentGallery = [];
     let currentGalleryIndex = 0;
+    let workflowAlertAction = null;
+    let xhsLoginPromptFingerprint = "";
+    let pgyLoginPromptFingerprint = "";
     const AUTO_SYNC_POLL_INTERVAL_MS = 2000;
     const AUTO_SYNC_MAX_WAIT_MS = 45 * 60 * 1000;
     const autoSyncTimers = {};
@@ -1476,6 +1499,22 @@
         const recent = logs.slice(-25);
         logsEl.textContent = recent.map((x) => `[${x.timestamp}] [${x.level}] ${x.message}`).join("\n");
         logsEl.scrollTop = logsEl.scrollHeight;
+        if (statusData.crawler_type === "search") {
+          const viralBtn = document.getElementById("viral_crawler_start_btn");
+          if (viralBtn) {
+            viralBtn.disabled = status === "running";
+            viralBtn.textContent = status === "running"
+              ? "爆款抓取中，请稍候…"
+              : (statusData.login_required ? "登录后重试小红书爆款抓取" : "重新抓取小红书爆款");
+          }
+          if (statusData.login_required) {
+            const fingerprint = String(statusData.login_message || "xhs-login-required");
+            if (fingerprint !== xhsLoginPromptFingerprint) {
+              xhsLoginPromptFingerprint = fingerprint;
+              showXhsLoginPrompt(statusData.login_message);
+            }
+          }
+        }
       } catch (e) {
         logsEl.textContent = `监控刷新失败: ${e.message || e}`;
       }
@@ -2174,6 +2213,53 @@
       }
     }
 
+    function closeWorkflowAlert() {
+      const modal = document.getElementById("workflow_alert");
+      if (!modal) return;
+      modal.classList.remove("open");
+      modal.setAttribute("aria-hidden", "true");
+      workflowAlertAction = null;
+    }
+
+    function showWorkflowAlert({ tabId, kicker = "需要处理", title, message, details = [], actionLabel, onAction }) {
+      if (tabId) activateTabById(tabId);
+      setText("workflow_alert_kicker", kicker);
+      setText("workflow_alert_title", title || "操作提示");
+      setText("workflow_alert_message", message || "");
+      const detailsEl = document.getElementById("workflow_alert_details");
+      const detailLines = (Array.isArray(details) ? details : []).filter(Boolean);
+      if (detailsEl) {
+        detailsEl.textContent = detailLines.join("\n");
+        detailsEl.classList.toggle("v1-hidden", !detailLines.length);
+      }
+      const actionBtn = document.getElementById("workflow_alert_action");
+      workflowAlertAction = typeof onAction === "function" ? onAction : null;
+      if (actionBtn) {
+        actionBtn.textContent = actionLabel || "知道了";
+        actionBtn.onclick = async () => {
+          const action = workflowAlertAction;
+          closeWorkflowAlert();
+          if (action) await action();
+        };
+      }
+      const modal = document.getElementById("workflow_alert");
+      if (modal) {
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+      }
+    }
+
+    function showXhsLoginPrompt(message) {
+      showWorkflowAlert({
+        tabId: "tab-step3",
+        kicker: "小红书账号状态",
+        title: "需要重新登录小红书",
+        message: message || "当前小红书登录未配置或已失效。请先打开登录浏览器，登录完成后读取 Cookie，再重新启动爆款抓取。",
+        actionLabel: "打开小红书登录浏览器",
+        onAction: openXhsLoginBrowser
+      });
+    }
+
     let noteRecreationCases = [];
 
     function isSafeRemoteUrl(value) {
@@ -2384,6 +2470,21 @@
       document.getElementById("account_monitor_status").textContent = message;
     }
 
+    function setAccountMonitorButton(state, stage = "") {
+      const button = document.getElementById("account_monitor_start_btn");
+      if (!button) return;
+      const labels = {
+        running: stage || "账号监测中，请稍候…",
+        login_required_pending: "请先完成蒲公英登录…",
+        login_required: "登录后重新判断蒲公英",
+        completed: "重新监测并判断账号状态",
+        error: "重试账号内容监测",
+        idle: "开始监测并判断账号状态"
+      };
+      button.textContent = labels[state] || labels.idle;
+      button.disabled = state === "running" || state === "login_required_pending";
+    }
+
     function stopAccountMonitorPolling() {
       if (accountMonitorTimer) clearInterval(accountMonitorTimer);
       accountMonitorTimer = null;
@@ -2397,6 +2498,24 @@
         if (!res.ok) throw new Error(data.detail || "任务状态读取失败");
         const modeLabel = data.report_mode === "auto" ? "自动判断蒲公英主页" : (data.report_mode === "pgy" ? "含蒲公英后台指标" : "公开数据");
         setAccountMonitorStatus(`${modeLabel}：${data.stage || data.status}`);
+        setAccountMonitorButton("running", data.stage ? `${data.stage}…` : "账号监测中，请稍候…");
+        const pgyLoginAccounts = Array.isArray(data.pgy_login_accounts) ? data.pgy_login_accounts : [];
+        if (data.pgy_login_required) {
+          const fingerprint = pgyLoginAccounts.join("|") || "pgy-login-required";
+          setAccountMonitorButton(data.status === "completed" ? "login_required" : "login_required_pending");
+          if (fingerprint !== pgyLoginPromptFingerprint) {
+            pgyLoginPromptFingerprint = fingerprint;
+            showWorkflowAlert({
+              tabId: "tab-step2",
+              kicker: "蒲公英账号状态",
+              title: "需要登录蒲公英",
+              message: `有 ${pgyLoginAccounts.length || data.pgy_review_count || 0} 个账号尚未完成蒲公英主页判断。请登录蒲公英，任务结束后重新执行账号内容监测。`,
+              details: pgyLoginAccounts.map((name) => `待重新判断：${name}`),
+              actionLabel: "打开蒲公英登录窗口",
+              onAction: pgyLogin
+            });
+          }
+        }
         if (data.status === "completed") {
           stopAccountMonitorPolling();
           const sync = data.sync_result || {};
@@ -2407,14 +2526,21 @@
           } else {
             setAccountMonitorStatus(`已生成 ${data.row_count || 0} 条记录；请先在项目大盘绑定账号内容监测表`);
           }
+          if (!data.pgy_login_required) {
+            setAccountMonitorButton("completed");
+          } else {
+            setAccountMonitorButton("login_required");
+          }
         } else if (data.status === "error") {
           stopAccountMonitorPolling();
           setAccountMonitorStatus("生成失败：" + (data.error || "未知错误"));
+          setAccountMonitorButton("error");
           log("账号内容监测生成失败: " + (data.error || "未知错误"));
         }
       } catch (e) {
         stopAccountMonitorPolling();
         setAccountMonitorStatus("任务状态读取失败");
+        setAccountMonitorButton("error");
         log("账号内容监测状态读取失败: " + (e.message || e));
       }
     }
@@ -2424,41 +2550,51 @@
       const payload = resolveProjectPayload(getFormData());
       if (!payload.sample_creator_ids) {
         log("请先填写样本账号主页链接");
+        setAccountMonitorStatus("请先导入或填写样本账号主页链接");
         return;
       }
-      await saveConfig();
-      const body = {
-        platform: "xhs",
-        login_type: payload.login_type,
-        creator_ids: payload.sample_creator_ids,
-        notes_per_creator: 20,
-        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
-        enable_comments: payload.enable_comments,
-        enable_sub_comments: payload.enable_sub_comments,
-        enable_media: payload.enable_media,
-        save_option: payload.save_option,
-        cookies: payload.cookies,
-        headless: payload.headless,
-        report_mode: payload.account_monitor_mode,
-        base_token: payload.sync_base_token,
-        table_id: payload.account_filter_table_id
-      };
-      const res = await fetch("/api/crawler/account-monitor/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      const result = await res.json();
-      log("账号内容监测启动结果: " + JSON.stringify(result));
-      if (res.ok && result.status === "ok") {
-        accountMonitorJobId = result.job_id;
-        setAccountMonitorStatus("任务已启动：正在解析主页链接并抓取账号最近 20 篇笔记");
-        startProgressMonitor();
-        stopAccountMonitorPolling();
-        accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);
-        await refreshAccountMonitorJob();
-      } else {
-        setAccountMonitorStatus("启动失败：" + (result.detail || "未知错误"));
+      setAccountMonitorButton("running", "正在启动账号监测…");
+      pgyLoginPromptFingerprint = "";
+      try {
+        await saveConfig();
+        const body = {
+          platform: "xhs",
+          login_type: payload.login_type,
+          creator_ids: payload.sample_creator_ids,
+          notes_per_creator: 20,
+          max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+          enable_comments: payload.enable_comments,
+          enable_sub_comments: payload.enable_sub_comments,
+          enable_media: payload.enable_media,
+          save_option: payload.save_option,
+          cookies: payload.cookies,
+          headless: payload.headless,
+          report_mode: payload.account_monitor_mode,
+          base_token: payload.sync_base_token,
+          table_id: payload.account_filter_table_id
+        };
+        const res = await fetch("/api/crawler/account-monitor/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const result = await res.json();
+        log("账号内容监测启动结果: " + JSON.stringify(result));
+        if (res.ok && result.status === "ok") {
+          accountMonitorJobId = result.job_id;
+          setAccountMonitorStatus("任务已启动：正在解析主页链接并抓取账号最近 20 篇笔记");
+          startProgressMonitor();
+          stopAccountMonitorPolling();
+          accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);
+          await refreshAccountMonitorJob();
+        } else {
+          throw new Error(result.detail || "未知错误");
+        }
+      } catch (e) {
+        const message = e.message || String(e);
+        setAccountMonitorStatus("启动失败：" + message);
+        setAccountMonitorButton("error");
+        log("账号内容监测启动失败: " + message);
       }
     }
 
@@ -3018,40 +3154,58 @@
         log("请先填写关键词");
         return;
       }
-      await saveConfig();
-      const body = {
-        platform: "xhs",
-        crawler_type: "search",
-        login_type: payload.login_type,
-        keywords: payload.keywords,
-        start_page: payload.start_page,
-        max_notes_count: payload.max_notes_count,
-        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
-        enable_comments: payload.enable_comments,
-        enable_sub_comments: payload.enable_sub_comments,
-        enable_media: payload.enable_media,
-        save_option: payload.save_option,
-        cookies: payload.cookies,
-        headless: payload.headless,
-        xhs_sort_by: payload.xhs_sort_by,
-        xhs_note_type: payload.xhs_note_type,
-        xhs_publish_time: payload.xhs_publish_time,
-        xhs_search_scope: payload.xhs_search_scope,
-        xhs_location: payload.xhs_location
-      };
-      const res = await fetch("/api/crawler/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      const result = await res.json();
-      log("爆款抓取启动结果: " + JSON.stringify(result));
-      if (res.ok && result.status === "ok") {
+      if (!String(payload.cookies || "").trim()) {
+        showXhsLoginPrompt("当前没有可用的小红书 Cookie。请先登录小红书并读取 Cookie，再启动爆款抓取。");
+        return;
+      }
+      xhsLoginPromptFingerprint = "";
+      const viralBtn = document.getElementById("viral_crawler_start_btn");
+      if (viralBtn) {
+        viralBtn.disabled = true;
+        viralBtn.textContent = "正在启动爆款抓取…";
+      }
+      try {
+        await saveConfig();
+        const body = {
+          platform: "xhs",
+          crawler_type: "search",
+          login_type: payload.login_type,
+          keywords: payload.keywords,
+          start_page: payload.start_page,
+          max_notes_count: payload.max_notes_count,
+          max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+          enable_comments: payload.enable_comments,
+          enable_sub_comments: payload.enable_sub_comments,
+          enable_media: payload.enable_media,
+          save_option: payload.save_option,
+          cookies: payload.cookies,
+          headless: payload.headless,
+          xhs_sort_by: payload.xhs_sort_by,
+          xhs_note_type: payload.xhs_note_type,
+          xhs_publish_time: payload.xhs_publish_time,
+          xhs_search_scope: payload.xhs_search_scope,
+          xhs_location: payload.xhs_location
+        };
+        const res = await fetch("/api/crawler/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const result = await res.json();
+        log("爆款抓取启动结果: " + JSON.stringify(result));
+        if (!res.ok || result.status !== "ok") throw new Error(result.detail || "未知错误");
         startProgressMonitor();
         startNotesAutoRefresh();
         waitCrawlerIdleThenAutoSync("viral");
         waitCrawlerIdleThenAutoSync("recreation");
         waitCrawlerIdleThenAutoSync("comments");
+      } catch (e) {
+        const message = e.message || String(e);
+        if (viralBtn) {
+          viralBtn.disabled = false;
+          viralBtn.textContent = "重试小红书爆款抓取";
+        }
+        log("爆款抓取启动失败: " + message);
       }
     }
 
@@ -3295,7 +3449,9 @@
       document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
       const targetPane = document.getElementById(targetId);
       if (targetPane) targetPane.classList.add('active');
-      if (headerText) document.getElementById('page_header').textContent = headerText;
+      const activeNav = document.querySelector(`.nav-item[data-tab="${targetId}"]`);
+      const resolvedHeader = headerText || (activeNav ? activeNav.textContent.trim() : "");
+      if (resolvedHeader) document.getElementById('page_header').textContent = resolvedHeader;
       if (targetId === "tab-step3") {
         startNotesAutoRefresh();
       } else {
@@ -3311,6 +3467,12 @@
         activateTabById(this.getAttribute('data-tab'), this.textContent.trim());
       });
     });
+    const workflowAlert = document.getElementById("workflow_alert");
+    if (workflowAlert) {
+      workflowAlert.addEventListener("click", (event) => {
+        if (event.target === workflowAlert) closeWorkflowAlert();
+      });
+    }
 
   </script>
 </body>

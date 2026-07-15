@@ -116,6 +116,57 @@ def test_account_monitor_report_rows_keep_public_and_pgy_fields_separate():
     assert "暂无结果" in no_pgy_row["蒲公英查询依据"]
 
 
+def test_pgy_login_required_normalizes_automation_errors():
+    assert crawler._pgy_login_required({
+        "status": "error",
+        "error": "蒲公英需要登录，请先运行 login 动作",
+        "returncode": 1,
+    }) is True
+    assert crawler._pgy_login_required({"status": "not_found"}) is False
+
+
+@pytest.mark.asyncio
+async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(monkeypatch, tmp_path):
+    job_id = "pgy_login_required_job"
+    calls = []
+
+    async def fake_wait_crawler_idle(timeout_sec):
+        return True
+
+    async def fake_run_pgy(args, timeout_sec):
+        calls.append(args[2])
+        return {
+            "status": "login_required",
+            "error": "蒲公英需要登录，请先运行 login 动作",
+            "returncode": 0,
+        }
+
+    source_rows = [
+        {"author_user_id": "creator_a", "author_nickname": "达人A"},
+        {"author_user_id": "creator_b", "author_nickname": "达人B"},
+        {"author_user_id": "creator_c", "author_nickname": "达人C"},
+    ]
+    monkeypatch.setattr(crawler, "_wait_crawler_idle", fake_wait_crawler_idle)
+    monkeypatch.setattr(crawler, "_latest_local_file", lambda *_: tmp_path / "source.jsonl")
+    monkeypatch.setattr(crawler, "_read_local_rows", lambda *_: source_rows)
+    monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run_pgy)
+    monkeypatch.setattr(crawler, "_write_account_monitor_report", lambda *_: tmp_path / "report.xlsx")
+    crawler.account_monitor_jobs[job_id] = {"job_id": job_id}
+
+    try:
+        await crawler._build_account_monitor_report(job_id, "auto")
+        job = crawler.account_monitor_jobs[job_id]
+
+        assert calls == ["达人A"]
+        assert job["status"] == "completed"
+        assert job["pgy_login_required"] is True
+        assert job["pgy_login_accounts"] == ["达人A", "达人B", "达人C"]
+        assert job["pgy_review_count"] == 3
+        assert len(job["pgy_errors"]) == 3
+    finally:
+        crawler.account_monitor_jobs.pop(job_id, None)
+
+
 def test_account_monitor_report_writes_selected_layout(monkeypatch, tmp_path):
     monkeypatch.setattr(crawler, "temp_dir", lambda: tmp_path)
 

@@ -34,6 +34,32 @@ def test_build_command_uses_posix_virtualenv_python(monkeypatch, tmp_path):
     assert cmd[:2] == [str(posix_python), "main.py"]
 
 
+def test_crawler_status_surfaces_xhs_login_issue():
+    manager = CrawlerManager()
+    manager.current_config = CrawlerStartRequest(platform="xhs", crawler_type="search")
+    manager._create_log_entry(
+        "DataFetchError: 登录态不一致：页面显示已登录但接口鉴权失败。请手动刷新浏览器并重新登录。",
+        "error",
+    )
+
+    status = manager.get_status()
+
+    assert status["login_required"] is True
+    assert status["login_platform"] == "xhs"
+    assert "重新登录" in status["login_message"]
+
+
+def test_crawler_status_does_not_treat_general_preflight_failure_as_login_issue():
+    manager = CrawlerManager()
+    manager.current_config = CrawlerStartRequest(platform="xhs", crawler_type="search")
+    manager._create_log_entry("DataFetchError: 预检失败，任务中止: search request rate limited", "error")
+
+    status = manager.get_status()
+
+    assert status["login_required"] is False
+    assert status["login_message"] is None
+
+
 def test_requirements_matches_runtime_dependencies(project_root_path):
     requirements = (project_root_path / "requirements.txt").read_text(encoding="utf-8").splitlines()
     normalized = {line.strip().lower() for line in requirements if line.strip() and not line.startswith("#")}

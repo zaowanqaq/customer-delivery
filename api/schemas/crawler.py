@@ -254,6 +254,9 @@ class CrawlerStatusResponse(BaseModel):
     crawler_type: Optional[str] = None
     started_at: Optional[str] = None
     error_message: Optional[str] = None
+    login_required: bool = False
+    login_platform: Optional[str] = None
+    login_message: Optional[str] = None
 
 
 class LogEntry(BaseModel):
