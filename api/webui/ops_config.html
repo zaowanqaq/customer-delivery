@@ -584,7 +584,7 @@
         </div>
       </div>
       <div class="btns">
-        <button id="account_monitor_start_btn" class="primary" onclick="startSampleCreators()">开始监测并判断账号状态</button>
+        <button id="account_monitor_start_btn" class="primary" onclick="handleAccountMonitorAction()">开始监测并判断账号状态</button>
       </div>
       <div id="account_monitor_status" class="creator-screening-status">等待导入样本账号</div>
     </section>
@@ -2476,13 +2476,14 @@
       const labels = {
         running: stage || "账号监测中，请稍候…",
         login_required_pending: "请先完成蒲公英登录…",
-        login_required: "登录后重新判断蒲公英",
+        login_required: "从蒲公英断点继续",
         completed: "重新监测并判断账号状态",
         error: "重试账号内容监测",
         idle: "开始监测并判断账号状态"
       };
       button.textContent = labels[state] || labels.idle;
       button.disabled = state === "running" || state === "login_required_pending";
+      button.dataset.action = state === "login_required" ? "resume-pgy" : "start";
     }
 
     function stopAccountMonitorPolling() {
@@ -2509,7 +2510,7 @@
               tabId: "tab-step2",
               kicker: "蒲公英账号状态",
               title: "需要登录蒲公英",
-              message: `有 ${pgyLoginAccounts.length || data.pgy_review_count || 0} 个账号尚未完成蒲公英主页判断。请登录蒲公英，任务结束后重新执行账号内容监测。`,
+              message: `有 ${pgyLoginAccounts.length || data.pgy_review_count || 0} 个账号尚未完成蒲公英主页判断。请登录蒲公英，完成后点击“从蒲公英断点继续”；不会重复抓取小红书。`,
               details: pgyLoginAccounts.map((name) => `待重新判断：${name}`),
               actionLabel: "打开蒲公英登录窗口",
               onAction: pgyLogin
@@ -2534,7 +2535,7 @@
         } else if (data.status === "error") {
           stopAccountMonitorPolling();
           setAccountMonitorStatus("生成失败：" + (data.error || "未知错误"));
-          setAccountMonitorButton("error");
+          setAccountMonitorButton(data.pgy_login_required ? "login_required" : "error");
           log("账号内容监测生成失败: " + (data.error || "未知错误"));
         }
       } catch (e) {
@@ -2542,6 +2543,42 @@
         setAccountMonitorStatus("任务状态读取失败");
         setAccountMonitorButton("error");
         log("账号内容监测状态读取失败: " + (e.message || e));
+      }
+    }
+
+    async function handleAccountMonitorAction() {
+      const button = document.getElementById("account_monitor_start_btn");
+      if (button && button.dataset.action === "resume-pgy" && accountMonitorJobId) {
+        await resumeAccountMonitorPgy();
+        return;
+      }
+      await startSampleCreators();
+    }
+
+    async function resumeAccountMonitorPgy() {
+      if (!accountMonitorJobId) {
+        setAccountMonitorStatus("蒲公英断点已丢失，请重新执行账号内容监测");
+        setAccountMonitorButton("error");
+        return;
+      }
+      setAccountMonitorButton("running", "正在从蒲公英断点继续…");
+      pgyLoginPromptFingerprint = "";
+      try {
+        const res = await fetch(`/api/crawler/account-monitor/resume-pgy?job_id=${encodeURIComponent(accountMonitorJobId)}`, {
+          method: "POST"
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") throw new Error(data.detail || "蒲公英断点恢复失败");
+        setAccountMonitorStatus(`已跳过小红书抓取，正在继续判断剩余 ${data.remaining_creator_count || 0} 个蒲公英账号`);
+        log("蒲公英断点恢复结果: " + JSON.stringify(data));
+        stopAccountMonitorPolling();
+        accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);
+        await refreshAccountMonitorJob();
+      } catch (e) {
+        const message = e.message || String(e);
+        setAccountMonitorStatus("蒲公英断点恢复失败：" + message);
+        setAccountMonitorButton("login_required");
+        log("蒲公英断点恢复失败: " + message);
       }
     }
 

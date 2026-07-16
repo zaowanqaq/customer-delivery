@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import math
 import asyncio
 import re
 import shutil
@@ -675,7 +676,7 @@ def _lark_json_arg(payload: Dict[str, Any]):
             dir=str(project_root),
             prefix=".lark_payload_",
         ) as tmp_file:
-            json.dump(payload, tmp_file, ensure_ascii=False)
+            json.dump(payload, tmp_file, ensure_ascii=False, allow_nan=False)
             tmp_json_path = tmp_file.name
         yield f"@./{Path(tmp_json_path).name}"
     finally:
@@ -1625,24 +1626,38 @@ def _write_account_monitor_report(rows: List[Dict[str, Any]], report_mode: str, 
     return output_path
 
 
-async def _build_account_monitor_report(job_id: str, report_mode: str, base_token: str = "", table_id: str = "") -> None:
+async def _build_account_monitor_report(
+    job_id: str,
+    report_mode: str,
+    base_token: str = "",
+    table_id: str = "",
+    *,
+    resume_pgy_only: bool = False,
+) -> None:
     job = account_monitor_jobs[job_id]
     try:
-        job.update({"status": "crawling", "stage": "正在抓取各账号最近 20 篇笔记", "error": ""})
-        if not await _wait_crawler_idle(timeout_sec=1800):
-            raise RuntimeError("等待账号笔记抓取完成超时")
-        source_started_at = float(job.get("source_started_at") or 0)
-        try:
-            source_path = _latest_local_file(
-                "notes",
-                "creator",
-                modified_after=source_started_at or None,
-                strict_mode=True,
-            )
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                raise RuntimeError("本次账号未生成新的小红书笔记数据，请检查小红书登录状态后重试") from exc
-            raise
+        if resume_pgy_only:
+            job.update({"status": "enriching", "stage": "正在从蒲公英断点继续", "error": "", "pgy_login_required": False})
+            source_path = Path(str(job.get("source_path") or ""))
+            if not source_path.is_file():
+                raise RuntimeError("小红书抓取结果已不存在，无法从蒲公英断点继续，请重新执行账号内容监测")
+        else:
+            job.update({"status": "crawling", "stage": "正在抓取各账号最近 20 篇笔记", "error": ""})
+            if not await _wait_crawler_idle(timeout_sec=1800):
+                raise RuntimeError("等待账号笔记抓取完成超时")
+            source_started_at = float(job.get("source_started_at") or 0)
+            try:
+                source_path = _latest_local_file(
+                    "notes",
+                    "creator",
+                    modified_after=source_started_at or None,
+                    strict_mode=True,
+                )
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    raise RuntimeError("本次账号未生成新的小红书笔记数据，请检查小红书登录状态后重试") from exc
+                raise
+            job["source_path"] = str(source_path)
         source_rows = _read_local_rows(source_path)
         if not source_rows:
             raise RuntimeError("抓取完成但没有可生成报表的笔记数据")
@@ -1662,8 +1677,8 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             if not source_rows:
                 raise RuntimeError("本次抓取未返回所填账号的数据，已阻止使用历史账号数据，请检查小红书登录状态后重试")
 
-        summaries: Dict[str, Dict[str, Any]] = {}
-        pgy_lookups: Dict[str, Dict[str, str]] = {}
+        summaries: Dict[str, Dict[str, Any]] = dict(job.get("_pgy_summaries") or {}) if resume_pgy_only else {}
+        pgy_lookups: Dict[str, Dict[str, str]] = dict(job.get("_pgy_lookups") or {}) if resume_pgy_only else {}
         pgy_errors: List[str] = []
         pgy_login_accounts: List[str] = []
         if report_mode in {"pgy", "auto"}:
@@ -1676,9 +1691,22 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             if not creators:
                 raise RuntimeError("公开笔记数据中未识别到达人昵称，无法匹配蒲公英数据")
             creator_items = list(creators.items())
+            pending_keys = {
+                str(item).strip().lower()
+                for item in (job.get("_pgy_pending_keys") or [])
+                if str(item).strip()
+            }
+            if resume_pgy_only:
+                creator_items = [item for item in creator_items if item[0] in pending_keys]
+                if not creator_items:
+                    raise RuntimeError("没有可继续的蒲公英断点，请重新执行账号内容监测")
+                for pending_key in pending_keys:
+                    summaries.pop(pending_key, None)
+                    pgy_lookups.pop(pending_key, None)
             total = len(creator_items)
             for index, (key, nickname) in enumerate(creator_items, start=1):
-                job.update({"status": "enriching", "stage": f"正在补充蒲公英指标（{index}/{total}）：{nickname}"})
+                stage_prefix = "正在从断点继续蒲公英指标" if resume_pgy_only else "正在补充蒲公英指标"
+                job.update({"status": "enriching", "stage": f"{stage_prefix}（{index}/{total}）：{nickname}"})
                 result = await _run_pgy_automation(
                     ["run-kol", "--nickname", nickname, "--similar-detail-limit", "0"],
                     timeout_sec=240,
@@ -1689,6 +1717,7 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                         "status": "无蒲公英主页",
                         "evidence": f"蒲公英“找博主”按昵称“{nickname}”查询：暂无结果",
                     }
+                    job.update({"_pgy_summaries": summaries, "_pgy_lookups": pgy_lookups})
                     continue
                 if result.get("status") == "error" or result.get("returncode") or not summary_path:
                     reason = str(result.get("error") or "未返回蒲公英数据")[:160]
@@ -1697,6 +1726,7 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                     if _pgy_login_required(result):
                         remaining_creators = creator_items[index:]
                         pgy_login_accounts = [nickname, *(name for _, name in remaining_creators)]
+                        pending_keys = [key, *(remaining_key for remaining_key, _ in remaining_creators)]
                         for remaining_key, remaining_name in remaining_creators:
                             pending_reason = "蒲公英需要登录，待登录后重新判断"
                             pgy_lookups[remaining_key] = {
@@ -1710,8 +1740,12 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                             "pgy_login_accounts": pgy_login_accounts,
                             "pgy_errors": pgy_errors,
                             "pgy_review_count": len(pgy_login_accounts),
+                            "_pgy_summaries": summaries,
+                            "_pgy_lookups": pgy_lookups,
+                            "_pgy_pending_keys": pending_keys,
                         })
                         break
+                    job.update({"_pgy_summaries": summaries, "_pgy_lookups": pgy_lookups})
                     continue
                 try:
                     summaries[key] = json.loads(Path(summary_path).read_text(encoding="utf-8"))
@@ -1722,6 +1756,7 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
                 except Exception as exc:
                     pgy_lookups[key] = {"status": "待人工确认", "evidence": f"读取蒲公英查询结果失败：{exc}"}
                     pgy_errors.append(f"{nickname}: 读取蒲公英结果失败（{exc}）")
+                job.update({"_pgy_summaries": summaries, "_pgy_lookups": pgy_lookups})
 
         job.update({"status": "exporting", "stage": "正在生成账号内容监测表"})
         report_rows = [
@@ -1758,6 +1793,9 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
             "pgy_not_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "无蒲公英主页"),
             "pgy_review_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "待人工确认"),
             "sync_result": sync_result,
+            "_pgy_summaries": summaries,
+            "_pgy_lookups": pgy_lookups,
+            "_pgy_pending_keys": list(job.get("_pgy_pending_keys") or []) if pgy_login_accounts else [],
         })
     except Exception as exc:
         job.update({"status": "error", "stage": "生成失败", "error": str(exc)})
@@ -1929,6 +1967,93 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
     return values
 
 
+def _is_missing_base_cell(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and not math.isfinite(value):
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    try:
+        unequal = value != value
+        if isinstance(unequal, bool) and unequal:
+            return True
+        if type(unequal).__name__ == "bool_" and bool(unequal):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _normalize_base_cell_value(value: Any, field_def: Dict[str, Any]) -> Any:
+    """Convert workbook values to cell shapes accepted by lark-cli Base writes."""
+    if _is_missing_base_cell(value):
+        return None
+    field_type = str(field_def.get("type") or "text").strip().lower()
+
+    if field_type in {"select", "multi_select", "multiple_select"}:
+        if isinstance(value, (list, tuple, set)):
+            items = [str(item).strip() for item in value if not _is_missing_base_cell(item)]
+        else:
+            text = str(value).strip()
+            if field_def.get("multiple"):
+                items = [item.strip() for item in re.split(r"[,，;；]", text) if item.strip()]
+            else:
+                items = [text] if text else []
+        return items or None
+
+    if field_type in {"link", "user", "group"}:
+        candidates = value if isinstance(value, list) else [value]
+        normalized = [
+            {"id": str(item.get("id"))}
+            for item in candidates
+            if isinstance(item, dict) and item.get("id")
+        ]
+        return normalized or None
+
+    if field_type == "location":
+        if isinstance(value, dict) and value.get("lng") is not None and value.get("lat") is not None:
+            return {"lng": value["lng"], "lat": value["lat"]}
+        return None
+
+    if field_type in {"checkbox", "boolean", "bool"}:
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "是", "已完成"}
+
+    if field_type == "number":
+        try:
+            text = str(value).strip().replace(",", "")
+            multiplier = 1
+            if text.endswith("万"):
+                multiplier, text = 10_000, text[:-1]
+            elif text.endswith("亿"):
+                multiplier, text = 100_000_000, text[:-1]
+            number = float(text) * multiplier
+            if not math.isfinite(number):
+                return None
+            return int(number) if number.is_integer() else number
+        except Exception:
+            return None
+
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value if not isinstance(value, set) else sorted(value), ensure_ascii=False)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _normalize_base_row_values(
+    table_fields: List[str],
+    values: List[Any],
+    field_defs_by_name: Dict[str, Dict[str, Any]],
+) -> List[Any]:
+    return [
+        _normalize_base_cell_value(value, field_defs_by_name.get(field_name) or {"type": "text"})
+        for field_name, value in zip(table_fields, values)
+    ]
+
+
 def _first_media_url(value: Any) -> str:
     if value in ("", None):
         return ""
@@ -2041,7 +2166,11 @@ async def _upload_cover_file_if_available(
     row: Dict[str, Any],
     attachment_field_ids: Dict[str, str],
 ) -> tuple[bool, str]:
-    cover_field_id = attachment_field_ids.get("封面附件") or attachment_field_ids.get("封面文件", "")
+    cover_field_id = (
+        attachment_field_ids.get("封面附件")
+        or attachment_field_ids.get("封面文件")
+        or attachment_field_ids.get("笔记封面", "")
+    )
     if not cover_field_id:
         return False, ""
     local_covers = _local_cover_files_from_row(row)
@@ -3131,6 +3260,8 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         "pgy_errors": [],
         "pgy_login_required": False,
         "pgy_login_accounts": [],
+        "base_token": request.base_token.strip(),
+        "table_id": request.table_id.strip(),
         "error": "",
         "started_at": datetime.now().isoformat(),
     }
@@ -3147,6 +3278,45 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
     }
 
 
+@router.post("/account-monitor/resume-pgy")
+async def resume_account_monitor_pgy(job_id: str):
+    """Resume the Pugongying phase from its checkpoint without recrawling Xiaohongshu."""
+    job = account_monitor_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="未找到账号内容监测任务，无法从蒲公英断点继续")
+    task = job.get("task")
+    if task and not task.done():
+        raise HTTPException(status_code=400, detail="账号内容监测任务仍在运行")
+    if not job.get("pgy_login_required") or not job.get("_pgy_pending_keys"):
+        raise HTTPException(status_code=400, detail="当前任务没有待继续的蒲公英登录断点")
+    source_path = Path(str(job.get("source_path") or ""))
+    if not source_path.is_file():
+        raise HTTPException(status_code=410, detail="小红书抓取结果已不存在，请重新执行账号内容监测")
+
+    job.update({
+        "status": "enriching",
+        "stage": "正在从蒲公英断点继续",
+        "pgy_login_required": False,
+        "pgy_login_accounts": [],
+        "error": "",
+    })
+    job["task"] = asyncio.create_task(
+        _build_account_monitor_report(
+            job_id,
+            str(job.get("report_mode") or "auto"),
+            str(job.get("base_token") or ""),
+            str(job.get("table_id") or ""),
+            resume_pgy_only=True,
+        )
+    )
+    return {
+        "status": "ok",
+        "message": "已从蒲公英断点继续，不会重复抓取小红书",
+        "job_id": job_id,
+        "remaining_creator_count": len(job.get("_pgy_pending_keys") or []),
+    }
+
+
 @router.get("/account-monitor/status")
 async def account_monitor_status(job_id: str):
     job = account_monitor_jobs.get(job_id)
@@ -3155,7 +3325,10 @@ async def account_monitor_status(job_id: str):
     return {
         key: value
         for key, value in job.items()
-        if key not in {"task", "report_path", "source_path"}
+        if key not in {
+            "task", "report_path", "source_path", "base_token", "table_id",
+            "_pgy_summaries", "_pgy_lookups", "_pgy_pending_keys",
+        }
     }
 
 
@@ -3610,7 +3783,11 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
 @router.post("/sync-local-to-base")
 async def sync_local_to_base(request: LocalToBaseSyncRequest):
     field_defs = await _read_table_field_defs(request.base_token, request.table_id)
-    field_types = {field.get("name"): field.get("type") for field in field_defs if field.get("name")}
+    field_defs_by_name = {
+        str(field.get("name")): field
+        for field in field_defs
+        if field.get("name")
+    }
     table_fields = [
         field.get("name")
         for field in field_defs
@@ -3642,7 +3819,11 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         if request.source_keyword and not (obj.get("source_keyword") or obj.get("关键词")):
             obj["source_keyword"] = request.source_keyword
             obj["关键词"] = request.source_keyword
-        row_items.append({"source": obj, "values": _row_to_table_values(obj, table_fields, request.data_type)})
+        raw_values = _row_to_table_values(obj, table_fields, request.data_type)
+        row_items.append({
+            "source": obj,
+            "values": _normalize_base_row_values(table_fields, raw_values, field_defs_by_name),
+        })
     if request.data_type == "notes":
         liked_idx = table_fields.index("liked_count") if "liked_count" in table_fields else -1
         if liked_idx >= 0:

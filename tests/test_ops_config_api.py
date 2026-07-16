@@ -205,6 +205,62 @@ async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(
         assert job["pgy_review_count"] == 3
         assert len(job["pgy_errors"]) == 3
         assert job["ignored_historical_row_count"] == 1
+        assert job["_pgy_pending_keys"] == ["creator_a", "creator_b", "creator_c"]
+    finally:
+        crawler.account_monitor_jobs.pop(job_id, None)
+
+
+@pytest.mark.asyncio
+async def test_account_monitor_resumes_pgy_checkpoint_without_recrawling_xhs(monkeypatch, tmp_path):
+    job_id = "resume_pgy_checkpoint_job"
+    source_path = tmp_path / "creator_contents.jsonl"
+    source_path.write_text("{}\n", encoding="utf-8")
+    pgy_calls = []
+
+    async def fail_if_waiting_for_xhs(timeout_sec):
+        raise AssertionError("resume must not wait for or rerun the Xiaohongshu crawler")
+
+    async def fake_run_pgy(args, timeout_sec):
+        pgy_calls.append(args[2])
+        return {"status": "not_found", "returncode": 0}
+
+    source_rows = [
+        {"author_user_id": "creator_a", "author_nickname": "达人A"},
+        {"author_user_id": "creator_b", "author_nickname": "达人B"},
+        {"author_user_id": "creator_c", "author_nickname": "达人C"},
+    ]
+    monkeypatch.setattr(crawler, "_wait_crawler_idle", fail_if_waiting_for_xhs)
+    monkeypatch.setattr(crawler, "_read_local_rows", lambda *_: source_rows)
+    monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run_pgy)
+    monkeypatch.setattr(crawler, "_write_account_monitor_report", lambda *_: tmp_path / "report.xlsx")
+    crawler.account_monitor_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "completed",
+        "report_mode": "auto",
+        "source_path": str(source_path),
+        "requested_creator_ids": ["creator_a", "creator_b", "creator_c"],
+        "pgy_login_required": True,
+        "pgy_login_accounts": ["达人B", "达人C"],
+        "_pgy_pending_keys": ["creator_b", "creator_c"],
+        "_pgy_summaries": {"creator_a": {"nickname": "达人A"}},
+        "_pgy_lookups": {"creator_a": {"status": "有蒲公英主页", "evidence": "已完成"}},
+        "base_token": "",
+        "table_id": "",
+    }
+
+    try:
+        result = await crawler.resume_account_monitor_pgy(job_id)
+        await crawler.account_monitor_jobs[job_id]["task"]
+        job = crawler.account_monitor_jobs[job_id]
+
+        assert result["remaining_creator_count"] == 2
+        assert "不会重复抓取小红书" in result["message"]
+        assert pgy_calls == ["达人B", "达人C"]
+        assert job["status"] == "completed"
+        assert job["pgy_login_required"] is False
+        assert job["pgy_found_count"] == 1
+        assert job["pgy_not_found_count"] == 2
+        assert job["_pgy_pending_keys"] == []
     finally:
         crawler.account_monitor_jobs.pop(job_id, None)
 
@@ -766,3 +822,56 @@ async def test_sync_local_to_base_dedupes_with_chinese_note_id_field(monkeypatch
     assert [call["cmd"][2] for call in calls] == ["+record-upsert", "+record-batch-create"]
     assert calls[0]["payload"]["values"] == ["note-existing", "old"]
     assert calls[1]["payload"]["rows"] == [["note-new", "new"]]
+
+
+@pytest.mark.asyncio
+async def test_sync_local_to_base_normalizes_nan_select_number_and_user_cells(monkeypatch, tmp_path):
+    notes_path = tmp_path / "account-monitor.xlsx"
+    notes_path.write_bytes(b"fixture")
+    payloads = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        payloads.append(json.loads(payload_path.read_text(encoding="utf-8")))
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_field_defs(_base_token, _table_id):
+        return [
+            {"name": "笔记链接", "type": "text"},
+            {"name": "响应率", "type": "text"},
+            {"name": "内容类目（标签）", "type": "select", "multiple": True},
+            {"name": "粉丝数", "type": "number"},
+            {"name": "负责人", "type": "user"},
+        ]
+
+    async def fake_read_existing_base_records(_base_token, _table_id, _dedupe_fields):
+        return {}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_table_field_defs)
+    monkeypatch.setattr(crawler, "_read_local_rows", lambda *_: [{
+        "笔记链接": "https://www.xiaohongshu.com/explore/note-1",
+        "响应率": float("nan"),
+        "内容类目（标签）": "美食,探店",
+        "粉丝数": "1.2万",
+        "负责人": "不支持直接写姓名",
+    }])
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(crawler.LocalToBaseSyncRequest(
+        base_token="app123",
+        table_id="tbl123",
+        data_type="notes",
+        file_path=str(notes_path),
+    ))
+
+    assert result["created"] == 1
+    assert payloads[0]["rows"] == [[
+        "https://www.xiaohongshu.com/explore/note-1",
+        None,
+        ["美食", "探店"],
+        12000,
+        None,
+    ]]

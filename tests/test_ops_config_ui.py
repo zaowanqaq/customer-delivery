@@ -177,10 +177,13 @@ def test_login_issues_open_actionable_prompts_in_the_matching_tabs():
     assert "打开蒲公英登录窗口" in html
     assert "打开小红书登录浏览器" in html
     assert "onAction: pgyLogin" in html
+    assert "从蒲公英断点继续" in html
+    assert "/api/crawler/account-monitor/resume-pgy" in html
+    assert "不会重复抓取小红书" in html
     assert '"tab-step2"' in html
     assert "账号内容监测第一阶段需要使用小红书登录态" in html
     assert 'id="account_monitor_start_btn"' in html
-    assert "登录后重新判断蒲公英" in html
+    assert "从蒲公英断点继续" in html
 
 
 def test_file_preview_routes_api_requests_to_local_server():
