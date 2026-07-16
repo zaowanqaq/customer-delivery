@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import csv
 import os
 import urllib.request
@@ -321,6 +322,13 @@ def _profile_url_from_link(value: str, resolve_short_link: bool = True) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", user_id):
         raise ValueError("主页链接中的账号标识无效")
     return f"https://www.xiaohongshu.com/user/profile/{user_id}"
+
+
+def _profile_id_from_url(profile_url: str) -> str:
+    """Extract the normalized creator ID from a canonical XHS profile URL."""
+    parsed = urlparse(profile_url)
+    match = re.search(r"/user/profile/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    return unquote(match.group(1)).strip().lower() if match else ""
 
 
 def _note_id_from_link(value: str, resolve_short_link: bool = True) -> str:
@@ -1425,7 +1433,13 @@ def _note_data_monitor_fields() -> List[Dict[str, Any]]:
     ]
 
 
-def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
+def _latest_local_file(
+    data_type: str,
+    crawler_type_hint: str = "",
+    *,
+    modified_after: float | None = None,
+    strict_mode: bool = False,
+) -> Path:
     project_root = Path(__file__).resolve().parents[2]
     suffix = "contents" if data_type == "notes" else "comments"
     data_roots = [data_dir() / "xhs"]
@@ -1442,14 +1456,15 @@ def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
             ("excel", f"{mode}_{suffix}_*.xlsx"),
             ("excel", f"{mode}_{suffix}_*.xls"),
         ])
-    patterns.extend([
-        # Fallback: support all crawler modes (search/creator/detail/...).
-        ("jsonl", f"*_{suffix}_*.jsonl"),
-        ("csv", f"*_{suffix}_*.csv"),
-        ("json", f"*_{suffix}_*.json"),
-        ("excel", f"*_{suffix}_*.xlsx"),
-        ("excel", f"*_{suffix}_*.xls"),
-    ])
+    if not strict_mode:
+        patterns.extend([
+            # Fallback: support all crawler modes (search/creator/detail/...).
+            ("jsonl", f"*_{suffix}_*.jsonl"),
+            ("csv", f"*_{suffix}_*.csv"),
+            ("json", f"*_{suffix}_*.json"),
+            ("excel", f"*_{suffix}_*.xlsx"),
+            ("excel", f"*_{suffix}_*.xls"),
+        ])
 
     candidates: List[Path] = []
     for data_root in data_roots:
@@ -1457,7 +1472,13 @@ def _latest_local_file(data_type: str, crawler_type_hint: str = "") -> Path:
             dir_path = data_root / folder
             if not dir_path.exists():
                 continue
-            candidates.extend(dir_path.glob(pattern))
+            for candidate in dir_path.glob(pattern):
+                try:
+                    if modified_after is not None and candidate.stat().st_mtime < modified_after:
+                        continue
+                except OSError:
+                    continue
+                candidates.append(candidate)
     candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         raise HTTPException(status_code=404, detail=f"未找到本地 {data_type} 数据文件（jsonl/csv/json/xlsx/xls）")
@@ -1574,6 +1595,14 @@ def _account_monitor_creator_name(row: Dict[str, Any]) -> str:
     return str(row.get("author_nickname") or row.get("nickname") or row.get("达人昵称") or "").strip()
 
 
+def _account_monitor_creator_id(row: Dict[str, Any]) -> str:
+    creator_id = str(row.get("author_user_id") or row.get("user_id") or row.get("账号ID") or "").strip().lower()
+    if creator_id:
+        return creator_id
+    profile_url = str(row.get("author_homepage_url") or row.get("author_profile_url") or row.get("主页链接") or "").strip()
+    return _profile_id_from_url(profile_url) if profile_url else ""
+
+
 def _write_account_monitor_report(rows: List[Dict[str, Any]], report_mode: str, job_id: str) -> Path:
     fields = (
         [field["name"] for field in _account_content_monitor_fields()]
@@ -1602,10 +1631,36 @@ async def _build_account_monitor_report(job_id: str, report_mode: str, base_toke
         job.update({"status": "crawling", "stage": "正在抓取各账号最近 20 篇笔记", "error": ""})
         if not await _wait_crawler_idle(timeout_sec=1800):
             raise RuntimeError("等待账号笔记抓取完成超时")
-        source_path = _latest_local_file("notes", "creator")
+        source_started_at = float(job.get("source_started_at") or 0)
+        try:
+            source_path = _latest_local_file(
+                "notes",
+                "creator",
+                modified_after=source_started_at or None,
+                strict_mode=True,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise RuntimeError("本次账号未生成新的小红书笔记数据，请检查小红书登录状态后重试") from exc
+            raise
         source_rows = _read_local_rows(source_path)
         if not source_rows:
             raise RuntimeError("抓取完成但没有可生成报表的笔记数据")
+
+        requested_creator_ids = {
+            str(item).strip().lower()
+            for item in (job.get("requested_creator_ids") or [])
+            if str(item).strip()
+        }
+        if requested_creator_ids:
+            all_source_rows = source_rows
+            source_rows = [
+                row for row in all_source_rows
+                if _account_monitor_creator_id(row) in requested_creator_ids
+            ]
+            job["ignored_historical_row_count"] = len(all_source_rows) - len(source_rows)
+            if not source_rows:
+                raise RuntimeError("本次抓取未返回所填账号的数据，已阻止使用历史账号数据，请检查小红书登录状态后重试")
 
         summaries: Dict[str, Dict[str, Any]] = {}
         pgy_lookups: Dict[str, Dict[str, str]] = {}
@@ -2641,11 +2696,16 @@ def _clear_creator_data_files() -> None:
     if legacy_data_root.resolve() != data_roots[0].resolve():
         data_roots.append(legacy_data_root)
     for data_root in data_roots:
-        for suffix_dir in ("csv", "jsonl", "json"):
+        for suffix_dir in ("csv", "jsonl", "json", "excel"):
             dir_path = data_root / suffix_dir
             if not dir_path.exists():
                 continue
             for f in dir_path.glob("creator_contents_*.*"):
+                with contextlib.suppress(Exception):
+                    f.unlink()
+        # ExcelStoreBase writes a whole workbook directly under data/xhs.
+        for pattern in ("xhs_creator_*.xlsx", "xhs_creator_*.xls"):
+            for f in data_root.glob(pattern):
                 with contextlib.suppress(Exception):
                     f.unlink()
 
@@ -3030,6 +3090,9 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
     if not normalized_links:
         raise HTTPException(status_code=400, detail="未识别到有效的小红书账号主页链接")
 
+    requested_creator_ids = [_profile_id_from_url(link) for link in normalized_links]
+    source_started_at = time.time()
+
     start_request = CrawlerStartRequest(
         platform=request.platform,
         login_type=request.login_type,
@@ -3040,7 +3103,9 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         enable_comments=False,
         enable_sub_comments=False,
         enable_media=request.enable_media,
-        save_option=request.save_option,
+        # The report builder consumes a fresh local file. Keep this workflow on
+        # CSV regardless of the global workbench save preference.
+        save_option="csv",
         cookies=request.cookies,
         headless=request.headless,
     )
@@ -3058,6 +3123,8 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         "stage": "账号笔记抓取已启动",
         "report_mode": request.report_mode,
         "creator_count": len(normalized_links),
+        "requested_creator_ids": requested_creator_ids,
+        "source_started_at": source_started_at,
         "notes_per_creator": 20,
         "row_count": 0,
         "report_path": "",

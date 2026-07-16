@@ -559,7 +559,7 @@
         <div id="tab-step2" class="tab-pane">
           <section class="card">
       <h2>账号内容监测（近 20 篇笔记汇总）</h2>
-      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；支持小红书主页长链和短链，并自动在蒲公英“找博主”判断该达人是否开通蒲公英主页。</p>
+      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；第一阶段使用小红书登录态抓取笔记，第二阶段使用蒲公英登录态在“找博主”中判断该达人是否开通蒲公英主页。</p>
       <div class="grid">
         <div class="row full">
           <label>导入样本账号文件（txt / csv / Excel）</label>
@@ -2249,9 +2249,9 @@
       }
     }
 
-    function showXhsLoginPrompt(message) {
+    function showXhsLoginPrompt(message, tabId = "tab-step3") {
       showWorkflowAlert({
-        tabId: "tab-step3",
+        tabId,
         kicker: "小红书账号状态",
         title: "需要重新登录小红书",
         message: message || "当前小红书登录未配置或已失效。请先打开登录浏览器，登录完成后读取 Cookie，再重新启动爆款抓取。",
@@ -2553,6 +2553,13 @@
         setAccountMonitorStatus("请先导入或填写样本账号主页链接");
         return;
       }
+      if (!String(payload.cookies || "").trim()) {
+        showXhsLoginPrompt(
+          "账号内容监测第一阶段需要使用小红书登录态抓取账号笔记。请先登录小红书并读取 Cookie，再启动账号监测。",
+          "tab-step2"
+        );
+        return;
+      }
       setAccountMonitorButton("running", "正在启动账号监测…");
       pgyLoginPromptFingerprint = "";
       try {
@@ -2582,7 +2589,7 @@
         log("账号内容监测启动结果: " + JSON.stringify(result));
         if (res.ok && result.status === "ok") {
           accountMonitorJobId = result.job_id;
-          setAccountMonitorStatus("任务已启动：正在解析主页链接并抓取账号最近 20 篇笔记");
+          setAccountMonitorStatus(`任务已启动：本次 ${result.creator_count || 0} 个账号，正在通过小红书抓取最近 20 篇笔记`);
           startProgressMonitor();
           stopAccountMonitorPolling();
           accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);

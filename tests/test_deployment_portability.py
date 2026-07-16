@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import importlib
+import os
 from pathlib import Path
 
 from api.routers import crawler
@@ -18,6 +19,53 @@ def test_latest_local_file_reads_runtime_data_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(crawler, "data_dir", lambda: runtime_data)
 
     assert crawler._latest_local_file("notes", "search") == target
+
+
+def test_latest_local_file_can_isolate_current_creator_run(monkeypatch, tmp_path):
+    runtime_data = tmp_path / "runtime-data"
+    fake_module = tmp_path / "project" / "api" / "routers" / "crawler.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.write_text("", encoding="utf-8")
+    creator_dir = runtime_data / "xhs" / "csv"
+    creator_dir.mkdir(parents=True)
+    old_creator = creator_dir / "creator_contents_old.csv"
+    current_creator = creator_dir / "creator_contents_current.csv"
+    newer_search = creator_dir / "search_contents_current.csv"
+    for path in (old_creator, current_creator, newer_search):
+        path.write_text("note_id\n", encoding="utf-8")
+    os.utime(old_creator, (100, 100))
+    os.utime(current_creator, (300, 300))
+    os.utime(newer_search, (400, 400))
+    monkeypatch.setattr(crawler, "data_dir", lambda: runtime_data)
+    monkeypatch.setattr(crawler, "__file__", str(fake_module))
+
+    assert crawler._latest_local_file(
+        "notes", "creator", modified_after=200, strict_mode=True
+    ) == current_creator
+
+
+def test_clear_creator_data_files_covers_all_supported_formats(monkeypatch, tmp_path):
+    runtime_data = tmp_path / "runtime-data"
+    fake_module = tmp_path / "project" / "api" / "routers" / "crawler.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.write_text("", encoding="utf-8")
+    monkeypatch.setattr(crawler, "data_dir", lambda: runtime_data)
+    monkeypatch.setattr(crawler, "__file__", str(fake_module))
+
+    generated_files = []
+    for root in (runtime_data / "xhs", tmp_path / "project" / "data" / "xhs"):
+        for suffix_dir, suffix in (("csv", "csv"), ("jsonl", "jsonl"), ("json", "json"), ("excel", "xlsx")):
+            path = root / suffix_dir / f"creator_contents_test.{suffix}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("test", encoding="utf-8")
+            generated_files.append(path)
+        workbook = root / "xhs_creator_20260716_120000.xlsx"
+        workbook.write_text("test", encoding="utf-8")
+        generated_files.append(workbook)
+
+    crawler._clear_creator_data_files()
+
+    assert all(not path.exists() for path in generated_files)
 
 
 def test_build_command_uses_posix_virtualenv_python(monkeypatch, tmp_path):

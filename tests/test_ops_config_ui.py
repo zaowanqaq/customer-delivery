@@ -148,7 +148,8 @@ def test_collaboration_monitor_keeps_latest_twenty_notes_without_exposing_a_coun
 def test_sample_account_file_import_controls_are_present():
     html = _ops_config_text()
 
-    assert "导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记" in html
+    assert "第一阶段使用小红书登录态抓取笔记" in html
+    assert "第二阶段使用蒲公英登录态" in html
     assert "表头固定为「主页链接」" in html
     assert 'id="sample_accounts_file"' in html
     assert 'accept=".txt,.csv,.xlsx,.xls"' in html
@@ -156,7 +157,7 @@ def test_sample_account_file_import_controls_are_present():
     assert "/api/crawler/import-sample-accounts" in html
     assert "mergeSampleAccounts" in html
     assert 'id="account_monitor_mode"' not in html
-    assert "蒲公英“找博主”判断该达人是否开通蒲公英主页" in html
+    assert "在“找博主”中判断该达人是否开通蒲公英主页" in html
     assert 'account_monitor_mode: "auto"' in html
     assert "/api/crawler/account-monitor/start" in html
     assert "downloadAccountMonitorTemplate()" in html
@@ -169,12 +170,15 @@ def test_login_issues_open_actionable_prompts_in_the_matching_tabs():
 
     assert 'id="workflow_alert"' in html
     assert 'tabId: "tab-step2"' in html
-    assert 'tabId: "tab-step3"' in html
+    assert 'tabId = "tab-step3"' in html
     assert "pgy_login_required" in html
     assert "pgy_login_accounts" in html
     assert "statusData.login_required" in html
     assert "打开蒲公英登录窗口" in html
     assert "打开小红书登录浏览器" in html
+    assert "onAction: pgyLogin" in html
+    assert '"tab-step2"' in html
+    assert "账号内容监测第一阶段需要使用小红书登录态" in html
     assert 'id="account_monitor_start_btn"' in html
     assert "登录后重新判断蒲公英" in html
 

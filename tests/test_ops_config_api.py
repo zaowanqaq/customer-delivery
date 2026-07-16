@@ -126,6 +126,42 @@ def test_pgy_login_required_normalizes_automation_errors():
 
 
 @pytest.mark.asyncio
+async def test_start_account_monitor_snapshots_current_creator_and_uses_isolated_csv(monkeypatch):
+    captured = {}
+
+    async def fake_start(start_request):
+        captured["start_request"] = start_request
+        return True
+
+    async def fake_build(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(crawler.crawler_manager, "process", None)
+    monkeypatch.setattr(crawler.crawler_manager, "start", fake_start)
+    monkeypatch.setattr(crawler, "_clear_creator_data_files", lambda: None)
+    monkeypatch.setattr(crawler, "_build_account_monitor_report", fake_build)
+
+    result = await crawler.start_account_monitor(crawler.SampleCreatorStartRequest(
+        creator_ids="https://www.xiaohongshu.com/user/profile/62c98736000000001501e075",
+        save_option="excel",
+        report_mode="auto",
+    ))
+    job_id = result["job_id"]
+
+    try:
+        await crawler.account_monitor_jobs[job_id]["task"]
+        job = crawler.account_monitor_jobs[job_id]
+
+        assert result["creator_count"] == 1
+        assert job["requested_creator_ids"] == ["62c98736000000001501e075"]
+        assert job["source_started_at"] > 0
+        assert captured["start_request"].creator_ids.endswith("/62c98736000000001501e075")
+        assert captured["start_request"].save_option.value == "csv"
+    finally:
+        crawler.account_monitor_jobs.pop(job_id, None)
+
+
+@pytest.mark.asyncio
 async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(monkeypatch, tmp_path):
     job_id = "pgy_login_required_job"
     calls = []
@@ -142,16 +178,21 @@ async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(
         }
 
     source_rows = [
+        {"author_user_id": "historical_creator", "author_nickname": "历史达人"},
         {"author_user_id": "creator_a", "author_nickname": "达人A"},
         {"author_user_id": "creator_b", "author_nickname": "达人B"},
         {"author_user_id": "creator_c", "author_nickname": "达人C"},
     ]
     monkeypatch.setattr(crawler, "_wait_crawler_idle", fake_wait_crawler_idle)
-    monkeypatch.setattr(crawler, "_latest_local_file", lambda *_: tmp_path / "source.jsonl")
+    monkeypatch.setattr(crawler, "_latest_local_file", lambda *_, **__: tmp_path / "source.jsonl")
     monkeypatch.setattr(crawler, "_read_local_rows", lambda *_: source_rows)
     monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run_pgy)
     monkeypatch.setattr(crawler, "_write_account_monitor_report", lambda *_: tmp_path / "report.xlsx")
-    crawler.account_monitor_jobs[job_id] = {"job_id": job_id}
+    crawler.account_monitor_jobs[job_id] = {
+        "job_id": job_id,
+        "requested_creator_ids": ["creator_a", "creator_b", "creator_c"],
+        "source_started_at": 123.0,
+    }
 
     try:
         await crawler._build_account_monitor_report(job_id, "auto")
@@ -163,6 +204,36 @@ async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(
         assert job["pgy_login_accounts"] == ["达人A", "达人B", "达人C"]
         assert job["pgy_review_count"] == 3
         assert len(job["pgy_errors"]) == 3
+        assert job["ignored_historical_row_count"] == 1
+    finally:
+        crawler.account_monitor_jobs.pop(job_id, None)
+
+
+@pytest.mark.asyncio
+async def test_account_monitor_rejects_historical_rows_when_current_creator_has_no_data(monkeypatch, tmp_path):
+    job_id = "account_monitor_current_creator_missing"
+
+    async def fake_wait_crawler_idle(timeout_sec):
+        return True
+
+    monkeypatch.setattr(crawler, "_wait_crawler_idle", fake_wait_crawler_idle)
+    monkeypatch.setattr(crawler, "_latest_local_file", lambda *_, **__: tmp_path / "source.jsonl")
+    monkeypatch.setattr(crawler, "_read_local_rows", lambda *_: [
+        {"author_user_id": "historical_creator", "author_nickname": "历史达人"},
+    ])
+    crawler.account_monitor_jobs[job_id] = {
+        "job_id": job_id,
+        "requested_creator_ids": ["current_creator"],
+        "source_started_at": 123.0,
+    }
+
+    try:
+        await crawler._build_account_monitor_report(job_id, "auto")
+        job = crawler.account_monitor_jobs[job_id]
+
+        assert job["status"] == "error"
+        assert "已阻止使用历史账号数据" in job["error"]
+        assert job["ignored_historical_row_count"] == 1
     finally:
         crawler.account_monitor_jobs.pop(job_id, None)
 
