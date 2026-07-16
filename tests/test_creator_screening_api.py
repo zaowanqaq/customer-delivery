@@ -7,6 +7,7 @@ import pytest
 from api.routers import creator_screening
 from api.schemas.creator_screening import (
     CreatorCandidateInput,
+    CreatorScreeningApiKeyRequest,
     CreatorScreeningImportRequest,
     CreatorScreeningStartRequest,
 )
@@ -120,17 +121,44 @@ async def test_job_runs_profiles_with_bounded_parallel_workers_and_keeps_input_o
 
 
 @pytest.mark.asyncio
-async def test_preflight_reports_missing_model_keys_without_leaking_values(monkeypatch):
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+async def test_preflight_reports_missing_model_keys_without_leaking_values(monkeypatch, tmp_path):
+    monkeypatch.setattr("api.services.local_ai_config.local_ai_config_path", lambda: tmp_path / "missing-local-ai-config.json")
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "ignored-environment-key")
 
     result = await creator_screening.preflight()
 
     assert result == {
-        "deepseek_configured": False,
-        "openrouter_configured": False,
         "siliconflow_configured": False,
-        "active_provider": "DeepSeek + OpenRouter",
-        "active_model": "google/gemma-4-31b-it:free",
+        "active_provider": "SiliconFlow Kimi",
+        "active_model": "Pro/moonshotai/Kimi-K2.6",
+        "configuration_source": "",
     }
+
+
+@pytest.mark.asyncio
+async def test_save_api_key_persists_locally_without_returning_key(monkeypatch, tmp_path):
+    config_path = tmp_path / "creator_screening_ai.json"
+    monkeypatch.setattr("api.services.local_ai_config.local_ai_config_path", lambda: config_path)
+
+    result = await creator_screening.save_api_key(CreatorScreeningApiKeyRequest(api_key="secret-key"))
+
+    assert result == {
+        "status": "ok",
+        "active_provider": "SiliconFlow Kimi",
+        "active_model": "Pro/moonshotai/Kimi-K2.6",
+        "configuration_source": "本机网页配置",
+    }
+    assert "secret-key" not in result.values()
+    assert config_path.exists()
+    assert "secret-key" in config_path.read_text(encoding="utf-8")
+
+
+def test_web_saved_api_key_is_the_only_runtime_source(monkeypatch, tmp_path):
+    config_path = tmp_path / "creator_screening_ai.json"
+    monkeypatch.setattr("api.services.local_ai_config.local_ai_config_path", lambda: config_path)
+    config_path.write_text('{"siliconflow_api_key": "web-key"}', encoding="utf-8")
+
+    ai = creator_screening.CreatorScreeningAI()
+
+    assert ai._siliconflow_key == "web-key"
+    assert ai.configuration_status()["configuration_source"] == "本机网页配置"

@@ -11,7 +11,7 @@ from api.services.creator_screening import (
 
 @pytest.mark.asyncio
 async def test_creator_screening_ai_uses_requirement_tags_for_creator_type(monkeypatch):
-    client = CreatorScreeningAI(deepseek_key="deepseek-test", openrouter_key="openrouter-test")
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
     calls = []
 
     async def fake_post_json(url, headers, body):
@@ -29,15 +29,15 @@ async def test_creator_screening_ai_uses_requirement_tags_for_creator_type(monke
 
     assert result.status == "符合"
     assert result.creator_type == "浙江本地｜线下打卡"
-    assert calls[0][1]["Authorization"] == "Bearer openrouter-test"
-    assert calls[0][2]["model"] == "google/gemma-4-31b-it:free"
+    assert calls[0][1]["Authorization"] == "Bearer siliconflow-test"
+    assert calls[0][2]["model"] == "Pro/moonshotai/Kimi-K2.6"
     assert calls[0][2]["max_tokens"] == 600
 
 
 @pytest.mark.asyncio
-async def test_creator_screening_ai_shows_openrouter_rate_limit_detail(monkeypatch):
-    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
-    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+async def test_creator_screening_ai_shows_siliconflow_rate_limit_detail(monkeypatch):
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
+    request = httpx.Request("POST", "https://api.siliconflow.cn/v1/chat/completions")
     response = httpx.Response(
         429,
         request=request,
@@ -55,14 +55,13 @@ async def test_creator_screening_ai_shows_openrouter_rate_limit_detail(monkeypat
     )
 
     assert result.status == "异常"
-    assert "OpenRouter HTTP 429" in result.reason
+    assert "SiliconFlow Kimi HTTP 429" in result.reason
     assert "temporarily rate-limited" in result.reason
 
 
 @pytest.mark.asyncio
-async def test_creator_screening_ai_allows_a_configured_vision_model(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_VISION_MODEL", "google/gemma-4-31b-it")
-    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+async def test_creator_screening_ai_uses_fixed_kimi_multimodal_model(monkeypatch):
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
     calls = []
 
     async def fake_post_json(url, headers, body):
@@ -75,14 +74,12 @@ async def test_creator_screening_ai_allows_a_configured_vision_model(monkeypatch
         ProfileSnapshot(profile_url="https://www.xiaohongshu.com/user/profile/a", visible_text="IP属地：浙江"),
     )
 
-    assert calls[0]["model"] == "google/gemma-4-31b-it"
+    assert calls[0]["model"] == "Pro/moonshotai/Kimi-K2.6"
 
 
 @pytest.mark.asyncio
 async def test_creator_screening_prefers_siliconflow_kimi_for_requirements_and_vision(monkeypatch):
-    monkeypatch.setenv("SILICONFLOW_API_KEY", "siliconflow-test")
-    monkeypatch.setenv("SILICONFLOW_KIMI_MODEL", "Pro/moonshotai/Kimi-K2.6")
-    client = CreatorScreeningAI(deepseek_key="deepseek-test", openrouter_key="openrouter-test")
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
     calls = []
 
     async def fake_post_json(url, headers, body):
@@ -108,7 +105,7 @@ async def test_creator_screening_prefers_siliconflow_kimi_for_requirements_and_v
 
 @pytest.mark.asyncio
 async def test_creator_screening_ai_marks_invalid_model_response_as_exception():
-    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
 
     result = await client.to_decision("not-json", RequirementRules(tags=["线下打卡"]))
 
@@ -118,7 +115,7 @@ async def test_creator_screening_ai_marks_invalid_model_response_as_exception():
 
 @pytest.mark.asyncio
 async def test_creator_screening_ai_marks_low_confidence_as_manual_review():
-    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
 
     result = await client.to_decision(
         '{"status":"符合","matched_tags":["线下打卡"],"reason":"信息不完整","evidence":[],"uncertainties":["低置信度"]}',
@@ -131,7 +128,7 @@ async def test_creator_screening_ai_marks_low_confidence_as_manual_review():
 
 @pytest.mark.asyncio
 async def test_creator_screening_ai_keeps_login_only_snapshot_for_manual_review():
-    client = CreatorScreeningAI(deepseek_key="d", openrouter_key="o")
+    client = CreatorScreeningAI(siliconflow_key="siliconflow-test")
 
     result = await client.evaluate(
         RequirementRules(tags=["线下打卡"]),

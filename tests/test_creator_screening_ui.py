@@ -15,6 +15,9 @@ def test_creator_selection_tab_embeds_ai_profile_screening_controls():
     assert 'accept=".csv,.xlsx,.xls"' in html
     assert 'onchange="handleCreatorScreeningFileChange()"' in html
     assert 'id="creator_screening_requirement"' in html
+    assert 'id="creator_screening_api_key"' in html
+    assert 'onclick="saveCreatorScreeningApiKey()"' in html
+    assert "/api/creator-screening/api-key" in html
     assert "data.siliconflow_configured" in html
     assert "details[open][data-screening-row]" in html
     assert "data-screening-row=" in html

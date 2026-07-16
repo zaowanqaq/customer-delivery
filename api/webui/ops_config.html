@@ -637,6 +637,11 @@
               <p class="hint">导入客户达人库后，系统只读取小红书主页当前可见的资料、IP、简介、笔记卡片和截图进行初筛，不会进入笔记详情页，也不会写入飞书多维表格。</p>
               <div class="grid">
                 <div class="row full">
+                  <label>AI API Key</label>
+                  <input id="creator_screening_api_key" type="password" autocomplete="off" placeholder="粘贴硅基流动 API Key">
+                  <p class="hint">只需首次配置一次。本机保存后会自动用于 Kimi 图文初筛；完整 Key 不会在页面中显示。</p>
+                </div>
+                <div class="row full">
                   <label>达人库文件（csv / Excel）</label>
                   <input id="creator_screening_file" type="file" accept=".csv,.xlsx,.xls" onchange="handleCreatorScreeningFileChange()">
                   <p class="hint">表头固定为：达人昵称、博主ID、主页链接、达人价格。主页链接为必填项；博主ID可选。</p>
@@ -647,6 +652,7 @@
                 </div>
               </div>
               <div class="btns">
+                <button class="ghost" type="button" onclick="saveCreatorScreeningApiKey()">保存 AI Key</button>
                 <button class="ghost" type="button" onclick="downloadCreatorScreeningTemplate()">下载模板</button>
                 <button class="primary" type="button" onclick="startCreatorScreening()">启动 AI 初筛</button>
               </div>
@@ -2818,15 +2824,36 @@
         const data = await response.json();
         if (!response.ok) return;
         if (data.siliconflow_configured) {
-          setCreatorScreeningStatus(`已配置 ${data.active_provider}（${data.active_model}），将用于需求解析和主页判定。`);
+          const source = data.configuration_source ? `，来源：${data.configuration_source}` : "";
+          setCreatorScreeningStatus(`已配置 ${data.active_provider}（${data.active_model}）${source}，将用于需求解析和主页判定。`);
           return;
         }
-        const missing = [];
-        if (!data.deepseek_configured) missing.push("DEEPSEEK_API_KEY");
-        if (!data.openrouter_configured) missing.push("OPENROUTER_API_KEY");
-        if (missing.length) setCreatorScreeningStatus("AI 接口未配置：" + missing.join("、") + "。配置后重启服务再执行初筛。");
+        setCreatorScreeningStatus("请先粘贴硅基流动 API Key 并点击“保存 AI Key”。");
       } catch (_) {
         // The upload flow will surface a readable error if the local API is unavailable.
+      }
+    }
+
+    async function saveCreatorScreeningApiKey() {
+      const input = document.getElementById("creator_screening_api_key");
+      const apiKey = input.value.trim();
+      if (!apiKey) {
+        setCreatorScreeningStatus("请先粘贴硅基流动 API Key。");
+        return;
+      }
+      setCreatorScreeningStatus("正在保存 AI 配置...");
+      try {
+        const response = await fetch("/api/creator-screening/api-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: apiKey })
+        });
+        const data = await response.json();
+        if (!response.ok || data.status !== "ok") throw new Error(data.detail || "保存失败");
+        input.value = "";
+        setCreatorScreeningStatus(`已保存 ${data.active_provider}（${data.active_model}），现在可以启动 AI 初筛。`);
+      } catch (error) {
+        setCreatorScreeningStatus("保存失败：" + (error.message || String(error)));
       }
     }
 

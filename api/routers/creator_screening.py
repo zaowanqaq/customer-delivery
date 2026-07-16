@@ -6,7 +6,8 @@ import io
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..schemas.creator_screening import CreatorScreeningImportRequest, CreatorScreeningStartRequest
+from ..schemas.creator_screening import CreatorScreeningApiKeyRequest, CreatorScreeningImportRequest, CreatorScreeningStartRequest
+from ..services.local_ai_config import save_siliconflow_api_key
 from ..services.creator_screening import CreatorScreeningAI, CreatorScreeningJobManager, parse_creator_screening_file
 
 
@@ -28,6 +29,20 @@ async def download_template():
 @router.get("/preflight")
 async def preflight():
     return CreatorScreeningAI().configuration_status()
+
+
+@router.post("/api-key")
+async def save_api_key(request: CreatorScreeningApiKeyRequest):
+    api_key = request.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请粘贴 API Key")
+    save_siliconflow_api_key(api_key)
+    return {
+        "status": "ok",
+        "active_provider": "SiliconFlow Kimi",
+        "active_model": "Pro/moonshotai/Kimi-K2.6",
+        "configuration_source": "本机网页配置",
+    }
 
 
 @router.post("/import")

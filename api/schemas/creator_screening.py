@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreatorCandidateInput(BaseModel):
@@ -20,3 +20,7 @@ class CreatorScreeningImportRequest(BaseModel):
 class CreatorScreeningStartRequest(BaseModel):
     requirement: str
     candidates: List[CreatorCandidateInput]
+
+
+class CreatorScreeningApiKeyRequest(BaseModel):
+    api_key: str = Field(min_length=1, max_length=512)
