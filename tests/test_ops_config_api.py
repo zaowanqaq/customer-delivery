@@ -143,6 +143,7 @@ async def test_start_account_monitor_snapshots_current_creator_and_uses_isolated
 
     result = await crawler.start_account_monitor(crawler.SampleCreatorStartRequest(
         creator_ids="https://www.xiaohongshu.com/user/profile/62c98736000000001501e075",
+        notes_per_creator=37,
         save_option="excel",
         report_mode="auto",
     ))
@@ -156,7 +157,10 @@ async def test_start_account_monitor_snapshots_current_creator_and_uses_isolated
         assert job["requested_creator_ids"] == ["62c98736000000001501e075"]
         assert job["source_started_at"] > 0
         assert captured["start_request"].creator_ids.endswith("/62c98736000000001501e075")
+        assert captured["start_request"].max_notes_count == 37
         assert captured["start_request"].save_option.value == "csv"
+        assert job["notes_per_creator"] == 37
+        assert result["notes_per_creator"] == 37
     finally:
         crawler.account_monitor_jobs.pop(job_id, None)
 

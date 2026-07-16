@@ -1644,7 +1644,8 @@ async def _build_account_monitor_report(
             if not source_path.is_file():
                 raise RuntimeError("小红书抓取结果已不存在，无法从蒲公英断点继续，请重新执行账号内容监测")
         else:
-            job.update({"status": "crawling", "stage": "正在抓取各账号最近 20 篇笔记", "error": ""})
+            notes_per_creator = max(1, int(job.get("notes_per_creator") or 20))
+            job.update({"status": "crawling", "stage": f"正在抓取各账号最近 {notes_per_creator} 篇笔记", "error": ""})
             if not await _wait_crawler_idle(timeout_sec=1800):
                 raise RuntimeError("等待账号笔记抓取完成超时")
             source_started_at = float(job.get("source_started_at") or 0)
@@ -3213,7 +3214,7 @@ async def start_sample_creators(request: SampleCreatorStartRequest):
 
 @router.post("/account-monitor/start")
 async def start_account_monitor(request: SampleCreatorStartRequest):
-    """Run a fixed 20-note account report and generate the requested Excel layout."""
+    """Run an account report using the requested note count and generate the Excel layout."""
     creator_links = _split_creator_inputs(request.creator_ids)
     if not creator_links:
         raise HTTPException(status_code=400, detail="请至少提供 1 个小红书账号主页链接")
@@ -3236,12 +3237,13 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
     requested_creator_ids = [_profile_id_from_url(link) for link in normalized_links]
     source_started_at = time.time()
 
+    notes_per_creator = max(1, request.notes_per_creator)
     start_request = CrawlerStartRequest(
         platform=request.platform,
         login_type=request.login_type,
         crawler_type="creator",
         creator_ids=",".join(normalized_links),
-        max_notes_count=20,
+        max_notes_count=notes_per_creator,
         max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
         enable_comments=False,
         enable_sub_comments=False,
@@ -3268,7 +3270,7 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         "creator_count": len(normalized_links),
         "requested_creator_ids": requested_creator_ids,
         "source_started_at": source_started_at,
-        "notes_per_creator": 20,
+        "notes_per_creator": notes_per_creator,
         "row_count": 0,
         "report_path": "",
         "pgy_errors": [],
@@ -3287,7 +3289,7 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         "message": "账号内容监测任务已启动",
         "job_id": job_id,
         "creator_count": len(normalized_links),
-        "notes_per_creator": 20,
+        "notes_per_creator": notes_per_creator,
         "report_mode": request.report_mode,
     }
 

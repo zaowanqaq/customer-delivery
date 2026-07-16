@@ -160,6 +160,10 @@ def test_sample_account_file_import_controls_are_present():
     assert "在“找博主”中判断该达人是否开通蒲公英主页" in html
     assert 'account_monitor_mode: "auto"' in html
     assert "/api/crawler/account-monitor/start" in html
+    assert '<input id="notes_per_creator" type="number" min="1" value="20">' in html
+    assert 'notes_per_creator: Math.max(1, Number(payload.notes_per_creator || 20))' in html
+    assert "result.notes_per_creator || body.notes_per_creator" in html
+    assert 'id="notes_per_creator" type="number" min="20" max="20"' not in html
     assert "downloadAccountMonitorTemplate()" in html
     assert "账号内容监测_主页链接模板.csv" in html
     assert "下载账号内容监测表" not in html

@@ -558,8 +558,8 @@
         </div>
         <div id="tab-step2" class="tab-pane">
           <section class="card">
-      <h2>账号内容监测（近 20 篇笔记汇总）</h2>
-      <p class="hint">导入样本账号主页链接后，系统为每个账号汇总最近发布的 20 篇笔记；第一阶段使用小红书登录态抓取笔记，第二阶段使用蒲公英登录态在“找博主”中判断该达人是否开通蒲公英主页。</p>
+      <h2>账号内容监测（近期笔记汇总）</h2>
+      <p class="hint">导入样本账号主页链接后，系统按下方设置汇总每个账号最近发布的笔记；第一阶段使用小红书登录态抓取笔记，第二阶段使用蒲公英登录态在“找博主”中判断该达人是否开通蒲公英主页。</p>
       <div class="grid">
         <div class="row full">
           <label>导入样本账号文件（txt / csv / Excel）</label>
@@ -580,7 +580,7 @@
         </div>
         <div class="row">
           <label>每个账号抓取篇数</label>
-          <input id="notes_per_creator" type="number" min="20" max="20" value="20" readonly>
+          <input id="notes_per_creator" type="number" min="1" value="20">
         </div>
       </div>
       <div class="btns">
@@ -2605,7 +2605,7 @@
           platform: "xhs",
           login_type: payload.login_type,
           creator_ids: payload.sample_creator_ids,
-          notes_per_creator: 20,
+          notes_per_creator: Math.max(1, Number(payload.notes_per_creator || 20)),
           max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
           enable_comments: payload.enable_comments,
           enable_sub_comments: payload.enable_sub_comments,
@@ -2626,7 +2626,7 @@
         log("账号内容监测启动结果: " + JSON.stringify(result));
         if (res.ok && result.status === "ok") {
           accountMonitorJobId = result.job_id;
-          setAccountMonitorStatus(`任务已启动：本次 ${result.creator_count || 0} 个账号，正在通过小红书抓取最近 20 篇笔记`);
+          setAccountMonitorStatus(`任务已启动：本次 ${result.creator_count || 0} 个账号，正在通过小红书抓取最近 ${result.notes_per_creator || body.notes_per_creator} 篇笔记`);
           startProgressMonitor();
           stopAccountMonitorPolling();
           accountMonitorTimer = setInterval(refreshAccountMonitorJob, 2000);
