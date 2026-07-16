@@ -848,7 +848,9 @@ async def _read_table_fields(base_token: str, table_id: str) -> List[str]:
         f.get("name")
         for f in fields
         if isinstance(f, dict) and f.get("name") and f.get("type") not in {
-            "not_support", "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by",
+            "not_support", "attachment", "formula", "lookup", "auto_number",
+            "created_at", "updated_at", "created_by", "updated_by",
+            "created_time", "modified_time", "created_user", "modified_user",
         }
     ]
 
@@ -1991,18 +1993,20 @@ def _normalize_base_cell_value(value: Any, field_def: Dict[str, Any]) -> Any:
         return None
     field_type = str(field_def.get("type") or "text").strip().lower()
 
-    if field_type in {"select", "multi_select", "multiple_select"}:
+    if field_type in {"multi_select", "multiple_select"} or field_def.get("multiple"):
         if isinstance(value, (list, tuple, set)):
             items = [str(item).strip() for item in value if not _is_missing_base_cell(item)]
         else:
             text = str(value).strip()
-            if field_def.get("multiple"):
-                items = [item.strip() for item in re.split(r"[,，;；]", text) if item.strip()]
-            else:
-                items = [text] if text else []
+            items = [item.strip() for item in re.split(r"[,，;；]", text) if item.strip()]
         return items or None
 
-    if field_type in {"link", "user", "group"}:
+    if field_type in {"select", "single_select"}:
+        if isinstance(value, (list, tuple, set)):
+            value = next((item for item in value if not _is_missing_base_cell(item)), None)
+        return None if _is_missing_base_cell(value) else str(value).strip()
+
+    if field_type in {"link", "user", "group", "group_chat"}:
         candidates = value if isinstance(value, list) else [value]
         normalized = [
             {"id": str(item.get("id"))}
@@ -2036,6 +2040,9 @@ def _normalize_base_cell_value(value: Any, field_def: Dict[str, Any]) -> Any:
         except Exception:
             return None
 
+    if field_type in {"text", "phone", "url", "email", "barcode", "datetime", "date"}:
+        return str(value)
+
     if isinstance(value, (dict, list, tuple, set)):
         return json.dumps(value if not isinstance(value, set) else sorted(value), ensure_ascii=False)
     if isinstance(value, (str, int, float, bool)):
@@ -2052,6 +2059,11 @@ def _normalize_base_row_values(
         _normalize_base_cell_value(value, field_defs_by_name.get(field_name) or {"type": "text"})
         for field_name, value in zip(table_fields, values)
     ]
+
+
+def _base_record_field_map(table_fields: List[str], values: List[Any]) -> Dict[str, Any]:
+    """Build the top-level field map required by lark-cli base +record-upsert."""
+    return dict(zip(table_fields, values))
 
 
 def _first_media_url(value: Any) -> str:
@@ -2658,7 +2670,9 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
         field.get("name")
         for field in field_defs
         if field.get("name") and field.get("type") not in {
-            "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by", "not_support",
+            "attachment", "formula", "lookup", "auto_number", "not_support",
+            "created_at", "updated_at", "created_by", "updated_by",
+            "created_time", "modified_time", "created_user", "modified_user",
         }
     ]
     field_types = {field.get("name"): field.get("type") for field in field_defs}
@@ -2883,7 +2897,7 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
         note_id = str(row_values[note_id_idx]).strip() if note_id_idx >= 0 and row_values[note_id_idx] else ""
         record_id = existing.get(note_id) if note_id else None
         if record_id:
-            payload = {"fields": table_fields, "values": row_values}
+            payload = _base_record_field_map(table_fields, row_values)
             with _lark_json_arg(payload) as json_arg:
                 await _run_lark_cli(
                     [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],
@@ -2933,7 +2947,7 @@ async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest
         values = _row_to_table_values(row, table_fields, "comments")
         record_id = existing.get(comment_id) if comment_id else None
         if record_id:
-            payload = {"fields": table_fields, "values": values}
+            payload = _base_record_field_map(table_fields, values)
             with _lark_json_arg(payload) as json_arg:
                 await _run_lark_cli(
                     [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.comments_table_id, "--record-id", record_id, "--json", json_arg],
@@ -3792,7 +3806,9 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         field.get("name")
         for field in field_defs
         if field.get("name") and field.get("type") not in {
-            "not_support", "attachment", "formula", "lookup", "created_at", "updated_at", "created_by", "updated_by",
+            "not_support", "attachment", "formula", "lookup", "auto_number",
+            "created_at", "updated_at", "created_by", "updated_by",
+            "created_time", "modified_time", "created_user", "modified_user",
         }
     ]
     attachment_field_ids = {
@@ -3847,7 +3863,7 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         dedupe_key = str(row_values[dedupe_idx]).strip() if dedupe_idx >= 0 and row_values[dedupe_idx] else ""
         record_id = existing.get(dedupe_key) if dedupe_key else None
         if record_id:
-            payload = {"fields": table_fields, "values": row_values}
+            payload = _base_record_field_map(table_fields, row_values)
             with _lark_json_arg(payload) as json_arg:
                 await _run_lark_cli(
                     [lark_cli_bin, "base", "+record-upsert", "--as", "user", "--base-token", request.base_token, "--table-id", request.table_id, "--record-id", record_id, "--json", json_arg],

@@ -392,6 +392,7 @@ async def test_read_table_fields_skips_not_support_columns(monkeypatch):
                 {"name": "标题改写", "type": "not_support"},
                 {"name": "正文改写", "type": "not_support"},
                 {"name": "封面文件", "type": "attachment"},
+                {"name": "序号", "type": "auto_number"},
                 {"name": "点赞数", "type": "number"},
             ]
         }
@@ -820,7 +821,9 @@ async def test_sync_local_to_base_dedupes_with_chinese_note_id_field(monkeypatch
     assert result["created"] == 1
     assert result["updated"] == 1
     assert [call["cmd"][2] for call in calls] == ["+record-upsert", "+record-batch-create"]
-    assert calls[0]["payload"]["values"] == ["note-existing", "old"]
+    assert calls[0]["payload"] == {"笔记ID": "note-existing", "标题": "old"}
+    assert "fields" not in calls[0]["payload"]
+    assert "values" not in calls[0]["payload"]
     assert calls[1]["payload"]["rows"] == [["note-new", "new"]]
 
 
@@ -875,3 +878,11 @@ async def test_sync_local_to_base_normalizes_nan_select_number_and_user_cells(mo
         12000,
         None,
     ]]
+
+
+def test_normalize_base_cell_uses_cli_shapes_for_text_and_select_fields():
+    assert crawler._normalize_base_cell_value(123456, {"type": "text"}) == "123456"
+    assert crawler._normalize_base_cell_value("美食", {"type": "select"}) == "美食"
+    assert crawler._normalize_base_cell_value(
+        "美食,探店", {"type": "multi_select"}
+    ) == ["美食", "探店"]
