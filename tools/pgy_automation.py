@@ -17,7 +17,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from playwright.sync_api import APIRequestContext, Browser, BrowserContext, Page, TimeoutError, sync_playwright
@@ -36,6 +36,7 @@ DEFAULT_USER_DATA_DIR = browser_data_dir() / "pgy_user_data_dir"
 DEFAULT_STORAGE_STATE = browser_data_dir() / "pgy_storage_state.json"
 DEFAULT_OUTPUT_DIR = downloads_dir() / "pgy"
 PGY_KOL_NOTE_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
+PGY_NOTE_DATA_URL = "https://pgy.xiaohongshu.com/solar/post-trade/content-manage"
 PGY_ORIGIN = "https://pgy.xiaohongshu.com"
 
 
@@ -164,7 +165,160 @@ def login_state(page: Page) -> str:
         return "logged_in_or_public"
     if "/solar/pre-trade/blogger-detail" in page.url and ("传播表现" in text or "粉丝分析" in text):
         return "logged_in_or_public"
+    if "/solar/post-trade/content-manage" in page.url and ("笔记合作数据" in text or "笔记报告" in text):
+        return "logged_in_or_public"
     return "login_required"
+
+
+def parse_pgy_metric_number(value: object) -> Any:
+    """Convert PGY table counts such as ``1.2万`` to Base-compatible numbers."""
+    text = str(value or "").strip().replace(",", "")
+    if not text or text in {"-", "--"}:
+        return ""
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return ""
+    number = float(match.group(0))
+    if "亿" in text:
+        number *= 100_000_000
+    elif "万" in text or re.search(r"\d(?:\.\d+)?[wW]\b", text):
+        number *= 10_000
+    elif re.search(r"\d(?:\.\d+)?[kK]\b", text):
+        number *= 1_000
+    return int(number) if number.is_integer() else number
+
+
+def _pgy_cell_lines(cell: object) -> list[str]:
+    if not isinstance(cell, dict):
+        return []
+    lines = cell.get("lines")
+    if isinstance(lines, list):
+        return [str(item).strip() for item in lines if str(item).strip()]
+    text = str(cell.get("text") or "")
+    return [item.strip() for item in text.splitlines() if item.strip()]
+
+
+def normalize_pgy_note_grid_row(note_id: str, cells: dict[str, object]) -> dict[str, Any]:
+    """Map one visible PGY note-report grid row to MediaCrawler note keys."""
+    note_cell = cells.get("note") or {}
+    kol_cell = cells.get("kol") or {}
+    note_lines = _pgy_cell_lines(note_cell)
+    kol_lines = _pgy_cell_lines(kol_cell)
+    note_links = note_cell.get("links") if isinstance(note_cell, dict) else []
+    kol_links = kol_cell.get("links") if isinstance(kol_cell, dict) else []
+    note_url = next(
+        (str(url) for url in (note_links or []) if "xiaohongshu.com" in str(url) and ("/explore/" in str(url) or "/discovery/item/" in str(url))),
+        "",
+    )
+    author_homepage_url = next(
+        (str(url) for url in (kol_links or []) if "/user/profile/" in str(url)),
+        "",
+    )
+    title = next(
+        (
+            line
+            for line in note_lines
+            if note_id not in line
+            and line not in {"图文", "视频", "笔记详情", "查看详情"}
+            and not line.startswith("笔记ID")
+        ),
+        "",
+    )
+    nickname = next(
+        (
+            line
+            for line in kol_lines
+            if not re.search(r"粉丝|小红书号|ID[:：]", line, re.IGNORECASE)
+        ),
+        "",
+    )
+    tag_lines = _pgy_cell_lines(cells.get("collectionType") or {})
+    metric_keys = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    result: dict[str, Any] = {
+        "note_id": note_id,
+        "note_url": note_url,
+        "title": title,
+        "author_nickname": nickname,
+        "author_homepage_url": author_homepage_url,
+        "publish_date": "\n".join(_pgy_cell_lines(cells.get("notePublishTime") or {})),
+        "tag_list": tag_lines,
+        "pgy_note_source": "蒲公英笔记报告",
+    }
+    for source_key, target_key in metric_keys.items():
+        lines = _pgy_cell_lines(cells.get(source_key) or {})
+        result[target_key] = parse_pgy_metric_number(lines[0] if lines else "")
+    for source_key, target_key in {
+        "videoPlay5sRate": "pgy_video_5s_play_rate",
+        "picRead3sRate": "pgy_picture_3s_read_rate",
+        "avgViewTime": "pgy_avg_view_time",
+        "engageRate": "pgy_engage_rate",
+        "duration": "pgy_video_duration",
+        "cooperateType": "pgy_cooperate_type",
+    }.items():
+        result[target_key] = "\n".join(_pgy_cell_lines(cells.get(source_key) or {}))
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
+
+def extract_note_data_grid(page: Page, requested_note_id: str = "") -> list[dict[str, Any]]:
+    """Read the visible PGY content-management grid using its stable column ids."""
+    raw_rows = page.evaluate(
+        """() => {
+        const parseArea = (value) => {
+            const parts = String(value || '').split('/').map((item) => Number(item.trim()));
+            return parts.length === 4 && parts.every(Number.isFinite) ? parts : null;
+        };
+        const grids = Array.from(document.querySelectorAll('.d-grid.d-table'));
+        const grid = grids.find((item) => item.querySelector('.d-th#note') && item.querySelector('.d-th#impNum'));
+        if (!grid) return [];
+        const headers = {};
+        for (const header of Array.from(grid.children)) {
+            if (!header.classList.contains('d-th') || !header.id) continue;
+            const area = parseArea(header.style.gridArea);
+            if (area) headers[area[1]] = header.id;
+        }
+        const rows = {};
+        for (const cell of Array.from(grid.children)) {
+            if (cell.classList.contains('d-th')) continue;
+            const area = parseArea(cell.style.gridArea);
+            if (!area || area[3] - area[1] !== 1) continue;
+            const key = headers[area[1]];
+            if (!key) continue;
+            const rowIndex = area[0];
+            if (!rows[rowIndex]) rows[rowIndex] = {};
+            const lines = String(cell.innerText || '')
+                .split(/\n+/)
+                .map((item) => item.trim())
+                .filter(Boolean);
+            const links = Array.from(cell.querySelectorAll('a[href]')).map((item) => item.href).filter(Boolean);
+            rows[rowIndex][key] = {text: lines.join('\n'), lines, links};
+        }
+        return Object.keys(rows).sort((a, b) => Number(a) - Number(b)).map((key) => rows[key]);
+        }"""
+    )
+    candidate_rows = [
+        raw_row
+        for raw_row in (raw_rows or [])
+        if "\n".join(_pgy_cell_lines((raw_row or {}).get("note") or {})).strip() not in {"总计", "合计"}
+    ]
+    normalized: list[dict[str, Any]] = []
+    for raw_row in candidate_rows:
+        note_text = "\n".join(_pgy_cell_lines((raw_row or {}).get("note") or {}))
+        if requested_note_id and requested_note_id not in note_text:
+            note_links = ((raw_row or {}).get("note") or {}).get("links") or []
+            if not any(requested_note_id in str(url) for url in note_links) and len(candidate_rows) != 1:
+                continue
+        normalized.append(normalize_pgy_note_grid_row(requested_note_id, raw_row or {}))
+    return normalized
 
 
 def find_visible_text_box(page: Page, text: str, exact: bool = True) -> Optional[dict]:
@@ -961,6 +1115,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             row["screenshot"] = detail.get("screenshot") or ""
             row["detail_text"] = detail.get("detail_text") or ""
             row["url"] = detail.get("url") or ""
+        row["detail_fetched"] = bool(detail.get("api_data"))
+        row["detail_error"] = detail.get("error") or ""
     blogger_detail = extract_api_payload(api_data.get("blogger_detail") or {})
     red_id = blogger_detail.get("redId") or ""
     target_metrics = flatten_detail_metrics(api_data)
@@ -1013,6 +1169,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "screenshot",
             "detail_text",
             "url",
+            "detail_fetched",
+            "detail_error",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -1093,6 +1251,76 @@ def action_screenshot(args: argparse.Namespace) -> None:
                 "storage_state": save_storage_state(session.context, args.storage_state),
                 "screenshot": save_screenshot(page, "pgy_page.png"),
                 "text_preview": visible_text(page, limit=1600),
+            }
+        )
+        close_browser_session(session, keep_open=args.keep_open)
+
+
+def action_run_note_data(args: argparse.Namespace) -> None:
+    note_ids = list(
+        dict.fromkeys(
+            item.strip()
+            for item in re.split(r"[\n\r,，;；]+", args.note_ids or "")
+            if item.strip()
+        )
+    )
+    if not note_ids:
+        raise ValueError("请至少提供 1 个笔记 ID")
+
+    with sync_playwright() as playwright:
+        session = open_browser_session(playwright, args)
+        page = session.page
+        goto_and_wait(page, PGY_NOTE_DATA_URL)
+        state = login_state(page)
+        if state == "login_required":
+            _json_line(
+                {
+                    "status": state,
+                    "url": page.url,
+                    "requested_count": len(note_ids),
+                    "notes": [],
+                    "error": "蒲公英需要登录，请先在插件中打开蒲公英登录窗口",
+                }
+            )
+            close_browser_session(session, keep_open=False)
+            return
+
+        note_input = page.get_by_placeholder("请输入笔记ID", exact=True)
+        query_button = page.get_by_role("button", name="查询", exact=True)
+        if note_input.count() != 1 or query_button.count() != 1:
+            raise RuntimeError("蒲公英笔记报告页面结构已变化，未找到笔记 ID 查询控件")
+
+        notes: list[dict[str, Any]] = []
+        missing_note_ids: list[str] = []
+        for index, note_id in enumerate(note_ids, start=1):
+            _progress(f"正在读取蒲公英单篇数据（{index}/{len(note_ids)}）", "note_data")
+            note_input.fill(note_id)
+            query_button.click()
+            page.wait_for_timeout(300)
+            loading = page.get_by_text("加载中", exact=True)
+            if loading.count() == 1:
+                try:
+                    loading.wait_for(state="hidden", timeout=max(5_000, args.note_data_wait_ms))
+                except TimeoutError:
+                    pass
+            page.wait_for_timeout(300)
+            matches = extract_note_data_grid(page, note_id)
+            if matches:
+                notes.append(matches[0])
+            else:
+                missing_note_ids.append(note_id)
+
+        _json_line(
+            {
+                "status": "ok",
+                "source": "蒲公英笔记报告",
+                "url": page.url,
+                "requested_count": len(note_ids),
+                "matched_count": len(notes),
+                "missing_count": len(missing_note_ids),
+                "missing_note_ids": missing_note_ids,
+                "notes": notes,
+                "storage_state": save_storage_state(session.context, args.storage_state),
             }
         )
         close_browser_session(session, keep_open=args.keep_open)
@@ -1543,7 +1771,7 @@ def action_run_kol(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="小红书蒲公英 UI 自动化")
-    parser.add_argument("action", choices=["login", "screenshot", "click-nickname", "run-kol"])
+    parser.add_argument("action", choices=["login", "screenshot", "click-nickname", "run-kol", "run-note-data"])
     parser.add_argument("--user-data-dir", default=str(DEFAULT_USER_DATA_DIR), help="Playwright 持久化浏览器目录")
     parser.add_argument("--cdp", default="", help="连接已开启远程调试的 Chrome，例如 http://127.0.0.1:9222")
     parser.add_argument("--remote-debugging-port", default="", help="启动浏览器时开启远程调试端口")
@@ -1558,6 +1786,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--red-id", default="", help="小红书号；提供后优先用它搜索并精确匹配达人")
     parser.add_argument("--similar-detail-limit", type=int, default=20, help="逐个抓取相似博主详情页的数量")
     parser.add_argument("--similar-user-ids", default="", help="只抓取这些相似博主 userId，逗号分隔")
+    parser.add_argument("--note-ids", default="", help="run-note-data 要查询的笔记 ID，逗号分隔")
+    parser.add_argument("--note-data-wait-ms", type=int, default=15000, help="每次查询蒲公英单篇笔记数据的最长等待时间")
     parser.add_argument("--storage-state", default=str(DEFAULT_STORAGE_STATE), help="蒲公英 API 模式使用的登录态文件")
     parser.add_argument("--api-first", action=argparse.BooleanOptionalAction, default=True, help="优先使用无浏览器 API 模式")
     parser.add_argument("--api-only", action="store_true", help="只使用 API 模式，失败时不回退浏览器")
@@ -1580,6 +1810,8 @@ def main() -> int:
             action_click_nickname(args)
         elif args.action == "run-kol":
             action_run_kol(args)
+        elif args.action == "run-note-data":
+            action_run_note_data(args)
         else:
             parser.error(f"unsupported action: {args.action}")
     except Exception as exc:

@@ -69,7 +69,7 @@ OPS_CONFIG_DEFAULT = {
     "sync_limit": 0,
     "sync_file_path": "",
     "sample_creator_ids": "",
-    "notes_per_creator": 20,
+    "notes_per_creator": 10,
     "account_monitor_mode": "auto",
     "sentiment_note_links": "",
     "sentiment_risk_keywords": "骗人,差,价格高,贵,jd,pdd",
@@ -82,9 +82,11 @@ OPS_CONFIG_DEFAULT = {
     "collaboration_monitor_table_name": "笔记数据监测表",
     "collab_comments_table_name": "合作笔记舆情监控表",
     "creator_selection_table_name": "达人智能圈选表",
+    "creator_screening_table_name": "AI初筛结果表",
     "collab_project_name": "",
     "collab_source_keyword": "",
     "collab_creator_ids": "",
+    "collab_note_links": "",
     "collab_notes_per_creator": 20,
     "note_recreation_table_id": "",
     "collab_table_id": "",
@@ -94,6 +96,7 @@ OPS_CONFIG_DEFAULT = {
     "pgy_nickname": "",
     "pgy_red_id": "",
     "pgy_table_id": "",
+    "creator_screening_table_id": "",
     "pgy_sync_after_run": "true",
     "project_name": "",
     "current_project_key": "",
@@ -110,6 +113,7 @@ PROJECT_BOUND_FIELDS = {
     "sync_comments_table_id",
     "collab_table_id",
     "collab_comments_table_id",
+    "creator_screening_table_id",
     "keywords",
     "xhs_sort_by",
     "xhs_note_type",
@@ -123,6 +127,7 @@ PROJECT_BOUND_FIELDS = {
     "sentiment_risk_keywords",
     "sentiment_risk_groups",
     "collab_creator_ids",
+    "collab_note_links",
     "collab_notes_per_creator",
     "collab_interval_hours",
     "collab_sync_limit",
@@ -182,7 +187,7 @@ class OpsConfigPayload(BaseModel):
     sync_limit: int = 0
     sync_file_path: str = ""
     sample_creator_ids: str = ""
-    notes_per_creator: int = 20
+    notes_per_creator: int = 10
     account_monitor_mode: str = "auto"
     sentiment_note_links: str = ""
     sentiment_risk_keywords: str = "骗人,差,价格高,贵,jd,pdd"
@@ -195,9 +200,11 @@ class OpsConfigPayload(BaseModel):
     collaboration_monitor_table_name: str = "笔记数据监测表"
     collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
     collab_project_name: str = ""
     collab_source_keyword: str = ""
     collab_creator_ids: str = ""
+    collab_note_links: str = ""
     collab_notes_per_creator: int = 20
     note_recreation_table_id: str = ""
     collab_table_id: str = ""
@@ -207,6 +214,7 @@ class OpsConfigPayload(BaseModel):
     pgy_nickname: str = ""
     pgy_red_id: str = ""
     pgy_table_id: str = ""
+    creator_screening_table_id: str = ""
     pgy_sync_after_run: str = "true"
     project_name: str = ""
     current_project_key: str = ""
@@ -242,7 +250,16 @@ def _load_ops_config() -> dict:
                 config.update(loaded)
         except Exception:
             pass
-    return _migrate_ops_table_names(config)
+    config = _migrate_ops_table_names(config)
+    # Account content monitoring is intentionally capped at 10 notes per creator
+    # for the customer workflow, including previously saved project profiles.
+    config["notes_per_creator"] = 10
+    profiles = config.get("project_profiles")
+    if isinstance(profiles, dict):
+        for profile in profiles.values():
+            if isinstance(profile, dict):
+                profile["notes_per_creator"] = 10
+    return config
 
 
 def _save_ops_config(config_data: dict) -> None:
@@ -493,8 +510,10 @@ async def save_ops_config(payload: OpsConfigPayload):
         config_data["max_comments_count_singlenotes"] = 1
     if config_data["sync_limit"] < 0:
         config_data["sync_limit"] = 0
-    if config_data["notes_per_creator"] < 1:
-        config_data["notes_per_creator"] = 1
+    config_data["notes_per_creator"] = 10
+    for profile in (config_data.get("project_profiles") or {}).values():
+        if isinstance(profile, dict):
+            profile["notes_per_creator"] = 10
     if config_data.get("account_monitor_mode") not in {"auto", "public", "pgy"}:
         config_data["account_monitor_mode"] = "auto"
     if config_data["collab_interval_hours"] not in (4, 8, 24):

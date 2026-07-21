@@ -22,5 +22,10 @@ class CreatorScreeningStartRequest(BaseModel):
     candidates: List[CreatorCandidateInput]
 
 
+class CreatorScreeningSyncRequest(BaseModel):
+    base_token: str
+    table_id: str
+
+
 class CreatorScreeningApiKeyRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)

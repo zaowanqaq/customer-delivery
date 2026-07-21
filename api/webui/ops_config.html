@@ -187,6 +187,7 @@
     .creator-screening-table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: 13px; }
     .creator-screening-table th, .creator-screening-table td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
     .creator-screening-table th { background: #f8f2ec; color: var(--ink); font-weight: 800; }
+    .creator-screening-table tr.is-approved td { background: #edf8f1; }
     .creator-screening-table td.detail-cell { white-space: normal; min-width: 220px; }
     .screening-status { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
     .screening-status.符合 { background: #d9f3e4; color: #17623c; }
@@ -436,6 +437,7 @@
       <input id="collaboration_monitor_table_name" class="v1-hidden" value="笔记数据监测表">
       <input id="collab_comments_table_name" class="v1-hidden" value="合作笔记舆情监控表">
       <input id="creator_selection_table_name" class="v1-hidden" value="达人智能圈选表">
+      <input id="creator_screening_table_name" class="v1-hidden" value="AI初筛结果表">
       <input id="account_filter_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="sync_notes_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="note_recreation_table_id" class="v1-hidden" placeholder="tbl...">
@@ -443,6 +445,7 @@
       <input id="collab_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="collab_comments_table_id" class="v1-hidden" placeholder="tbl...">
       <input id="pgy_table_id" class="v1-hidden" placeholder="tbl...">
+      <input id="creator_screening_table_id" class="v1-hidden" placeholder="tbl...">
       <div class="btns">
         <button id="btn_bootstrap_project" class="primary" onclick="bootstrapProject()">一键新建项目</button>
       </div>
@@ -478,8 +481,15 @@
       <p class="hint">粘贴小红书笔记链接抓取评论。每个风险类型由多维表格公式自动判断；不提供 AI 评论解读。</p>
       <div class="grid">
         <div class="row full">
+          <label>上传舆情监测笔记表单（csv / Excel）</label>
+          <input id="sentiment_notes_file" type="file" accept=".csv,.xlsx,.xls" onchange="handleSentimentNotesFileChange()">
+          <p class="hint">表头固定为：序号、达人昵称、小红书id、发布笔记链接。上传后会自动提取并清洗“发布笔记链接”。</p>
+          <div class="btns"><button class="ghost" type="button" onclick="downloadSentimentNotesTemplate()">下载舆情监测笔记模板</button></div>
+          <p id="sentiment_notes_import_status" class="hint">等待上传舆情监测笔记表单</p>
+        </div>
+        <div class="row full">
           <label>笔记链接（逗号或换行）</label>
-          <textarea id="sentiment_note_links" placeholder="每行一个小红书笔记长链或短链"></textarea>
+          <textarea id="sentiment_note_links" placeholder="上传表单后自动显示；也可每行粘贴一条小红书笔记长链或短链"></textarea>
         </div>
         <div class="row full">
           <label>风险类型分组</label>
@@ -553,6 +563,7 @@
         <button class="ghost" onclick="saveConfig()">保存配置</button>
         <button class="danger" onclick="stopCrawler()">停止当前抓取</button>
       </div>
+      <p class="hint">同步目标：当前项目的「合作笔记舆情监控表」。这里监测的是已经合作的笔记，不写入普通「笔记舆情监控表」。</p>
       <div id="sentiment_monitor_status" class="creator-screening-status">等待输入笔记链接和风险类型分组</div>
     </section>
         </div>
@@ -560,6 +571,7 @@
           <section class="card">
       <h2>账号内容监测（近期笔记汇总）</h2>
       <p class="hint">导入样本账号主页链接后，系统按下方设置汇总每个账号最近发布的笔记；第一阶段使用小红书登录态抓取笔记，第二阶段使用蒲公英登录态在“找博主”中判断该达人是否开通蒲公英主页。</p>
+      <p class="hint">链接格式：请填写小红书账号主页，例如 https://www.xiaohongshu.com/user/profile/账号标识。不要填写蒲公英链接、笔记链接、昵称或小红书号；没有蒲公英主页不影响小红书主页分析，结果会标记为“无蒲公英主页”。</p>
       <div class="grid">
         <div class="row full">
           <label>导入样本账号文件（txt / csv / Excel）</label>
@@ -580,7 +592,8 @@
         </div>
         <div class="row">
           <label>每个账号抓取篇数</label>
-          <input id="notes_per_creator" type="number" min="1" value="20">
+          <input id="notes_per_creator" type="number" min="10" max="10" value="10" readonly>
+          <p class="hint">固定抓取最近10篇，缩短账号监测等待时间。</p>
         </div>
       </div>
       <div class="btns">
@@ -634,7 +647,8 @@
             </div>
             </div>
             <div id="creator_selection_ai_panel" class="creator-selection-panel">
-              <p class="hint">导入客户达人库后，系统只读取小红书主页当前可见的资料、IP、简介、笔记卡片和截图进行初筛，不会进入笔记详情页，也不会写入飞书多维表格。</p>
+              <p class="hint">导入客户达人库后，系统并发读取小红书主页当前可见的资料、IP、简介、笔记卡片和截图。初筛完成后，仅“符合”的账号自动同步到「AI初筛结果表」，字段与原始输入表一致。</p>
+              <p class="hint">“异常”表示主页加载、登录态或AI调用失败，不代表账号不符合。相似达人只有在勾选后点击“抓取勾选相似达人详情”，拿到完整详情后才会同步到飞书；页面本身未展示的数据会留空，并非任务中断。飞书中目标达人使用蓝色标签、相似博主使用橙色标签区分。</p>
               <div class="grid">
                 <div class="row full">
                   <label>AI API Key</label>
@@ -816,10 +830,18 @@
         <div id="tab-step5" class="tab-pane">
           <section class="card">
       <h2>笔记数据监测</h2>
+      <p class="hint">数据来源：优先使用蒲公英「我的数据 → 笔记报告」中的单篇数据，按笔记 ID 补充曝光、阅读、点赞、收藏、评论、分享等字段；蒲公英未返回的字段再保留小红书公开数据。这里读取的是单篇笔记实绩，不会使用达人账号的中位数。</p>
       <div class="grid">
         <div class="row full">
-          <label>合作博主账号名单（逗号或换行）</label>
-          <textarea id="collab_creator_ids" placeholder="每行一个合作博主主页链接或账号 ID"></textarea>
+          <label>合作笔记表单（csv / Excel）</label>
+          <input id="collab_notes_file" type="file" accept=".csv,.xlsx,.xls" onchange="handleCollabNotesFileChange()">
+          <p class="hint">表头固定为：序号、达人昵称、小红书id、发布笔记链接。支持小红书笔记长链和短链。</p>
+          <div class="btns"><button class="ghost" type="button" onclick="downloadCollabNotesTemplate()">下载合作笔记模板</button></div>
+        </div>
+        <div class="row full">
+          <label>已导入的发布笔记链接</label>
+          <textarea id="collab_note_links" placeholder="导入表单后自动显示；也可每行粘贴一条小红书笔记链接"></textarea>
+          <p id="collab_notes_import_status" class="hint">等待导入合作笔记表单</p>
         </div>
         <div class="row">
           <label>监控频率</label>
@@ -829,14 +851,13 @@
             <option value="24">24小时</option>
           </select>
         </div>
-        <div class="row">
-          <label>每次同步上限</label>
-          <input id="collab_sync_limit" type="number" min="1" value="20">
-        </div>
       </div>
       <input id="collab_project_name" class="v1-hidden" value="">
       <input id="collab_source_keyword" class="v1-hidden" value="">
+      <textarea id="collab_creator_ids" class="v1-hidden"></textarea>
       <div class="btns">
+        <button class="ghost" onclick="pgyLogin()">打开蒲公英登录窗口</button>
+        <button class="ghost" onclick="pgyCheckStatus()">验证蒲公英登录态</button>
         <button class="ghost" onclick="crawlOnceAndSync()">抓取并同步</button>
         <button class="primary" onclick="startCollabMonitor()">启动合作监控</button>
         <button class="ghost" onclick="queryCollabStatus()">查询监控状态</button>
@@ -942,28 +963,28 @@
 
     const fields = [
       "project_name", "folder_token", "template_base_token", "scenario_base_token", "sync_base_token",
-      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "collab_comments_table_name", "creator_selection_table_name",
-      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id",
+      "account_filter_table_name", "viral_monitor_table_name", "note_recreation_table_name", "comments_table_name", "collaboration_monitor_table_name", "collab_comments_table_name", "creator_selection_table_name", "creator_screening_table_name",
+      "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id", "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "creator_screening_table_id",
       "login_type", "save_option", "headless", "enable_comments", "enable_sub_comments", "enable_media", "cookies",
       "max_comments_count_singlenotes",
       "sample_creator_ids", "notes_per_creator", "account_monitor_mode",
       "sentiment_note_links", "sentiment_risk_groups",
       "keywords", "start_page", "max_notes_count", "xhs_sort_by", "xhs_note_type", "xhs_publish_time",
       "xhs_search_scope", "xhs_location", "sync_limit", "sync_file_path",
-      "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_notes_per_creator",
-      "collab_interval_hours", "collab_sync_limit",
+      "collab_project_name", "collab_source_keyword", "collab_creator_ids", "collab_note_links", "collab_notes_per_creator",
+      "collab_interval_hours",
       "pgy_table_id", "pgy_sync_after_run",
       "current_project_key", "project_profiles"
     ];
     const projectBoundFields = [
       "project_name", "template_base_token", "sync_base_token",
       "account_filter_table_id", "sync_notes_table_id", "note_recreation_table_id",
-      "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "keywords", "xhs_sort_by",
+      "sync_comments_table_id", "collab_table_id", "collab_comments_table_id", "creator_screening_table_id", "keywords", "xhs_sort_by",
       "xhs_note_type", "xhs_publish_time", "max_notes_count",
       "max_comments_count_singlenotes", "sample_creator_ids", "notes_per_creator", "account_monitor_mode",
       "sentiment_note_links", "sentiment_risk_groups",
-      "collab_creator_ids", "collab_notes_per_creator", "collab_interval_hours",
-      "collab_sync_limit", "pgy_table_id", "pgy_sync_after_run"
+      "collab_creator_ids", "collab_note_links", "collab_notes_per_creator", "collab_interval_hours",
+      "pgy_table_id", "pgy_sync_after_run"
     ];
     const defaultWorkbenchConfig = {
       platform: "xhs",
@@ -980,12 +1001,14 @@
       collaboration_monitor_table_name: "笔记数据监测表",
       collab_comments_table_name: "合作笔记舆情监控表",
       creator_selection_table_name: "达人智能圈选表",
+      creator_screening_table_name: "AI初筛结果表",
       account_filter_table_id: "",
       sync_notes_table_id: "",
       note_recreation_table_id: "",
       sync_comments_table_id: "",
       collab_table_id: "",
       collab_comments_table_id: "",
+      creator_screening_table_id: "",
       login_type: "cookie",
       save_option: "csv",
       headless: false,
@@ -995,7 +1018,7 @@
       max_comments_count_singlenotes: 10,
       cookies: "",
       sample_creator_ids: "",
-      notes_per_creator: 20,
+      notes_per_creator: 10,
       account_monitor_mode: "auto",
       sentiment_note_links: "",
       sentiment_risk_groups: '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]',
@@ -1012,9 +1035,10 @@
       collab_project_name: "",
       collab_source_keyword: "",
       collab_creator_ids: "",
+      collab_note_links: "",
       collab_notes_per_creator: 20,
       collab_interval_hours: 4,
-      collab_sync_limit: 20,
+
       pgy_nickname: "",
       pgy_red_id: "",
       pgy_table_id: "",
@@ -1623,7 +1647,8 @@
         ["comments_table_name", "sync_comments_table_id"],
         ["collaboration_monitor_table_name", "collab_table_id"],
         ["collab_comments_table_name", "collab_comments_table_id"],
-        ["creator_selection_table_name", "pgy_table_id"]
+        ["creator_selection_table_name", "pgy_table_id"],
+        ["creator_screening_table_name", "creator_screening_table_id"]
       ];
       mappings.forEach(([nameId, targetId]) => {
         const tableName = document.getElementById(nameId)?.value || "";
@@ -1692,6 +1717,7 @@
       const collabTableId = resolveProjectTableId(tables, "collaboration_monitor_table_name", "collab_table_id", "笔记数据监测表");
       const collabCommentsTableId = resolveProjectTableId(tables, "collab_comments_table_name", "collab_comments_table_id", "合作笔记舆情监控表");
       const pgyTableId = resolveProjectTableId(tables, "creator_selection_table_name", "pgy_table_id", "达人智能圈选表");
+      const creatorScreeningTableId = resolveProjectTableId(tables, "creator_screening_table_name", "creator_screening_table_id", "AI初筛结果表");
       const accountMeta = findTableMeta(tables, accountTableId);
       const notesMeta = findTableMeta(tables, notesTableId);
       const recreationMeta = findTableMeta(tables, recreationTableId);
@@ -1699,6 +1725,7 @@
       const collabMeta = findTableMeta(tables, collabTableId);
       const collabCommentsMeta = findTableMeta(tables, collabCommentsTableId);
       const pgyMeta = findTableMeta(tables, pgyTableId);
+      const creatorScreeningMeta = findTableMeta(tables, creatorScreeningTableId);
       const baseHref = baseUrl(baseToken);
 
       view.innerHTML = `
@@ -1708,6 +1735,7 @@
         <div class="meta-row"><span class="meta-key">步骤3爆款抓取 -> 平台爆款监测表</span><span class="meta-val">${renderTableValue(baseToken, notesTableId, notesMeta && notesMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">笔记内容二创表</span><span class="meta-val">${renderTableValue(baseToken, recreationTableId, recreationMeta && recreationMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤4达人智能圈选 -> 达人智能圈选表</span><span class="meta-val">${renderTableValue(baseToken, pgyTableId, pgyMeta && pgyMeta.name)}</span></div>
+        <div class="meta-row"><span class="meta-key">步骤4 AI初筛符合账号 -> AI初筛结果表</span><span class="meta-val">${renderTableValue(baseToken, creatorScreeningTableId, creatorScreeningMeta && creatorScreeningMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">爆款评论 -> 笔记舆情监控表</span><span class="meta-val">${renderTableValue(baseToken, commentsTableId, commentsMeta && commentsMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤5合作笔记 -> 笔记数据监测表</span><span class="meta-val">${renderTableValue(baseToken, collabTableId, collabMeta && collabMeta.name)}</span></div>
         <div class="meta-row"><span class="meta-key">步骤5合作评论 -> 合作笔记舆情监控表</span><span class="meta-val">${renderTableValue(baseToken, collabCommentsTableId, collabCommentsMeta && collabCommentsMeta.name)}</span></div>
@@ -1724,7 +1752,8 @@
       const collabLabel = collabMeta && collabMeta.name ? `${collabMeta.name} (${collabTableId})` : (collabTableId || "未配置");
       const collabCommentLabel = collabCommentsMeta && collabCommentsMeta.name ? `${collabCommentsMeta.name} (${collabCommentsTableId})` : (collabCommentsTableId || "未配置");
       const pgyLabel = pgyMeta && pgyMeta.name ? `${pgyMeta.name} (${pgyTableId})` : (pgyTableId || "未配置");
-      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；笔记二创 -> ${recreationLabel}；笔记舆情 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；步骤5笔记数据 -> ${collabLabel}；合作笔记舆情 -> ${collabCommentLabel}`;
+      const creatorScreeningLabel = creatorScreeningMeta && creatorScreeningMeta.name ? `${creatorScreeningMeta.name} (${creatorScreeningTableId})` : (creatorScreeningTableId || "未配置");
+      syncTargetHint.textContent = `步骤2样本账号 -> ${accountLabel}；步骤3爆款 -> ${noteLabel}；笔记二创 -> ${recreationLabel}；笔记舆情 -> ${commentLabel}；步骤4达人圈选 -> ${pgyLabel}；AI初筛符合账号 -> ${creatorScreeningLabel}；步骤5笔记数据 -> ${collabLabel}；合作笔记舆情 -> ${collabCommentLabel}`;
     }
 
     function getProjectProfileSnapshot(payload) {
@@ -1739,6 +1768,7 @@
         collab_table_id: payload.collab_table_id,
         collab_comments_table_id: payload.collab_comments_table_id,
         pgy_table_id: payload.pgy_table_id,
+        creator_screening_table_id: payload.creator_screening_table_id,
         keywords: payload.keywords,
         xhs_sort_by: payload.xhs_sort_by,
         xhs_note_type: payload.xhs_note_type,
@@ -1749,9 +1779,10 @@
         notes_per_creator: payload.notes_per_creator,
         sentiment_risk_groups: payload.sentiment_risk_groups,
         collab_creator_ids: payload.collab_creator_ids,
+        collab_note_links: payload.collab_note_links,
         collab_notes_per_creator: payload.collab_notes_per_creator,
         collab_interval_hours: payload.collab_interval_hours,
-        collab_sync_limit: payload.collab_sync_limit
+
       };
     }
 
@@ -1863,12 +1894,14 @@
         collaboration_monitor_table_name: document.getElementById("collaboration_monitor_table_name").value.trim(),
         collab_comments_table_name: document.getElementById("collab_comments_table_name").value.trim(),
         creator_selection_table_name: document.getElementById("creator_selection_table_name").value.trim(),
+        creator_screening_table_name: document.getElementById("creator_screening_table_name").value.trim(),
         account_filter_table_id: document.getElementById("account_filter_table_id").value.trim(),
         sync_notes_table_id: document.getElementById("sync_notes_table_id").value.trim(),
         note_recreation_table_id: document.getElementById("note_recreation_table_id").value.trim(),
         sync_comments_table_id: document.getElementById("sync_comments_table_id").value.trim(),
         collab_table_id: document.getElementById("collab_table_id").value.trim(),
         collab_comments_table_id: document.getElementById("collab_comments_table_id").value.trim(),
+        creator_screening_table_id: document.getElementById("creator_screening_table_id").value.trim(),
         login_type: document.getElementById("login_type").value || "cookie",
         save_option: document.getElementById("save_option").value,
         headless: document.getElementById("headless").value === "true",
@@ -1878,7 +1911,7 @@
         max_comments_count_singlenotes: Number(document.getElementById("max_comments_count_singlenotes").value || 10),
         cookies: document.getElementById("cookies").value.trim(),
         sample_creator_ids: document.getElementById("sample_creator_ids").value.trim(),
-        notes_per_creator: Number(document.getElementById("notes_per_creator").value || 20),
+        notes_per_creator: 10,
         account_monitor_mode: "auto",
         sentiment_note_links: document.getElementById("sentiment_note_links").value.trim(),
         sentiment_risk_groups: JSON.stringify(getSentimentRiskGroups()),
@@ -1895,10 +1928,11 @@
         collab_project_name: document.getElementById("collab_project_name").value.trim(),
         collab_source_keyword: document.getElementById("collab_source_keyword").value.trim(),
         collab_creator_ids: document.getElementById("collab_creator_ids").value.trim(),
+        collab_note_links: document.getElementById("collab_note_links").value.trim(),
         // 客户需求固定为每位达人最近发布的 20 篇笔记，不在页面暴露可变配置。
         collab_notes_per_creator: 20,
         collab_interval_hours: Number(document.getElementById("collab_interval_hours").value || 4),
-        collab_sync_limit: Number(document.getElementById("collab_sync_limit").value || 20),
+
         pgy_nickname: "",
         pgy_red_id: "",
         pgy_table_id: document.getElementById("pgy_table_id").value.trim(),
@@ -2116,7 +2150,8 @@
           comments_table_name: payload.comments_table_name,
           collaboration_monitor_table_name: payload.collaboration_monitor_table_name,
           collab_comments_table_name: payload.collab_comments_table_name || "合作笔记舆情监控表",
-          creator_selection_table_name: payload.creator_selection_table_name || "达人智能圈选表"
+          creator_selection_table_name: payload.creator_selection_table_name || "达人智能圈选表",
+          creator_screening_table_name: payload.creator_screening_table_name || "AI初筛结果表"
         };
         const res = await fetch("/api/crawler/bootstrap-project", {
           method: "POST",
@@ -2142,6 +2177,7 @@
           else if (tableName.includes("评论")) document.getElementById("sync_comments_table_id").value = tableId;
           if (tableName.includes("合作") && !tableName.includes("评论")) document.getElementById("collab_table_id").value = tableId;
           if (tableName.includes("达人智能圈选")) document.getElementById("pgy_table_id").value = tableId;
+          if (tableName.includes("AI初筛结果")) document.getElementById("creator_screening_table_id").value = tableId;
         }
         const snapshot = getProjectProfileSnapshot(getFormData());
         const defaultKey = payload.project_name;
@@ -2611,7 +2647,7 @@
           platform: "xhs",
           login_type: payload.login_type,
           creator_ids: payload.sample_creator_ids,
-          notes_per_creator: Math.max(1, Number(payload.notes_per_creator || 20)),
+          notes_per_creator: 10,
           max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
           enable_comments: payload.enable_comments,
           enable_sub_comments: payload.enable_sub_comments,
@@ -2683,6 +2719,38 @@
       }
     }
 
+    function downloadSentimentNotesTemplate() {
+      window.location.href = "/api/crawler/sentiment-notes-template";
+    }
+
+    async function importSentimentNotesFile() {
+      const input = document.getElementById("sentiment_notes_file");
+      const file = input && input.files ? input.files[0] : null;
+      if (!file) throw new Error("请先选择 csv 或 Excel 舆情监测笔记表单");
+      const status = document.getElementById("sentiment_notes_import_status");
+      if (status) status.textContent = "正在读取舆情监测笔记表单...";
+      const response = await fetch("/api/crawler/import-sentiment-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content_base64: arrayBufferToBase64(await file.arrayBuffer()) })
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== "ok") throw new Error(data.detail || "舆情监测笔记表单导入失败");
+      document.getElementById("sentiment_note_links").value = data.note_links || "";
+      if (status) status.textContent = `已导入 ${data.count || 0} 条发布笔记链接`;
+      await saveConfig();
+      return data;
+    }
+
+    async function handleSentimentNotesFileChange() {
+      try {
+        await importSentimentNotesFile();
+      } catch (error) {
+        const status = document.getElementById("sentiment_notes_import_status");
+        if (status) status.textContent = "导入失败：" + (error.message || String(error));
+      }
+    }
+
     async function startSentimentMonitor() {
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
@@ -2695,8 +2763,8 @@
         log("请为每个风险类型填写名称和至少一个关键词");
         return;
       }
-      if (!payload.sync_base_token || !payload.sync_comments_table_id) {
-        log("请先在项目大盘绑定笔记舆情监控表");
+      if (!payload.sync_base_token || !payload.collab_comments_table_id) {
+        log("请先在项目大盘绑定合作笔记舆情监控表");
         return;
       }
       await saveConfig();
@@ -2704,7 +2772,7 @@
         note_links: payload.sentiment_note_links,
         risk_groups: riskGroups,
         base_token: payload.sync_base_token,
-        table_id: payload.sync_comments_table_id,
+        table_id: payload.collab_comments_table_id,
         login_type: payload.login_type,
         max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         enable_sub_comments: payload.enable_sub_comments,
@@ -2741,8 +2809,8 @@
         log("请为每个风险类型填写名称和至少一个关键词");
         return;
       }
-      if (!payload.sync_base_token || !payload.sync_comments_table_id) {
-        log("请先在项目大盘绑定笔记舆情监控表");
+      if (!payload.sync_base_token || !payload.collab_comments_table_id) {
+        log("请先在项目大盘绑定合作笔记舆情监控表");
         return;
       }
       await saveConfig();
@@ -2753,7 +2821,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             base_token: payload.sync_base_token,
-            table_id: payload.sync_comments_table_id,
+            table_id: payload.collab_comments_table_id,
             risk_groups: riskGroups
           })
         });
@@ -2875,8 +2943,31 @@
         const evidence = (detail["证据"] || []).map(escapeHtml).join("；") || "无";
         const uncertain = (detail["不确定项"] || []).map(escapeHtml).join("；") || "无";
         const status = escapeHtml(row["是否符合筛选要求"] || "异常");
-        return `<tr><td>${escapeHtml(row["序号"] || "")}</td><td><span class="screening-status ${status}">${status}</span></td><td>${escapeHtml(row["达人昵称"] || "")}</td><td>${escapeHtml(row["博主id"] || "")}</td><td><a href="${escapeHtml(row["主页链接"] || "#")}" target="_blank" rel="noreferrer">打开主页</a></td><td>${escapeHtml(row["ip地"] || "")}</td><td>${escapeHtml(row["达人类型"] || "")}</td><td>${escapeHtml(row["达人价格"] || "")}</td><td class="detail-cell"><details data-screening-row="${escapeHtml(rowKey)}"${detailsOpen}><summary>查看依据</summary><p>${escapeHtml(detail["理由"] || "无")}</p><p>证据：${evidence}</p><p>不确定项：${uncertain}</p></details></td></tr>`;
+        const rowClass = status === "符合" ? "is-approved" : "";
+        return `<tr class="${rowClass}"><td>${escapeHtml(row["序号"] || "")}</td><td><span class="screening-status ${status}">${status}</span></td><td>${escapeHtml(row["达人昵称"] || "")}</td><td>${escapeHtml(row["博主id"] || "")}</td><td><a href="${escapeHtml(row["主页链接"] || "#")}" target="_blank" rel="noreferrer">打开主页</a></td><td>${escapeHtml(row["ip地"] || "")}</td><td>${escapeHtml(row["达人类型"] || "")}</td><td>${escapeHtml(row["达人价格"] || "")}</td><td class="detail-cell"><details data-screening-row="${escapeHtml(rowKey)}"${detailsOpen}><summary>查看依据</summary><p>${escapeHtml(detail["理由"] || "无")}</p><p>证据：${evidence}</p><p>不确定项：${uncertain}</p></details></td></tr>`;
       }).join("");
+    }
+
+    async function syncCreatorScreeningResults(jobId, jobData) {
+      const payload = resolveProjectPayload(getFormData());
+      const approved = (jobData.results || []).filter((row) => row["是否符合筛选要求"] === "符合").length;
+      if (!payload.sync_base_token || !payload.creator_screening_table_id) {
+        setCreatorScreeningStatus(`初筛完成：符合 ${approved} 位。当前项目未绑定“AI初筛结果表”，暂未同步。`);
+        return;
+      }
+      setCreatorScreeningStatus(`初筛完成：符合 ${approved} 位，正在同步到 AI初筛结果表...`);
+      const response = await fetch(`/api/creator-screening/jobs/${encodeURIComponent(jobId)}/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_token: payload.sync_base_token,
+          table_id: payload.creator_screening_table_id
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== "ok") throw new Error(data.detail || "AI初筛结果同步失败");
+      setCreatorScreeningStatus(`初筛完成：符合 ${data.approved || 0} 位；飞书新增 ${data.created || 0} 条、更新 ${data.updated || 0} 条。`);
+      if (data.target_url) log(`AI初筛符合账号已同步到 AI初筛结果表：${data.target_url}`);
     }
 
     async function pollCreatorScreeningJob(jobId) {
@@ -2886,7 +2977,11 @@
       renderCreatorScreeningResults(data.results || []);
       const progress = data.progress || {};
       setCreatorScreeningStatus(`已处理 ${progress.completed || 0}/${progress.total || 0}，异常 ${progress.exceptions || 0}`);
-      if (!data.finished) window.setTimeout(() => pollCreatorScreeningJob(jobId).catch((error) => setCreatorScreeningStatus(error.message)), 1200);
+      if (!data.finished) {
+        window.setTimeout(() => pollCreatorScreeningJob(jobId).catch((error) => setCreatorScreeningStatus(error.message)), 1200);
+      } else {
+        await syncCreatorScreeningResults(jobId, data);
+      }
     }
 
     async function startCreatorScreening() {
@@ -3331,6 +3426,50 @@
     async function syncViralToMonitor() { await syncToBaseByScene("viral"); }
     async function syncCommentsToBase() { await syncToBaseByScene("comments"); }
 
+    function downloadCollabNotesTemplate() {
+      window.location.href = "/api/crawler/collaboration-notes-template";
+    }
+
+    async function importCollabNotesFile() {
+      const input = document.getElementById("collab_notes_file");
+      const file = input && input.files ? input.files[0] : null;
+      if (!file) throw new Error("请先选择 csv 或 Excel 合作笔记表单");
+      const status = document.getElementById("collab_notes_import_status");
+      if (status) status.textContent = "正在读取合作笔记表单...";
+      const response = await fetch("/api/crawler/import-collaboration-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content_base64: arrayBufferToBase64(await file.arrayBuffer()) })
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== "ok") throw new Error(data.detail || "合作笔记表单导入失败");
+      document.getElementById("collab_note_links").value = data.note_links || "";
+      if (status) status.textContent = `已导入 ${data.count || 0} 条合作笔记链接`;
+      await saveConfig();
+      return data;
+    }
+
+    async function handleCollabNotesFileChange() {
+      try {
+        await importCollabNotesFile();
+      } catch (error) {
+        const status = document.getElementById("collab_notes_import_status");
+        if (status) status.textContent = "导入失败：" + (error.message || String(error));
+      }
+    }
+
+    function logCollabPgyStatus(data) {
+      const pgy = data && data.notes && data.notes.pgy;
+      if (!pgy) return;
+      if (pgy.status === "ok") {
+        log(`蒲公英单篇数据补充：命中 ${pgy.matched_count || 0}/${pgy.requested_count || 0} 篇；未命中的笔记保留小红书公开数据。`);
+      } else if (pgy.status === "login_required") {
+        log("小红书公开数据已同步；蒲公英登录态不可用，请点击“打开蒲公英登录窗口”后再次执行，曝光量和阅读量才会补充。");
+      } else if (pgy.status === "error") {
+        log("小红书公开数据已同步；蒲公英单篇数据补充失败：" + (pgy.error || "未知错误"));
+      }
+    }
+
     async function crawlOnceAndSync() {
       if (!ensureReady()) return;
       const payload = resolveProjectPayload(getFormData());
@@ -3338,8 +3477,8 @@
         log("请先完成步骤1，回填笔记数据监测表ID");
         return;
       }
-      if (!payload.collab_creator_ids) {
-        log("请先填写合作博主账号名单");
+      if (!payload.collab_note_links) {
+        log("请先导入合作笔记表单，或填写发布笔记链接");
         return;
       }
       await saveConfig();
@@ -3349,7 +3488,8 @@
         interval_hours: payload.collab_interval_hours,
         project_name: payload.project_name,
         source_keyword: payload.collab_source_keyword || payload.keywords,
-        creator_ids: payload.collab_creator_ids,
+        note_links: payload.collab_note_links,
+        creator_ids: "",
         notes_per_creator: payload.collab_notes_per_creator,
         max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         login_type: payload.login_type,
@@ -3359,7 +3499,7 @@
         enable_media: payload.enable_media,
         cookies: payload.cookies,
         headless: payload.headless,
-        sync_limit: payload.collab_sync_limit,
+
         comments_table_id: payload.collab_comments_table_id
       };
       log("开始抓取并同步（单次）...");
@@ -3370,6 +3510,7 @@
       });
       const data = await res.json();
       log("抓取并同步结果: " + JSON.stringify(data));
+      logCollabPgyStatus(data);
     }
 
     async function startCollabMonitor() {
@@ -3379,8 +3520,8 @@
         log("请先完成步骤1，回填笔记数据监测表ID");
         return;
       }
-      if (!payload.collab_creator_ids) {
-        log("请先填写合作博主账号名单");
+      if (!payload.collab_note_links) {
+        log("请先导入合作笔记表单，或填写发布笔记链接");
         return;
       }
       await saveConfig();
@@ -3390,7 +3531,8 @@
         interval_hours: payload.collab_interval_hours,
         project_name: payload.project_name,
         source_keyword: payload.collab_source_keyword || payload.keywords,
-        creator_ids: payload.collab_creator_ids,
+        note_links: payload.collab_note_links,
+        creator_ids: "",
         notes_per_creator: payload.collab_notes_per_creator,
         max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
         login_type: payload.login_type,
@@ -3400,7 +3542,8 @@
         enable_media: payload.enable_media,
         cookies: payload.cookies,
         headless: payload.headless,
-        sync_limit: payload.collab_sync_limit
+
+        comments_table_id: payload.collab_comments_table_id
       };
       const res = await fetch("/api/crawler/collaboration-monitor/start", {
         method: "POST",
@@ -3410,6 +3553,7 @@
       const data = await res.json();
       latestCollabJobId = data.job_id || latestCollabJobId;
       log("合作监控启动结果: " + JSON.stringify(data));
+      logCollabPgyStatus(data);
     }
 
     async function queryCollabStatus() {

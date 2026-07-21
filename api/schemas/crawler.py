@@ -94,7 +94,7 @@ class SampleCreatorStartRequest(BaseModel):
     platform: PlatformEnum = PlatformEnum.XHS
     login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
     creator_ids: str  # Comma/newline separated Xiaohongshu creator profile URLs
-    notes_per_creator: int = 20
+    notes_per_creator: int = 10
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
@@ -157,6 +157,7 @@ class ScenarioTableSetupRequest(BaseModel):
     collaboration_monitor_table_name: str = "笔记数据监测表"
     collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
 
 
 class ScenarioBootstrapRequest(BaseModel):
@@ -171,6 +172,7 @@ class ScenarioBootstrapRequest(BaseModel):
     collaboration_monitor_table_name: str = "笔记数据监测表"
     collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
     folder_token: str = ""
     time_zone: str = "Asia/Shanghai"
 
@@ -182,6 +184,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     interval_hours: Literal[4, 8, 24] = 4
     project_name: str = ""
     source_keyword: str = ""
+    note_links: str = ""  # comma/newline separated Xiaohongshu note links
     creator_ids: str = ""  # comma/newline separated creator profile URLs or IDs
     notes_per_creator: int = 20
     max_comments_count_singlenotes: int = 10

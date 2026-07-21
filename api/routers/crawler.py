@@ -15,6 +15,7 @@ import tempfile
 import time
 import csv
 import os
+import ssl
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ from uuid import uuid4
 from urllib.parse import quote, unquote, urlencode, urlparse
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from config.runtime_paths import browser_data_dir, data_dir, downloads_dir, temp_dir
 from tools.browser_launcher import BrowserLauncher
@@ -283,6 +284,29 @@ def _is_xhs_host(host: str) -> bool:
     )
 
 
+_XHS_URL_PATTERN = re.compile(
+    r"https?://(?:[A-Za-z0-9-]+\.)*(?:xiaohongshu\.com|xhslink\.com|xhs\.cn)[^\s<>\"'，。；;！？!）)\]】》,]*",
+    flags=re.IGNORECASE,
+)
+_URL_TRAILING_PUNCTUATION = ".,，。;；:：!?！？、)]}）】》>"
+
+
+def _extract_xhs_urls(value: str) -> List[str]:
+    """Extract usable Xiaohongshu URLs from cells or copied share text."""
+    result: List[str] = []
+    seen = set()
+    for match in _XHS_URL_PATTERN.finditer(str(value or "")):
+        url = match.group(0).rstrip(_URL_TRAILING_PUNCTUATION)
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
+            continue
+        key = url.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(url)
+    return result
+
+
 class _XhsRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Allow a short-link redirect chain only inside Xiaohongshu domains."""
 
@@ -293,9 +317,54 @@ class _XhsRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _build_xhs_url_opener(verify_certificates: bool = True):
+    if verify_certificates:
+        try:
+            import certifi  # type: ignore
+
+            context = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            context = ssl.create_default_context()
+    else:
+        # Only used after a certificate-chain failure. Redirects remain locked
+        # to Xiaohongshu-owned hosts by _XhsRedirectHandler.
+        context = ssl._create_unverified_context()
+    return urllib.request.build_opener(
+        _XhsRedirectHandler(),
+        urllib.request.HTTPSHandler(context=context),
+    )
+
+
+def _is_certificate_verification_error(exc: Exception) -> bool:
+    reason = getattr(exc, "reason", None)
+    return (
+        isinstance(exc, ssl.SSLCertVerificationError)
+        or isinstance(reason, ssl.SSLCertVerificationError)
+        or "CERTIFICATE_VERIFY_FAILED" in str(exc).upper()
+    )
+
+
+def _resolve_xhs_redirect_url(url: str) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"},
+    )
+    try:
+        with _build_xhs_url_opener(verify_certificates=True).open(request, timeout=15) as response:
+            return response.geturl()
+    except Exception as exc:
+        if not _is_certificate_verification_error(exc):
+            raise
+    with _build_xhs_url_opener(verify_certificates=False).open(request, timeout=15) as response:
+        return response.geturl()
+
+
 def _profile_url_from_link(value: str, resolve_short_link: bool = True) -> str:
     """Return a canonical XHS profile URL from a long or short homepage link."""
-    text = value.strip().strip("\"'“”‘’")
+    extracted_urls = _extract_xhs_urls(value)
+    if not extracted_urls:
+        raise ValueError("未识别到小红书账号主页链接")
+    text = extracted_urls[0]
     parsed = urlparse(text)
     if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
         raise ValueError("仅支持小红书账号主页长链或短链")
@@ -303,14 +372,8 @@ def _profile_url_from_link(value: str, resolve_short_link: bool = True) -> str:
     candidate = text
     profile_match = re.search(r"/user/profile/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
     if not profile_match and resolve_short_link:
-        opener = urllib.request.build_opener(_XhsRedirectHandler())
-        request = urllib.request.Request(
-            text,
-            headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"},
-        )
         try:
-            with opener.open(request, timeout=15) as response:
-                candidate = response.geturl()
+            candidate = _resolve_xhs_redirect_url(text)
         except Exception as exc:
             raise ValueError(f"短链解析失败：{exc}") from exc
         parsed = urlparse(candidate)
@@ -332,23 +395,20 @@ def _profile_id_from_url(profile_url: str) -> str:
     return unquote(match.group(1)).strip().lower() if match else ""
 
 
-def _note_id_from_link(value: str, resolve_short_link: bool = True) -> str:
-    """Extract a Xiaohongshu note ID from a long or short note link."""
-    text = value.strip().strip("\"'“”‘’")
+def _normalized_note_url_from_link(value: str, resolve_short_link: bool = True) -> str:
+    """Return a usable XHS note URL while preserving xsec query parameters."""
+    extracted_urls = _extract_xhs_urls(value)
+    if not extracted_urls:
+        raise ValueError("未识别到小红书笔记链接")
+    text = extracted_urls[0]
     parsed = urlparse(text)
     if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
         raise ValueError("仅支持小红书笔记长链或短链")
     candidate = text
     match = re.search(r"/(?:explore|discovery/item)/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
     if not match and resolve_short_link:
-        opener = urllib.request.build_opener(_XhsRedirectHandler())
-        request = urllib.request.Request(
-            text,
-            headers={"User-Agent": "Mozilla/5.0", "Range": "bytes=0-0"},
-        )
         try:
-            with opener.open(request, timeout=15) as response:
-                candidate = response.geturl()
+            candidate = _resolve_xhs_redirect_url(text)
         except Exception as exc:
             raise ValueError(f"短链解析失败：{exc}") from exc
         parsed = urlparse(candidate)
@@ -358,6 +418,17 @@ def _note_id_from_link(value: str, resolve_short_link: bool = True) -> str:
     note_id = unquote(match.group(1)).strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", note_id):
         raise ValueError("笔记链接中的笔记标识无效")
+    return candidate
+
+
+def _note_id_from_link(value: str, resolve_short_link: bool = True) -> str:
+    """Extract a Xiaohongshu note ID from a long or short note link."""
+    candidate = _normalized_note_url_from_link(value, resolve_short_link=resolve_short_link)
+    parsed = urlparse(candidate)
+    match = re.search(r"/(?:explore|discovery/item)/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("链接未解析到小红书笔记，请粘贴笔记链接")
+    note_id = unquote(match.group(1)).strip()
     return note_id
 
 
@@ -453,8 +524,7 @@ def _looks_like_sample_account(value: str) -> bool:
         return False
     if text.lower() in SAMPLE_ACCOUNT_HEADER_WORDS:
         return False
-    parsed = urlparse(text)
-    return parsed.scheme in {"http", "https"} and _is_xhs_host(parsed.hostname or "")
+    return bool(_extract_xhs_urls(text))
 
 
 def _dedupe_sample_accounts(values: List[str]) -> List[str]:
@@ -462,13 +532,14 @@ def _dedupe_sample_accounts(values: List[str]) -> List[str]:
     result: List[str] = []
     for value in values:
         text = value.strip().strip("\"'“”‘’")
-        if not _looks_like_sample_account(text):
+        if text.lower() in SAMPLE_ACCOUNT_HEADER_WORDS:
             continue
-        key = text.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(text)
+        for url in _extract_xhs_urls(text):
+            key = url.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(url)
     return result
 
 
@@ -507,6 +578,56 @@ def _parse_sample_account_file(filename: str, content: bytes) -> List[str]:
                 continue
         raise HTTPException(status_code=400, detail="文本文件编码无法识别，请使用 UTF-8 或 GB18030")
     raise HTTPException(status_code=400, detail="仅支持 txt、csv、xlsx、xls 文件")
+
+
+COLLAB_NOTE_REQUIRED_COLUMNS = ("序号", "达人昵称", "小红书id", "发布笔记链接")
+
+
+def _parse_collaboration_note_file(filename: str, content: bytes) -> List[Dict[str, str]]:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in {".csv", ".xlsx", ".xls"}:
+        raise HTTPException(status_code=400, detail="仅支持 csv、xlsx、xls 文件")
+    try:
+        import pandas as pd  # type: ignore
+        if suffix == ".csv":
+            frame = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
+        else:
+            frame = pd.read_excel(io.BytesIO(content), dtype=str, keep_default_na=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"文件解析失败：{exc}") from exc
+
+    missing = [name for name in COLLAB_NOTE_REQUIRED_COLUMNS if name not in frame.columns]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"缺少必需列：{'、'.join(missing)}")
+    rows: List[Dict[str, str]] = []
+    seen = set()
+    for index, source in enumerate(frame.to_dict(orient="records"), start=2):
+        raw_note_link = str(source.get("发布笔记链接") or "").strip()
+        if not raw_note_link:
+            raise HTTPException(status_code=400, detail=f"第 {index} 行缺少发布笔记链接")
+        extracted_urls = _extract_xhs_urls(raw_note_link)
+        if not extracted_urls:
+            raise HTTPException(
+                status_code=400,
+                detail=f"第 {index} 行发布笔记链接格式不正确，请填写小红书笔记长链或短链",
+            )
+        note_link = extracted_urls[0]
+        parsed = urlparse(note_link)
+        if parsed.scheme not in {"http", "https"} or not _is_xhs_host(parsed.hostname or ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"第 {index} 行发布笔记链接格式不正确，请填写小红书笔记长链或短链",
+            )
+        key = note_link.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_row = {name: str(source.get(name) or "").strip() for name in COLLAB_NOTE_REQUIRED_COLUMNS}
+        normalized_row["发布笔记链接"] = note_link
+        rows.append(normalized_row)
+    return rows
 
 
 def _extract_table_id(payload: Dict[str, Any]) -> str:
@@ -901,6 +1022,57 @@ async def _update_base_field(base_token: str, table_id: str, field_id: str, fiel
     )
 
 
+async def _set_table_view_field_order(
+    base_token: str,
+    table_id: str,
+    ordered_field_names: List[str],
+) -> None:
+    """Keep customer-facing grid views aligned with the documented column order."""
+    views = await _list_table_views(base_token, table_id)
+    visible_fields = [name for name in ordered_field_names if name]
+    if not visible_fields:
+        return
+    for view in views:
+        if str(view.get("type") or "") != "grid" or not view.get("id"):
+            continue
+        await _set_view_visible_fields(base_token, table_id, str(view["id"]), visible_fields)
+
+
+async def _list_table_views(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    payload = await _run_lark_cli(
+        [
+            _find_lark_cli(), "base", "+view-list", "--as", "user", "--format", "json",
+            "--base-token", base_token, "--table-id", table_id, "--limit", "200",
+        ],
+        timeout_sec=45,
+    )
+    views = ((payload.get("data") or {}).get("views") or [])
+    return [view for view in views if isinstance(view, dict) and view.get("id")]
+
+
+async def _set_view_visible_fields(
+    base_token: str, table_id: str, view_id: str, visible_fields: List[str]
+) -> None:
+    try:
+        await _run_lark_cli(
+            [
+                _find_lark_cli(), "base", "+view-set-visible-fields", "--as", "user",
+                "--base-token", base_token, "--table-id", table_id,
+                "--view-id", view_id,
+                "--json", json.dumps({"visible_fields": visible_fields}, ensure_ascii=False),
+            ],
+            timeout_sec=45,
+        )
+    except HTTPException as exc:
+        if not _is_lark_noop_error(exc):
+            raise
+
+
+def _is_lark_noop_error(exc: Exception) -> bool:
+    detail = str(getattr(exc, "detail", exc) or "").lower()
+    return "800070003" in detail or "no operation produced" in detail
+
+
 async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
     existing = await _read_table_field_defs(base_token, table_id)
     existing_by_name = {field.get("name"): field for field in existing}
@@ -920,6 +1092,11 @@ async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> Li
         legacy = refreshed_by_name.get(legacy_name)
         if legacy and legacy.get("type") != "attachment" and attachment_name not in refreshed_by_name:
             await _create_base_field(base_token, table_id, _attachment_field(attachment_name))
+    await _set_table_view_field_order(
+        base_token,
+        table_id,
+        [field["name"] for field in wanted],
+    )
     return await _read_table_field_defs(base_token, table_id)
 
 
@@ -967,6 +1144,19 @@ def _creator_type_field() -> Dict[str, Any]:
     }
 
 
+def _account_monitor_status_field() -> Dict[str, Any]:
+    return {
+        "name": "蒲公英主页状态",
+        "type": "select",
+        "multiple": False,
+        "options": [
+            {"name": "有蒲公英主页", "hue": "Green", "lightness": "Lighter"},
+            {"name": "无蒲公英主页", "hue": "Gray", "lightness": "Lighter"},
+            {"name": "待人工确认", "hue": "Yellow", "lightness": "Lighter"},
+        ],
+    }
+
+
 def _viral_monitor_fields() -> List[Dict[str, Any]]:
     return [
         _text_field("归属项目"),
@@ -979,6 +1169,8 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("笔记类型"),
         _text_field("笔记标题"),
         _text_field("笔记内容"),
+        _attachment_field("笔记封面"),
+        _text_field("笔记图片1"),
         _text_field("笔记tag"),
         _number_field("点赞"),
         _number_field("收藏数"),
@@ -988,7 +1180,9 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _number_field("曝光量"),
         _number_field("总互动数据（赞+藏+评，不算分享）"),
         _datetime_field("采集数据时间"),
-        _attachment_field("封面附件"),
+        # Preserve the source URL for diagnostics while the customer-facing
+        # cover column stores the actual attachment.
+        _text_field("笔记封面URL"),
     ]
 
 
@@ -1236,7 +1430,21 @@ def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
 
 
 def _comments_fields() -> List[Dict[str, Any]]:
-    return _sentiment_monitor_fields()
+    """Ordinary viral-note comments, kept separate from cooperation sentiment."""
+    return [
+        _text_field("IP属地"),
+        _text_field("评论内容"),
+        _text_field("评论用户"),
+        _text_field("项目名"),
+        _number_field("二级评论数"),
+        _number_field("点赞数"),
+        _datetime_field("评论时间"),
+        _text_field("评论图片"),
+        _text_field("笔记ID"),
+        _text_field("关键词"),
+        _text_field("父评论ID"),
+        _text_field("评论区分析"),
+    ]
 
 
 async def _upsert_sentiment_formula_field(base_token: str, table_id: str, current: Dict[str, Any] | None, desired: Dict[str, Any]) -> None:
@@ -1359,7 +1567,7 @@ def _account_content_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("小红书号"),
         _text_field("主页链接"),
         _text_field("蒲公英主页链接"),
-        _text_field("蒲公英主页状态"),
+        _account_monitor_status_field(),
         _text_field("蒲公英查询依据"),
         _datetime_field("发布笔记倒序（发布时间由近及远）"),
         _text_field("笔记链接"),
@@ -1405,6 +1613,179 @@ def _account_content_monitor_fields() -> List[Dict[str, Any]]:
         _datetime_field("最新笔记更新时间"),
         _datetime_field("采集博主数据日期"),
     ]
+
+
+def _account_monitor_compact_view_fields() -> List[str]:
+    """Fields that remain useful when Pugongying metrics are unavailable."""
+    public_fields = _account_content_monitor_public_field_names()
+    return [
+        "达人昵称", "小红书号", "主页链接", "蒲公英主页状态", "蒲公英查询依据",
+        *[
+            name for name in public_fields
+            if name not in {"达人昵称", "小红书号", "主页链接", "蒲公英主页链接"}
+        ],
+    ]
+
+
+async def _ensure_account_content_monitor_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    """Repair an existing template table and keep status views idempotent."""
+    wanted = _account_content_monitor_fields()
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
+    for field in wanted:
+        if field["name"] not in existing_by_name:
+            await _create_base_field(base_token, table_id, field)
+
+    desired_status = _account_monitor_status_field()
+    existing_status = existing_by_name.get("蒲公英主页状态")
+    if existing_status and existing_status.get("id"):
+        current_options = {
+            str(option.get("name"))
+            for option in (existing_status.get("options") or [])
+            if isinstance(option, dict) and option.get("name")
+        }
+        desired_options = {str(option["name"]) for option in desired_status["options"]}
+        if existing_status.get("type") != "select" or not desired_options.issubset(current_options):
+            await _update_base_field(
+                base_token, table_id, str(existing_status["id"]), desired_status,
+            )
+
+    refreshed = await _read_table_field_defs(base_token, table_id)
+    refreshed_by_name = {str(field.get("name")): field for field in refreshed if field.get("name")}
+    status_field = refreshed_by_name.get("蒲公英主页状态")
+    if not status_field or not status_field.get("id"):
+        raise HTTPException(status_code=400, detail="账号内容监测表缺少蒲公英主页状态字段")
+
+    all_fields = [field["name"] for field in wanted]
+    status_views = {
+        "有蒲公英主页": all_fields,
+        "无蒲公英主页": _account_monitor_compact_view_fields(),
+        "待人工确认": _account_monitor_compact_view_fields(),
+    }
+    views = await _list_table_views(base_token, table_id)
+    for view in views:
+        if (
+            str(view.get("type") or "") == "grid"
+            and view.get("id")
+            and str(view.get("name") or "") not in status_views
+        ):
+            await _set_view_visible_fields(
+                base_token, table_id, str(view["id"]), all_fields,
+            )
+    views_by_name = {str(view.get("name")): view for view in views if view.get("name")}
+    for view_name in status_views:
+        if view_name in views_by_name:
+            continue
+        await _run_lark_cli(
+            [
+                _find_lark_cli(), "base", "+view-create", "--as", "user",
+                "--base-token", base_token, "--table-id", table_id,
+                "--json", json.dumps({"name": view_name, "type": "grid"}, ensure_ascii=False),
+            ],
+            timeout_sec=45,
+        )
+
+    views = await _list_table_views(base_token, table_id)
+    views_by_name = {str(view.get("name")): view for view in views if view.get("name")}
+    status_field_id = str(status_field["id"])
+    for view_name, visible_fields in status_views.items():
+        view = views_by_name.get(view_name)
+        if not view or not view.get("id"):
+            raise HTTPException(status_code=400, detail=f"未能创建账号内容监测视图：{view_name}")
+        view_id = str(view["id"])
+        try:
+            await _run_lark_cli(
+                [
+                    _find_lark_cli(), "base", "+view-set-filter", "--as", "user",
+                    "--base-token", base_token, "--table-id", table_id, "--view-id", view_id,
+                    "--json", json.dumps(
+                        {
+                            "logic": "and",
+                            "conditions": [[status_field_id, "intersects", [view_name]]],
+                        },
+                        ensure_ascii=False,
+                    ),
+                ],
+                timeout_sec=45,
+            )
+        except HTTPException as exc:
+            if not _is_lark_noop_error(exc):
+                raise
+        await _set_view_visible_fields(base_token, table_id, view_id, visible_fields)
+    return refreshed
+
+
+def _creator_screening_result_fields() -> List[Dict[str, Any]]:
+    """AI initial-screening output keeps exactly the four imported columns."""
+    return [
+        _text_field("达人昵称"),
+        _text_field("博主ID"),
+        _text_field("主页链接"),
+        _text_field("达人价格"),
+    ]
+
+
+async def _ensure_fields_and_view_order(
+    base_token: str,
+    table_id: str,
+    fields: List[Dict[str, Any]],
+    *,
+    hidden_fields: set[str] | None = None,
+) -> None:
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_names = {str(field.get("name")) for field in existing if field.get("name")}
+    for field in fields:
+        if field["name"] not in existing_names:
+            await _create_base_field(base_token, table_id, field)
+    hidden = hidden_fields or set()
+    await _set_table_view_field_order(
+        base_token,
+        table_id,
+        [field["name"] for field in fields if field["name"] not in hidden],
+    )
+
+
+async def _ensure_viral_monitor_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
+    """Migrate the cover URL safely and expose the real attachment as 笔记封面."""
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
+    current_cover = existing_by_name.get("笔记封面")
+    current_cover_url = existing_by_name.get("笔记封面URL")
+
+    if current_cover and current_cover.get("type") != "attachment" and current_cover.get("id"):
+        url_field_name = "笔记封面URL" if not current_cover_url else "笔记封面URL（旧）"
+        await _update_base_field(
+            base_token, table_id, str(current_cover["id"]), _text_field(url_field_name),
+        )
+
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
+    current_cover = existing_by_name.get("笔记封面")
+    legacy_attachment = existing_by_name.get("封面文件")
+    if not current_cover or current_cover.get("type") != "attachment":
+        if legacy_attachment and legacy_attachment.get("type") == "attachment" and legacy_attachment.get("id"):
+            await _update_base_field(
+                base_token, table_id, str(legacy_attachment["id"]), _attachment_field("笔记封面"),
+            )
+        else:
+            await _create_base_field(base_token, table_id, _attachment_field("笔记封面"))
+
+    wanted = _viral_monitor_fields()
+    existing = await _read_table_field_defs(base_token, table_id)
+    existing_names = {str(field.get("name")) for field in existing if field.get("name")}
+    for field in wanted:
+        if field["name"] not in existing_names:
+            await _create_base_field(base_token, table_id, field)
+
+    await _set_table_view_field_order(
+        base_token,
+        table_id,
+        [
+            field["name"] for field in wanted
+            if field["name"] not in {"笔记图片1", "笔记封面URL"}
+        ],
+    )
+    return await _read_table_field_defs(base_token, table_id)
 
 
 def _account_content_monitor_public_field_names() -> List[str]:
@@ -1553,7 +1934,7 @@ def _account_monitor_pgy_row(
     """Combine one public note with account-level Pugongying metrics.
 
     Pugongying exposes creator metrics, while the public crawler exposes the
-    individual note. Repeating the creator metrics for each of the 20 notes
+    individual note. Repeating the creator metrics for each of the 10 notes
     keeps the report flat and matches the customer-provided sheet layout.
     """
     fields = [field["name"] for field in _account_content_monitor_fields()]
@@ -1644,7 +2025,7 @@ async def _build_account_monitor_report(
             if not source_path.is_file():
                 raise RuntimeError("小红书抓取结果已不存在，无法从蒲公英断点继续，请重新执行账号内容监测")
         else:
-            notes_per_creator = max(1, int(job.get("notes_per_creator") or 20))
+            notes_per_creator = 10
             job.update({"status": "crawling", "stage": f"正在抓取各账号最近 {notes_per_creator} 篇笔记", "error": ""})
             if not await _wait_crawler_idle(timeout_sec=1800):
                 raise RuntimeError("等待账号笔记抓取完成超时")
@@ -1834,6 +2215,7 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "笔记类型": ["note_type", "type"],
         "封面图": ["image_list", "cover", "cover_url"],
         "笔记封面": ["cover", "cover_url", "image_list", "封面图"],
+        "笔记封面URL": ["cover", "cover_url", "image_list", "封面图"],
         "笔记图片1": ["image_list", "images", "img_urls"],
         "话题标签": ["tag_list", "topics"],
         "笔记tag": ["tag_list", "topics", "话题标签", "语义标签"],
@@ -2581,6 +2963,14 @@ def _pgy_summary_to_rows(summary: Dict[str, Any], output_dir: str) -> List[Dict[
     for item in summary.get("similar_creators") or []:
         if not isinstance(item, dict):
             continue
+        detail_fetched = item.get("detail_fetched")
+        if detail_fetched is None:
+            detail_fetched = bool(item.get("detail_text") or item.get("screenshot"))
+        if not detail_fetched:
+            # The first search only returns recommendation-card data. Do not
+            # write incomplete similar-creator rows until their detail fetch
+            # has completed through the explicit selection action.
+            continue
         row = {
             "row_type": "相似博主",
             "target_nickname": target_row["nickname"],
@@ -2813,27 +3203,65 @@ async def _wait_crawler_idle(timeout_sec: int = 1800) -> bool:
 
 
 async def _refresh_collab_creator_notes(request: CollaborationMonitorStartRequest) -> None:
+    raw_note_links = [
+        item.strip()
+        for item in re.split(r"[\n\r,，;；]+", request.note_links or "")
+        if item.strip()
+    ]
     creator_id_list = _split_creator_inputs(request.creator_ids)
-    if not creator_id_list:
+    if not raw_note_links and not creator_id_list:
         return
     if crawler_manager.process and crawler_manager.process.poll() is None:
         raise HTTPException(status_code=400, detail="当前有任务正在运行，无法启动合作监控抓取")
-    start_request = CrawlerStartRequest(
-        platform="xhs", login_type=request.login_type, crawler_type="creator",
-        creator_ids=",".join(creator_id_list), max_notes_count=max(1, request.notes_per_creator),
-        max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
-        enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
-        enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
-    )
-    _clear_creator_data_files()
+    if raw_note_links:
+        note_urls_by_id: Dict[str, str] = {}
+        errors: List[str] = []
+        for link in raw_note_links:
+            try:
+                normalized_url = await asyncio.to_thread(_normalized_note_url_from_link, link)
+                note_id = _note_id_from_link(normalized_url, resolve_short_link=False)
+                note_urls_by_id.setdefault(note_id, normalized_url)
+            except ValueError as exc:
+                errors.append(f"{link[:80]}：{exc}")
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail="合作笔记链接格式不正确，请填写小红书笔记长链或短链：" + "；".join(errors[:5]),
+            )
+        note_urls = list(note_urls_by_id.values())
+        start_request = CrawlerStartRequest(
+            platform="xhs", login_type=request.login_type, crawler_type="detail",
+            specified_ids=",".join(note_urls), max_notes_count=max(1, len(note_urls)),
+            max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
+            enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
+            enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
+        )
+        _clear_mode_data_files("detail")
+    else:
+        start_request = CrawlerStartRequest(
+            platform="xhs", login_type=request.login_type, crawler_type="creator",
+            creator_ids=",".join(creator_id_list), max_notes_count=max(1, request.notes_per_creator),
+            max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
+            enable_comments=request.enable_comments, enable_sub_comments=request.enable_sub_comments,
+            enable_media=request.enable_media, save_option=request.save_option, cookies=request.cookies, headless=request.headless,
+        )
+        _clear_creator_data_files()
     success = await crawler_manager.start(start_request)
     if not success:
         raise HTTPException(status_code=500, detail="合作监控抓取任务启动失败")
     if not await _wait_crawler_idle(timeout_sec=1800):
         raise HTTPException(status_code=504, detail="合作监控抓取超时（30分钟）")
+    if crawler_manager.process and crawler_manager.process.returncode not in (None, 0):
+        failure_messages = [
+            str(entry.message or "").strip()
+            for entry in crawler_manager.logs[-30:]
+            if entry.level in {"error", "warning"} and str(entry.message or "").strip()
+        ]
+        failure_detail = failure_messages[-1] if failure_messages else "小红书未返回笔记详情"
+        raise HTTPException(status_code=502, detail=f"合作笔记抓取失败：{failure_detail}")
 
 
-def _clear_creator_data_files() -> None:
+def _clear_mode_data_files(mode: str) -> None:
     data_roots = [data_dir() / "xhs"]
     project_root = Path(__file__).resolve().parents[2]
     legacy_data_root = project_root / "data" / "xhs"
@@ -2844,21 +3272,102 @@ def _clear_creator_data_files() -> None:
             dir_path = data_root / suffix_dir
             if not dir_path.exists():
                 continue
-            for f in dir_path.glob("creator_contents_*.*"):
-                with contextlib.suppress(Exception):
-                    f.unlink()
+            for suffix in ("contents", "comments"):
+                for f in dir_path.glob(f"{mode}_{suffix}_*.*"):
+                    with contextlib.suppress(Exception):
+                        f.unlink()
         # ExcelStoreBase writes a whole workbook directly under data/xhs.
-        for pattern in ("xhs_creator_*.xlsx", "xhs_creator_*.xls"):
+        for pattern in (f"xhs_{mode}_*.xlsx", f"xhs_{mode}_*.xls"):
             for f in data_root.glob(pattern):
                 with contextlib.suppress(Exception):
                     f.unlink()
+
+
+def _clear_creator_data_files() -> None:
+    _clear_mode_data_files("creator")
+
+
+def _merge_pgy_note_data(row: Dict[str, Any], pgy_note: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Let PGY's single-note report override XHS values it actually provides."""
+    merged = dict(row)
+    if not pgy_note:
+        return merged
+    override_fields = {
+        "note_url",
+        "title",
+        "author_nickname",
+        "author_homepage_url",
+        "publish_date",
+        "tag_list",
+        "liked_count",
+        "collected_count",
+        "comment_count",
+        "share_count",
+        "exposure_count",
+        "read_count",
+    }
+    for key in override_fields:
+        value = pgy_note.get(key)
+        if value not in (None, "", []):
+            merged[key] = value
+    for key, value in pgy_note.items():
+        if key.startswith("pgy_") and value not in (None, "", []):
+            merged[key] = value
+    merged["pgy_note_source"] = str(pgy_note.get("pgy_note_source") or "蒲公英笔记报告")
+    return merged
+
+
+async def _fetch_pgy_note_data(note_ids: List[str]) -> Dict[str, Any]:
+    unique_note_ids = list(dict.fromkeys(str(note_id).strip() for note_id in note_ids if str(note_id).strip()))
+    if not unique_note_ids:
+        return {"status": "skipped", "requested_count": 0, "matched_count": 0, "notes": []}
+    args = ["run-note-data", "--note-ids", ",".join(unique_note_ids)]
+    # Reuse the long-lived login browser when present. Without it, try the
+    # saved persistent profile headlessly so a scheduled monitor never opens
+    # an unexpected window.
+    if not _pgy_cdp_available():
+        args.append("--headless")
+    result = await _run_pgy_automation(
+        args,
+        timeout_sec=max(180, min(1200, 45 + len(unique_note_ids) * 15)),
+    )
+    if _pgy_login_required(result):
+        return {
+            "status": "login_required",
+            "requested_count": len(unique_note_ids),
+            "matched_count": 0,
+            "notes": [],
+            "error": result.get("error") or "蒲公英登录已失效",
+        }
+    if result.get("status") == "error" or result.get("returncode"):
+        return {
+            "status": "error",
+            "requested_count": len(unique_note_ids),
+            "matched_count": 0,
+            "notes": [],
+            "error": str(result.get("error") or "蒲公英单篇笔记数据读取失败")[:500],
+        }
+    return result
+
+
+def _pgy_note_result_summary(result: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": result.get("status") or "error",
+        "source": result.get("source") or "蒲公英笔记报告",
+        "requested_count": int(result.get("requested_count") or 0),
+        "matched_count": int(result.get("matched_count") or 0),
+        "missing_count": int(result.get("missing_count") or 0),
+        "missing_note_ids": list(result.get("missing_note_ids") or [])[:20],
+        "error": str(result.get("error") or "")[:500],
+    }
 
 
 async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
     table_fields = await _read_table_fields(request.base_token, request.table_id)
     if not table_fields:
         raise HTTPException(status_code=400, detail="笔记数据监测表没有可用字段")
-    file_path = Path(request.file_path) if request.file_path else _latest_local_file("notes", "creator")
+    crawler_mode = "detail" if request.note_links.strip() else "creator"
+    file_path = Path(request.file_path) if request.file_path else _latest_local_file("notes", crawler_mode, strict_mode=True)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
     all_rows = _read_local_rows(file_path)
@@ -2870,7 +3379,7 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
             cid_stripped = cid.strip()
             if not cid_stripped.startswith("__note__:"):
                 creator_filters.add(cid_stripped)
-    rows: List[List[Any]] = []
+    eligible_rows: List[Dict[str, Any]] = []
     for row in all_rows:
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
         if request.source_keyword:
@@ -2881,12 +3390,26 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
             author_id = str(row.get("author_user_id") or row.get("user_id") or "").strip()
             if not author_id or author_id not in creator_filters:
                 continue
+        eligible_rows.append(row)
+    pgy_result = await _fetch_pgy_note_data(
+        [str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip() for row in eligible_rows]
+    )
+    pgy_notes_by_id = {
+        str(item.get("note_id") or "").strip(): item
+        for item in (pgy_result.get("notes") or [])
+        if isinstance(item, dict) and str(item.get("note_id") or "").strip()
+    }
+    rows: List[List[Any]] = []
+    for source_row in eligible_rows:
+        row = _merge_pgy_note_data(
+            source_row,
+            pgy_notes_by_id.get(str(source_row.get("note_id") or source_row.get("笔记ID") or source_row.get("id") or "").strip()),
+        )
+        row["序号"] = len(rows) + 1
         row["项目名"] = request.project_name
         row["所属项目"] = request.project_name
         row["监控周期"] = monitor_tag
         rows.append(_row_to_table_values(row, table_fields, "notes"))
-    if request.sync_limit and request.sync_limit > 0:
-        rows = rows[:request.sync_limit]
     if not rows:
         raise HTTPException(status_code=400, detail="合作监控未命中可同步数据")
     lark_cli_bin = _find_lark_cli()
@@ -2913,7 +3436,12 @@ async def _sync_collaboration_snapshot(request: CollaborationMonitorStartRequest
                     timeout_sec=60,
                 )
             created += 1
-    return {"created": created, "updated": updated, "file": str(file_path)}
+    return {
+        "created": created,
+        "updated": updated,
+        "file": str(file_path),
+        "pgy": _pgy_note_result_summary(pgy_result),
+    }
 
 
 async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest, monitor_tag: str) -> Dict[str, Any]:
@@ -2923,7 +3451,8 @@ async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest
     if not table_fields:
         return {"created": 0, "updated": 0, "skipped": True, "reason": "comments table has no fields"}
     try:
-        file_path = _latest_local_file("comments", "creator")
+        crawler_mode = "detail" if request.note_links.strip() else "creator"
+        file_path = _latest_local_file("comments", crawler_mode, strict_mode=True)
     except HTTPException:
         return {"created": 0, "updated": 0, "skipped": True, "reason": "no local comments file found"}
     if not file_path.exists():
@@ -2935,8 +3464,6 @@ async def _sync_collaboration_comments(request: CollaborationMonitorStartRequest
         row["所属项目"] = request.project_name
         row["监控周期"] = monitor_tag
         rows_to_sync.append(row)
-    if request.sync_limit and request.sync_limit > 0:
-        rows_to_sync = rows_to_sync[:request.sync_limit]
     if not rows_to_sync:
         return {"created": 0, "updated": 0, "skipped": True, "reason": "no matching comment rows"}
     lark_cli_bin = _find_lark_cli()
@@ -3229,7 +3756,15 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
         except ValueError as exc:
             link_errors.append(f"{raw_link[:80]}：{exc}")
     if link_errors:
-        raise HTTPException(status_code=400, detail="主页链接校验失败：" + "；".join(link_errors[:5]))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "主页链接格式不正确。请填写小红书账号主页链接，例如 "
+                "https://www.xiaohongshu.com/user/profile/账号标识；不要填写蒲公英链接、笔记链接、昵称或小红书号。"
+                "没有蒲公英主页不影响小红书主页分析，系统会在结果中标记“无蒲公英主页”。错误详情："
+                + "；".join(link_errors[:5])
+            ),
+        )
     normalized_links = _dedupe_sample_accounts(normalized_links)
     if not normalized_links:
         raise HTTPException(status_code=400, detail="未识别到有效的小红书账号主页链接")
@@ -3237,7 +3772,7 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
     requested_creator_ids = [_profile_id_from_url(link) for link in normalized_links]
     source_started_at = time.time()
 
-    notes_per_creator = max(1, request.notes_per_creator)
+    notes_per_creator = 10
     start_request = CrawlerStartRequest(
         platform=request.platform,
         login_type=request.login_type,
@@ -3388,25 +3923,27 @@ async def start_sentiment_monitor(request: NoteSentimentStartRequest):
     if crawler_manager.process and crawler_manager.process.poll() is None:
         raise HTTPException(status_code=400, detail="当前已有抓取任务在运行，请等待完成后再启动笔记舆情监控")
 
-    note_ids: List[str] = []
+    note_urls_by_id: Dict[str, str] = {}
     errors: List[str] = []
     for raw_link in raw_links:
         try:
-            note_ids.append(await asyncio.to_thread(_note_id_from_link, raw_link))
+            normalized_url = await asyncio.to_thread(_normalized_note_url_from_link, raw_link)
+            note_id = _note_id_from_link(normalized_url, resolve_short_link=False)
+            note_urls_by_id.setdefault(note_id, normalized_url)
         except ValueError as exc:
             errors.append(f"{raw_link[:80]}：{exc}")
     if errors:
         raise HTTPException(status_code=400, detail="笔记链接校验失败：" + "；".join(errors[:5]))
-    note_ids = list(dict.fromkeys(note_ids))
-    if not note_ids:
+    note_urls = list(note_urls_by_id.values())
+    if not note_urls:
         raise HTTPException(status_code=400, detail="未识别到有效的小红书笔记链接")
 
     start_request = CrawlerStartRequest(
         platform="xhs",
         login_type=request.login_type,
         crawler_type="detail",
-        specified_ids=",".join(note_ids),
-        max_notes_count=len(note_ids),
+        specified_ids=",".join(note_urls),
+        max_notes_count=len(note_urls),
         max_comments_count_singlenotes=max(1, request.max_comments_count_singlenotes),
         enable_comments=True,
         enable_sub_comments=request.enable_sub_comments,
@@ -3426,14 +3963,14 @@ async def start_sentiment_monitor(request: NoteSentimentStartRequest):
         "job_id": job_id,
         "status": "crawling",
         "stage": "笔记评论抓取已启动",
-        "note_count": len(note_ids),
+        "note_count": len(note_urls),
         "risk_groups": risk_groups,
         "sync_result": {},
         "error": "",
         "started_at": datetime.now().isoformat(),
     }
     sentiment_monitor_jobs[job_id]["task"] = asyncio.create_task(_build_sentiment_monitor_job(job_id, request, risk_groups))
-    return {"status": "ok", "message": "笔记舆情监控任务已启动", "job_id": job_id, "note_count": len(note_ids)}
+    return {"status": "ok", "message": "笔记舆情监控任务已启动", "job_id": job_id, "note_count": len(note_urls)}
 
 
 @router.post("/sentiment-monitor/sync-rules")
@@ -3480,6 +4017,76 @@ async def import_sample_accounts(request: SampleAccountImportRequest):
         "count": len(accounts),
         "accounts": accounts,
         "text": "\n".join(accounts),
+    }
+
+
+@router.get("/collaboration-notes-template")
+async def collaboration_notes_template():
+    output = io.StringIO()
+    csv.writer(output).writerow(COLLAB_NOTE_REQUIRED_COLUMNS)
+    return StreamingResponse(
+        iter(["\ufeff" + output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=collaboration_notes_template.csv"},
+    )
+
+
+@router.get("/sentiment-notes-template")
+async def sentiment_notes_template():
+    output = io.StringIO()
+    csv.writer(output).writerow(COLLAB_NOTE_REQUIRED_COLUMNS)
+    return StreamingResponse(
+        iter(["\ufeff" + output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=sentiment_notes_template.csv"},
+    )
+
+
+@router.post("/import-collaboration-notes")
+async def import_collaboration_notes(request: SampleAccountImportRequest):
+    filename = (request.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    try:
+        content = base64.b64decode(request.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="文件内容不是有效 base64") from exc
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件过大，请控制在 10MB 以内")
+    rows = _parse_collaboration_note_file(filename, content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="表单中没有可监测的发布笔记链接")
+    links = [row["发布笔记链接"] for row in rows]
+    return {
+        "status": "ok",
+        "filename": filename,
+        "count": len(rows),
+        "rows": rows,
+        "note_links": "\n".join(links),
+    }
+
+
+@router.post("/import-sentiment-notes")
+async def import_sentiment_notes(request: SampleAccountImportRequest):
+    filename = (request.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    try:
+        content = base64.b64decode(request.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="文件内容不是有效 base64") from exc
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件过大，请控制在 10MB 以内")
+    rows = _parse_collaboration_note_file(filename, content)
+    if not rows:
+        raise HTTPException(status_code=400, detail="表单中没有可监测的发布笔记链接")
+    links = [row["发布笔记链接"] for row in rows]
+    return {
+        "status": "ok",
+        "filename": filename,
+        "count": len(rows),
+        "rows": rows,
+        "note_links": "\n".join(links),
     }
 
 
@@ -3650,9 +4257,11 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
     account_filter_fields = _account_content_monitor_fields()
     viral_monitor_fields = _viral_monitor_fields()
     note_recreation_fields = _note_recreation_fields()
-    comments_fields = _sentiment_monitor_fields()
+    comments_fields = _comments_fields()
+    collab_comments_fields = _sentiment_monitor_fields()
     collaboration_fields = _note_data_monitor_fields()
     creator_selection_fields = _creator_selection_fields()
+    creator_screening_fields = _creator_screening_result_fields()
     existing = await _list_base_tables(request.base_token)
     existing_map = {t["name"]: t["id"] for t in existing}
 
@@ -3660,19 +4269,38 @@ async def setup_scenario_tables(request: ScenarioTableSetupRequest):
         if table_name in existing_map:
             if table_name == request.note_recreation_table_name:
                 await _ensure_note_recreation_fields(request.base_token, existing_map[table_name])
+            elif table_name == request.account_filter_table_name:
+                await _ensure_account_content_monitor_fields(request.base_token, existing_map[table_name])
+            elif table_name == request.viral_monitor_table_name:
+                await _ensure_viral_monitor_fields(request.base_token, existing_map[table_name])
+            elif table_name == request.creator_selection_table_name:
+                await _ensure_creator_selection_fields(request.base_token, existing_map[table_name])
+            elif table_name == request.creator_screening_table_name:
+                await _ensure_fields_and_view_order(request.base_token, existing_map[table_name], fields)
             return {"table_name": table_name, "table_id": existing_map[table_name], "reused": True, "raw": {"table": {"id": existing_map[table_name], "name": table_name}}}
         created = await _create_table_with_fields(request.base_token, table_name, fields)
+        if table_name == request.account_filter_table_name:
+            await _ensure_account_content_monitor_fields(request.base_token, created["table_id"])
+        elif table_name == request.viral_monitor_table_name:
+            await _ensure_viral_monitor_fields(request.base_token, created["table_id"])
+        elif table_name in {request.creator_selection_table_name, request.creator_screening_table_name}:
+            await _set_table_view_field_order(
+                request.base_token, created["table_id"], [field["name"] for field in fields],
+            )
         created["reused"] = False
         return created
 
     tables = [
-        await create_or_reuse(request.account_filter_table_name, account_filter_fields),
+        # Keep fallback creation and the response aligned with the customer's
+        # current master Base sheet order. Base copy itself preserves that order.
         await create_or_reuse(request.viral_monitor_table_name, viral_monitor_fields),
-        await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
         await create_or_reuse(request.comments_table_name, comments_fields),
-        await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
-        await create_or_reuse(request.collab_comments_table_name, comments_fields),
         await create_or_reuse(request.creator_selection_table_name, creator_selection_fields),
+        await create_or_reuse(request.account_filter_table_name, account_filter_fields),
+        await create_or_reuse(request.note_recreation_table_name, note_recreation_fields),
+        await create_or_reuse(request.collaboration_monitor_table_name, collaboration_fields),
+        await create_or_reuse(request.collab_comments_table_name, collab_comments_fields),
+        await create_or_reuse(request.creator_screening_table_name, creator_screening_fields),
     ]
     return {"status": "ok", "tables": tables}
 
@@ -3766,6 +4394,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
                 collaboration_monitor_table_name=request.collaboration_monitor_table_name,
                 collab_comments_table_name=request.collab_comments_table_name,
                 creator_selection_table_name=request.creator_selection_table_name,
+                creator_screening_table_name=request.creator_screening_table_name,
             )
         )
         return {
@@ -3791,6 +4420,7 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
             collaboration_monitor_table_name=request.collaboration_monitor_table_name,
             collab_comments_table_name=request.collab_comments_table_name,
             creator_selection_table_name=request.creator_selection_table_name,
+            creator_screening_table_name=request.creator_screening_table_name,
         )
     )
     return {"status": "ok", "project_name": request.project_name.strip(), "base_token": base_token, "root_table": root_table, "tables": scenario.get("tables", []), "base_raw": base_info.get("raw", {})}
@@ -3914,6 +4544,8 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
 
 @router.post("/collaboration-monitor/start")
 async def start_collaboration_monitor(request: CollaborationMonitorStartRequest):
+    if not request.note_links.strip() and not _split_creator_inputs(request.creator_ids):
+        raise HTTPException(status_code=400, detail="请先导入合作笔记表单，至少提供 1 条发布笔记链接")
     await _refresh_collab_creator_notes(request)
     notes_result = await _sync_collaboration_snapshot(request, f"{request.interval_hours}h")
     comments_result = await _sync_collaboration_comments(request, f"{request.interval_hours}h")
@@ -3925,6 +4557,8 @@ async def start_collaboration_monitor(request: CollaborationMonitorStartRequest)
 
 @router.post("/collaboration-monitor/crawl-once")
 async def collaboration_monitor_crawl_once(request: CollaborationMonitorStartRequest):
+    if not request.note_links.strip() and not _split_creator_inputs(request.creator_ids):
+        raise HTTPException(status_code=400, detail="请先导入合作笔记表单，至少提供 1 条发布笔记链接")
     await _refresh_collab_creator_notes(request)
     notes_result = await _sync_collaboration_snapshot(request, "manual")
     comments_result = await _sync_collaboration_comments(request, "manual")

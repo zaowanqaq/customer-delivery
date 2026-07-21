@@ -68,3 +68,33 @@ async def test_stop_collaboration_monitor_handles_cancelled_task():
 
     assert response == {"status": "ok", "message": "合作笔记监控已停止", "job_id": "job-1"}
     assert "job-1" not in crawler.collaboration_monitor_jobs
+
+
+@pytest.mark.asyncio
+async def test_collaboration_detail_crawl_preserves_xsec_query(monkeypatch):
+    captured = {}
+
+    async def fake_start(config):
+        captured["config"] = config
+        return True
+
+    async def fake_wait(timeout_sec=1800):
+        return True
+
+    monkeypatch.setattr(crawler, "_clear_mode_data_files", lambda mode: None)
+    monkeypatch.setattr(crawler.crawler_manager, "start", fake_start)
+    monkeypatch.setattr(crawler, "_wait_crawler_idle", fake_wait)
+    monkeypatch.setattr(crawler.crawler_manager, "process", None)
+
+    note_url = (
+        "https://www.xiaohongshu.com/explore/note_123"
+        "?xsec_token=token-value&xsec_source=pc_search"
+    )
+    request = CollaborationMonitorStartRequest(
+        base_token="base_token",
+        table_id="tbl_monitor",
+        note_links=note_url,
+    )
+    await crawler._refresh_collab_creator_notes(request)
+
+    assert captured["config"].specified_ids == note_url

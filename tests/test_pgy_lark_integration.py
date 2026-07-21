@@ -118,6 +118,27 @@ def test_pgy_summary_rows_map_to_customer_creator_selection_fields():
     assert values[14] == "2026-05-20"
 
 
+def test_pgy_summary_only_syncs_similar_creators_after_detail_fetch():
+    summary = {
+        "nickname": "目标达人",
+        "blogger_detail": {"userId": "target-1", "name": "目标达人"},
+        "similar_creators": [
+            {"nickname": "仅推荐卡片", "_user_id": "similar-1", "detail_fetched": False},
+            {
+                "nickname": "已抓完整详情",
+                "_user_id": "similar-2",
+                "detail_fetched": True,
+                "fans_count": 12345,
+            },
+        ],
+    }
+
+    rows = crawler._pgy_summary_to_rows(summary, "downloads/pgy/目标达人")
+
+    assert [row["nickname"] for row in rows] == ["目标达人", "已抓完整详情"]
+    assert rows[1]["fans_count"] == 12345
+
+
 def test_pgy_detail_attempts_request_daily_and_business_note_metrics():
     attempts = pgy_automation.make_detail_attempts("user-1")
 
@@ -125,6 +146,101 @@ def test_pgy_detail_attempts_request_daily_and_business_note_metrics():
     assert attempts["business_notes_rate"][0][2]["business"] == 1
     assert attempts["daily_core_data"][0][2]["business"] == "0"
     assert attempts["business_core_data"][0][2]["business"] == "1"
+
+
+def test_pgy_note_report_row_maps_single_note_metrics():
+    row = pgy_automation.normalize_pgy_note_grid_row(
+        "note-123",
+        {
+            "note": {
+                "lines": ["一篇合作笔记", "笔记ID：note-123"],
+                "links": ["https://www.xiaohongshu.com/explore/note-123"],
+            },
+            "kol": {
+                "lines": ["测试达人", "小红书号：red-123"],
+                "links": ["https://www.xiaohongshu.com/user/profile/user-123"],
+            },
+            "notePublishTime": {"lines": ["2026-07-18 10:30"]},
+            "collectionType": {"lines": ["母婴", "测评"]},
+            "impNum": {"lines": ["1.2万"]},
+            "readNum": {"lines": ["3,456"]},
+            "likeNum": {"lines": ["120"]},
+            "favNum": {"lines": ["34"]},
+            "cmtNum": {"lines": ["5"]},
+            "shareNum": {"lines": ["6"]},
+            "followCnt": {"lines": ["7"]},
+        },
+    )
+
+    assert row["title"] == "一篇合作笔记"
+    assert row["author_nickname"] == "测试达人"
+    assert row["exposure_count"] == 12000
+    assert row["read_count"] == 3456
+    assert row["liked_count"] == 120
+    assert row["collected_count"] == 34
+    assert row["comment_count"] == 5
+    assert row["share_count"] == 6
+    assert row["pgy_follow_count"] == 7
+    assert row["tag_list"] == ["母婴", "测评"]
+
+
+def test_collaboration_note_merge_prefers_pgy_values_and_keeps_xhs_fallbacks():
+    merged = crawler._merge_pgy_note_data(
+        {
+            "note_id": "note-123",
+            "title": "小红书标题",
+            "author_user_id": "user-123",
+            "liked_count": 10,
+            "collected_count": 2,
+            "comment_count": 1,
+            "share_count": 3,
+            "cover": "https://example.com/cover.jpg",
+        },
+        {
+            "note_id": "note-123",
+            "title": "蒲公英标题",
+            "liked_count": 20,
+            "collected_count": 4,
+            "comment_count": 0,
+            "share_count": 6,
+            "exposure_count": 2000,
+            "read_count": 1000,
+            "pgy_note_source": "蒲公英笔记报告",
+        },
+    )
+
+    assert merged["title"] == "蒲公英标题"
+    assert merged["liked_count"] == 20
+    assert merged["comment_count"] == 0
+    assert merged["exposure_count"] == 2000
+    assert merged["read_count"] == 1000
+    assert merged["author_user_id"] == "user-123"
+    assert merged["cover"] == "https://example.com/cover.jpg"
+    assert merged["pgy_note_source"] == "蒲公英笔记报告"
+
+
+@pytest.mark.asyncio
+async def test_pgy_note_fetch_uses_headless_saved_profile_without_cdp(monkeypatch):
+    captured_args = []
+
+    async def fake_run(args, timeout_sec=240):
+        captured_args.extend(args)
+        return {
+            "status": "ok",
+            "requested_count": 1,
+            "matched_count": 1,
+            "notes": [{"note_id": "note-123", "read_count": 10}],
+            "returncode": 0,
+        }
+
+    monkeypatch.setattr(crawler, "_pgy_cdp_available", lambda: False)
+    monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run)
+
+    result = await crawler._fetch_pgy_note_data(["note-123", "note-123"])
+
+    assert captured_args[:3] == ["run-note-data", "--note-ids", "note-123"]
+    assert "--headless" in captured_args
+    assert result["matched_count"] == 1
 
 
 def test_pgy_no_result_uses_page_text_markers():

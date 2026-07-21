@@ -29,6 +29,7 @@ from .creator_screening import (
     CreatorCandidateInput,
     CreatorScreeningImportRequest,
     CreatorScreeningStartRequest,
+    CreatorScreeningSyncRequest,
 )
 
 __all__ = [
@@ -59,4 +60,5 @@ __all__ = [
     "CreatorCandidateInput",
     "CreatorScreeningImportRequest",
     "CreatorScreeningStartRequest",
+    "CreatorScreeningSyncRequest",
 ]

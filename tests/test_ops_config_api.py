@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import base64
 import json
+import ssl
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -45,8 +47,14 @@ def test_scenario_setup_fields_match_customer_template():
 
     assert viral_fields == [
         "归属项目", "检索关键词", "笔记发布时间", "博主名", "博主ID", "博主粉丝数", "博主主页", "笔记类型",
-        "笔记标题", "笔记内容", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
-        "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "封面附件",
+        "笔记标题", "笔记内容", "笔记封面", "笔记图片1", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
+        "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "笔记封面URL",
+    ]
+    viral_cover = next(field for field in crawler._viral_monitor_fields() if field["name"] == "笔记封面")
+    assert viral_cover["type"] == "attachment"
+    assert [field["name"] for field in crawler._comments_fields()] == [
+        "IP属地", "评论内容", "评论用户", "项目名", "二级评论数", "点赞数", "评论时间", "评论图片",
+        "笔记ID", "关键词", "父评论ID", "评论区分析",
     ]
     assert creator_fields[:9] == [
         "目标/推荐博主", "推荐排名", "目标达人昵称", "达人昵称", "小红书号", "主页链接", "蒲公英主页链接",
@@ -157,10 +165,10 @@ async def test_start_account_monitor_snapshots_current_creator_and_uses_isolated
         assert job["requested_creator_ids"] == ["62c98736000000001501e075"]
         assert job["source_started_at"] > 0
         assert captured["start_request"].creator_ids.endswith("/62c98736000000001501e075")
-        assert captured["start_request"].max_notes_count == 37
+        assert captured["start_request"].max_notes_count == 10
         assert captured["start_request"].save_option.value == "csv"
-        assert job["notes_per_creator"] == 37
-        assert result["notes_per_creator"] == 37
+        assert job["notes_per_creator"] == 10
+        assert result["notes_per_creator"] == 10
     finally:
         crawler.account_monitor_jobs.pop(job_id, None)
 
@@ -320,6 +328,227 @@ def test_creator_selection_type_field_uses_colored_single_select_options():
     assert {item["hue"] for item in field["options"]} == {"Blue", "Orange"}
 
 
+def test_account_monitor_status_field_uses_colored_single_select_options():
+    field = next(
+        item for item in crawler._account_content_monitor_fields()
+        if item["name"] == "蒲公英主页状态"
+    )
+
+    assert field["type"] == "select"
+    assert field["multiple"] is False
+    assert {item["name"] for item in field["options"]} == {
+        "有蒲公英主页", "无蒲公英主页", "待人工确认",
+    }
+    assert {item["hue"] for item in field["options"]} == {"Green", "Gray", "Yellow"}
+
+
+@pytest.mark.asyncio
+async def test_account_monitor_template_repair_adds_status_fields_and_filtered_views(monkeypatch):
+    wanted = crawler._account_content_monitor_fields()
+    first_read = [
+        field for field in wanted
+        if field["name"] not in {"蒲公英主页状态", "蒲公英查询依据"}
+    ]
+    refreshed = [
+        ({**field, "id": "fld_status"} if field["name"] == "蒲公英主页状态" else {**field, "id": f"fld_{index}"})
+        for index, field in enumerate(wanted)
+    ]
+    reads = [first_read, refreshed]
+    created_fields = []
+    cli_calls = []
+    visible_calls = []
+    view_reads = [
+        [{"id": "vew_main", "name": "Grid View", "type": "grid"}],
+        [
+            {"id": "vew_main", "name": "Grid View", "type": "grid"},
+            {"id": "vew_yes", "name": "有蒲公英主页", "type": "grid"},
+            {"id": "vew_no", "name": "无蒲公英主页", "type": "grid"},
+            {"id": "vew_review", "name": "待人工确认", "type": "grid"},
+        ],
+    ]
+
+    async def fake_read_fields(*_):
+        return reads.pop(0)
+
+    async def fake_create_field(_base_token, _table_id, field):
+        created_fields.append(field)
+
+    async def fake_set_order(*_):
+        return None
+
+    async def fake_list_views(*_):
+        return view_reads.pop(0)
+
+    async def fake_run_cli(command, timeout_sec=30):
+        cli_calls.append(command)
+        return {"ok": True, "data": {}}
+
+    async def fake_set_visible(_base_token, _table_id, view_id, fields):
+        visible_calls.append((view_id, fields))
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_fields)
+    monkeypatch.setattr(crawler, "_create_base_field", fake_create_field)
+    monkeypatch.setattr(crawler, "_set_table_view_field_order", fake_set_order)
+    monkeypatch.setattr(crawler, "_list_table_views", fake_list_views)
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_cli)
+    monkeypatch.setattr(crawler, "_set_view_visible_fields", fake_set_visible)
+
+    await crawler._ensure_account_content_monitor_fields("base_template", "tbl_account")
+
+    assert {field["name"] for field in created_fields} == {"蒲公英主页状态", "蒲公英查询依据"}
+    assert sum("+view-create" in call for call in cli_calls) == 3
+    filter_calls = [call for call in cli_calls if "+view-set-filter" in call]
+    assert len(filter_calls) == 3
+    assert all("fld_status" in call[call.index("--json") + 1] for call in filter_calls)
+    no_pgy_fields = dict(visible_calls)["vew_no"]
+    assert "蒲公英主页状态" in no_pgy_fields
+    assert "日常笔记曝光中位数" not in no_pgy_fields
+
+
+@pytest.mark.asyncio
+async def test_viral_template_migration_preserves_cover_url_and_renames_attachment(monkeypatch):
+    wanted = crawler._viral_monitor_fields()
+    initial = [
+        *[
+            field for field in wanted
+            if field["name"] not in {"笔记封面", "笔记封面URL"}
+        ],
+        {"id": "fld_cover_text", "name": "笔记封面", "type": "text", "style": {"type": "plain"}},
+        {"id": "fld_cover_attachment", "name": "封面文件", "type": "attachment"},
+    ]
+    after_url_rename = [
+        *[field for field in initial if field.get("id") not in {"fld_cover_text"}],
+        {"id": "fld_cover_text", "name": "笔记封面URL", "type": "text", "style": {"type": "plain"}},
+    ]
+    migrated = [
+        *[field for field in after_url_rename if field.get("id") != "fld_cover_attachment"],
+        {"id": "fld_cover_attachment", "name": "笔记封面", "type": "attachment"},
+    ]
+    reads = [initial, after_url_rename, migrated, migrated]
+    updates = []
+    visible_orders = []
+
+    async def fake_read(*_):
+        return reads.pop(0)
+
+    async def fake_update(_base_token, _table_id, field_id, field):
+        updates.append((field_id, field))
+
+    async def fake_create(*_):
+        raise AssertionError("migration should reuse the existing attachment field")
+
+    async def fake_order(_base_token, _table_id, fields):
+        visible_orders.append(fields)
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read)
+    monkeypatch.setattr(crawler, "_update_base_field", fake_update)
+    monkeypatch.setattr(crawler, "_create_base_field", fake_create)
+    monkeypatch.setattr(crawler, "_set_table_view_field_order", fake_order)
+
+    result = await crawler._ensure_viral_monitor_fields("base_template", "tbl_viral")
+
+    assert updates == [
+        ("fld_cover_text", crawler._text_field("笔记封面URL")),
+        ("fld_cover_attachment", crawler._attachment_field("笔记封面")),
+    ]
+    assert next(field for field in result if field["name"] == "笔记封面")["type"] == "attachment"
+    assert "笔记图片1" not in visible_orders[0]
+    assert "笔记封面URL" not in visible_orders[0]
+    assert "笔记封面" in visible_orders[0]
+
+
+@pytest.mark.asyncio
+async def test_scenario_setup_repairs_reused_account_monitor_table(monkeypatch):
+    request = crawler.ScenarioTableSetupRequest(base_token="base_template")
+    table_names = [
+        request.account_filter_table_name,
+        request.viral_monitor_table_name,
+        request.note_recreation_table_name,
+        request.comments_table_name,
+        request.collaboration_monitor_table_name,
+        request.collab_comments_table_name,
+        request.creator_selection_table_name,
+        request.creator_screening_table_name,
+    ]
+    repaired = []
+
+    async def fake_list_tables(_base_token):
+        return [{"name": name, "id": f"tbl_{index}"} for index, name in enumerate(table_names)]
+
+    async def fake_account_repair(base_token, table_id):
+        repaired.append((base_token, table_id))
+        return []
+
+    async def no_op(*_, **__):
+        return []
+
+    monkeypatch.setattr(crawler, "_list_base_tables", fake_list_tables)
+    monkeypatch.setattr(crawler, "_ensure_account_content_monitor_fields", fake_account_repair)
+    monkeypatch.setattr(crawler, "_ensure_note_recreation_fields", no_op)
+    monkeypatch.setattr(crawler, "_ensure_viral_monitor_fields", no_op)
+    monkeypatch.setattr(crawler, "_ensure_fields_and_view_order", no_op)
+    monkeypatch.setattr(crawler, "_ensure_creator_selection_fields", no_op)
+
+    result = await crawler.setup_scenario_tables(request)
+
+    assert result["status"] == "ok"
+    assert repaired == [("base_template", "tbl_0")]
+    assert all(item["reused"] is True for item in result["tables"])
+    assert [item["table_name"] for item in result["tables"]] == [
+        request.viral_monitor_table_name,
+        request.comments_table_name,
+        request.creator_selection_table_name,
+        request.account_filter_table_name,
+        request.note_recreation_table_name,
+        request.collaboration_monitor_table_name,
+        request.collab_comments_table_name,
+        request.creator_screening_table_name,
+    ]
+
+
+def test_creator_screening_result_table_matches_original_input_columns():
+    assert [field["name"] for field in crawler._creator_screening_result_fields()] == [
+        "达人昵称", "博主ID", "主页链接", "达人价格",
+    ]
+
+
+def test_collaboration_note_form_parser_requires_customer_columns():
+    rows = crawler._parse_collaboration_note_file(
+        "合作笔记.csv",
+        "序号,达人昵称,小红书id,发布笔记链接\n1,甲,red_1,https://www.xiaohongshu.com/explore/note_1\n".encode("utf-8"),
+    )
+
+    assert rows == [{
+        "序号": "1",
+        "达人昵称": "甲",
+        "小红书id": "red_1",
+        "发布笔记链接": "https://www.xiaohongshu.com/explore/note_1",
+    }]
+
+    with pytest.raises(crawler.HTTPException, match="缺少必需列"):
+        crawler._parse_collaboration_note_file(
+            "合作笔记.csv",
+            "达人昵称,发布笔记链接\n甲,https://www.xiaohongshu.com/explore/note_1\n".encode("utf-8"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_sentiment_note_form_import_returns_clean_note_links():
+    content = base64.b64encode(
+        (
+            "序号,达人昵称,小红书id,发布笔记链接\n"
+            "1,甲,red_1,分享文案 https://www.xiaohongshu.com/explore/note_1?xsec_token=token\n"
+        ).encode("utf-8")
+    ).decode("ascii")
+
+    result = await crawler.import_sentiment_notes(
+        crawler.SampleAccountImportRequest(filename="舆情笔记.csv", content_base64=content)
+    )
+
+    assert result["count"] == 1
+    assert result["note_links"] == "https://www.xiaohongshu.com/explore/note_1?xsec_token=token"
+
+
 def test_historical_note_row_maps_to_customer_viral_payload():
     table_fields = [field["name"] for field in crawler._viral_monitor_fields()]
     row = {
@@ -475,7 +704,7 @@ async def test_upload_cover_file_uses_attachment_field_id(monkeypatch, tmp_path)
         "tbl123",
         "rec123",
         {"note_id": "note-1"},
-        {"封面附件": "fld5NvqX7K"},
+        {"笔记封面": "fld5NvqX7K"},
     )
 
     assert uploaded is True
@@ -537,6 +766,21 @@ def test_parse_sample_account_txt_file_dedupes_and_ignores_headers():
     assert accounts == ["https://www.xiaohongshu.com/user/profile/abc_123", "https://xhslink.com/a1b2"]
 
 
+def test_parse_sample_accounts_extracts_urls_from_share_text_and_cells():
+    content = (
+        "主页链接\n"
+        "达人A：复制后打开小红书 https://www.xiaohongshu.com/user/profile/abc_123?xsec_token=token 备注\n"
+        "达人B https://xhslink.com/m/4sMLPmRKj8e，短链接\n"
+    ).encode("utf-8")
+
+    accounts = crawler._parse_sample_account_file("accounts.txt", content)
+
+    assert accounts == [
+        "https://www.xiaohongshu.com/user/profile/abc_123?xsec_token=token",
+        "https://xhslink.com/m/4sMLPmRKj8e",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_import_sample_accounts_endpoint_accepts_base64_txt():
     content = base64.b64encode("主页链接\nhttps://www.xiaohongshu.com/user/profile/abc_123\nhttps://xhslink.com/a1b2\n".encode("utf-8")).decode("ascii")
@@ -553,6 +797,12 @@ async def test_import_sample_accounts_endpoint_accepts_base64_txt():
 def test_account_monitor_normalizes_a_long_profile_link():
     assert crawler._profile_url_from_link(
         "https://www.xiaohongshu.com/user/profile/abc_123?xsec_token=token"
+    ) == "https://www.xiaohongshu.com/user/profile/abc_123"
+
+
+def test_account_monitor_cleans_share_text_to_a_profile_url():
+    assert crawler._profile_url_from_link(
+        "达人主页： https://www.xiaohongshu.com/user/profile/abc_123?xsec_token=token，来源微信"
     ) == "https://www.xiaohongshu.com/user/profile/abc_123"
 
 
@@ -575,6 +825,37 @@ def test_account_monitor_resolves_a_short_profile_link(monkeypatch):
     monkeypatch.setattr(crawler.urllib.request, "build_opener", lambda *_handlers: FakeOpener())
 
     assert crawler._profile_url_from_link("https://xhslink.com/short-link") == "https://www.xiaohongshu.com/user/profile/short_123"
+
+
+def test_xhs_short_link_retries_only_certificate_failure_without_verification(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def geturl(self):
+            return "https://www.xiaohongshu.com/user/profile/short_456"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class FakeOpener:
+        def __init__(self, verify):
+            self.verify = verify
+
+        def open(self, _request, timeout):
+            calls.append((self.verify, timeout))
+            if self.verify:
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED"))
+            return FakeResponse()
+
+    monkeypatch.setattr(crawler, "_build_xhs_url_opener", lambda verify_certificates: FakeOpener(verify_certificates))
+
+    assert crawler._resolve_xhs_redirect_url("https://xhslink.com/m/test") == (
+        "https://www.xiaohongshu.com/user/profile/short_456"
+    )
+    assert calls == [(True, 15), (False, 15)]
 
 
 def test_sentiment_formula_marks_any_keyword_match():
@@ -611,6 +892,9 @@ def test_sentiment_risk_groups_create_per_type_and_summary_formulas():
 
 def test_sentiment_note_link_extracts_note_id():
     assert crawler._note_id_from_link("https://www.xiaohongshu.com/explore/note_123?xsec_token=token") == "note_123"
+    assert crawler._normalized_note_url_from_link(
+        "https://www.xiaohongshu.com/explore/note_123?xsec_token=token&xsec_source=pc_search"
+    ) == "https://www.xiaohongshu.com/explore/note_123?xsec_token=token&xsec_source=pc_search"
 
 
 def test_note_recreation_case_mapping_keeps_before_after_and_second_adjustment():
@@ -761,7 +1045,7 @@ async def test_sync_local_to_base_batches_new_records(monkeypatch, tmp_path):
         return {"ok": True, "data": {}}
 
     async def fake_read_table_field_defs(_base_token, _table_id):
-        return [{"name": "note_id", "type": "text"}, {"name": "标题", "type": "text"}, {"name": "封面文件", "type": "attachment"}]
+        return [{"name": "note_id", "type": "text"}, {"name": "标题", "type": "text"}, {"name": "笔记封面", "type": "attachment"}]
 
     async def fake_read_existing_base_records(_base_token, _table_id, _dedupe_field):
         return {}
@@ -802,7 +1086,7 @@ async def test_sync_local_to_base_dedupes_with_chinese_note_id_field(monkeypatch
         return {"ok": True, "data": {}}
 
     async def fake_read_table_field_defs(_base_token, _table_id):
-        return [{"name": "笔记ID", "type": "text"}, {"name": "标题", "type": "text"}, {"name": "封面文件", "type": "attachment"}]
+        return [{"name": "笔记ID", "type": "text"}, {"name": "标题", "type": "text"}, {"name": "笔记封面", "type": "attachment"}]
 
     async def fake_read_existing_base_records(_base_token, _table_id, dedupe_fields):
         assert "笔记ID" in dedupe_fields

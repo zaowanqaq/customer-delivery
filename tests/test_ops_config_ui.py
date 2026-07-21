@@ -143,6 +143,11 @@ def test_collaboration_monitor_keeps_latest_twenty_notes_without_exposing_a_coun
     assert "每轮每个账号抓取篇数" not in html
     assert "按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。" not in html
     assert "collab_notes_per_creator: 20" in html
+    assert 'id="collab_sync_limit"' not in html
+    assert "collab_sync_limit" not in html
+    assert "优先使用蒲公英「我的数据 → 笔记报告」中的单篇数据" in html
+    assert "不会使用达人账号的中位数" in html
+    assert "logCollabPgyStatus" in html
 
 
 def test_sample_account_file_import_controls_are_present():
@@ -160,13 +165,52 @@ def test_sample_account_file_import_controls_are_present():
     assert "在“找博主”中判断该达人是否开通蒲公英主页" in html
     assert 'account_monitor_mode: "auto"' in html
     assert "/api/crawler/account-monitor/start" in html
-    assert '<input id="notes_per_creator" type="number" min="1" value="20">' in html
-    assert 'notes_per_creator: Math.max(1, Number(payload.notes_per_creator || 20))' in html
+    assert '<input id="notes_per_creator" type="number" min="10" max="10" value="10" readonly>' in html
+    assert 'notes_per_creator: 10' in html
     assert "result.notes_per_creator || body.notes_per_creator" in html
-    assert 'id="notes_per_creator" type="number" min="20" max="20"' not in html
+    assert "固定抓取最近10篇" in html
     assert "downloadAccountMonitorTemplate()" in html
     assert "账号内容监测_主页链接模板.csv" in html
     assert "下载账号内容监测表" not in html
+
+
+def test_collaboration_monitor_imports_note_form_instead_of_creator_list():
+    html = _ops_config_text()
+
+    assert 'id="collab_notes_file"' in html
+    assert "序号、达人昵称、小红书id、发布笔记链接" in html
+    assert "/api/crawler/import-collaboration-notes" in html
+    assert 'note_links: payload.collab_note_links' in html
+    assert "合作博主账号名单（逗号或换行）" not in html
+
+
+def test_sentiment_monitor_imports_customer_note_form():
+    html = _ops_config_text()
+
+    assert 'id="sentiment_notes_file"' in html
+    assert "下载舆情监测笔记模板" in html
+    assert "/api/crawler/sentiment-notes-template" in html
+    assert "/api/crawler/import-sentiment-notes" in html
+    assert 'document.getElementById("sentiment_note_links").value = data.note_links || ""' in html
+
+
+def test_creator_screening_auto_sync_target_is_visible_in_project_mapping():
+    html = _ops_config_text()
+
+    assert "AI初筛结果表" in html
+    assert 'id="creator_screening_table_id"' in html
+    assert "/api/creator-screening/jobs/${encodeURIComponent(jobId)}/sync" in html
+    assert "仅“符合”的账号自动同步" in html
+
+
+def test_collaboration_sentiment_monitor_targets_collaboration_comment_table():
+    html = _ops_config_text()
+
+    assert "同步目标：当前项目的「合作笔记舆情监控表」" in html
+    assert "相似达人只有在勾选后" in html
+    assert "拿到完整详情后才会同步到飞书" in html
+    assert "table_id: payload.collab_comments_table_id" in html
+    assert "请先在项目大盘绑定合作笔记舆情监控表" in html
 
 
 def test_login_issues_open_actionable_prompts_in_the_matching_tabs():

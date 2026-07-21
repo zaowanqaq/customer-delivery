@@ -26,8 +26,8 @@ REQUIRED_CREATOR_COLUMNS = ("达人昵称", "博主ID", "主页链接", "达人�
 DEFAULT_SILICONFLOW_KIMI_MODEL = "Pro/moonshotai/Kimi-K2.6"
 SILICONFLOW_CHAT_COMPLETIONS_URL = "https://api.siliconflow.cn/v1/chat/completions"
 SCREENING_PAGE_NAME_PREFIX = "mediacrawler_creator_screening"
-DEFAULT_SCREENING_CONCURRENCY = 2
-MAX_SCREENING_CONCURRENCY = 3
+DEFAULT_SCREENING_CONCURRENCY = 3
+MAX_SCREENING_CONCURRENCY = 4
 
 
 def screening_concurrency() -> int:

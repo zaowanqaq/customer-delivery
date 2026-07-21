@@ -10,6 +10,7 @@ from api.schemas.creator_screening import (
     CreatorScreeningApiKeyRequest,
     CreatorScreeningImportRequest,
     CreatorScreeningStartRequest,
+    CreatorScreeningSyncRequest,
 )
 from api.services.creator_screening import (
     CreatorScreeningJobManager,
@@ -91,6 +92,53 @@ async def test_unknown_job_returns_not_found(monkeypatch):
 
     with pytest.raises(creator_screening.HTTPException, match="任务不存在"):
         await creator_screening.get_job("missing")
+
+
+@pytest.mark.asyncio
+async def test_finished_job_syncs_only_approved_creators(monkeypatch):
+    manager = CreatorScreeningJobManager(ai=FakeAI(), snapshot_collector=fake_snapshot)
+    monkeypatch.setattr(creator_screening, "screening_manager", manager)
+    candidates = [
+        CreatorCandidateInput(
+            index=1,
+            nickname="甲",
+            blogger_id="a",
+            profile_url="https://www.xiaohongshu.com/user/profile/a",
+            price="100",
+        )
+    ]
+    job = await manager.start("浙江线下打卡", candidates)
+    await job.task
+
+    async def fake_read_defs(*_args):
+        return creator_screening._creator_screening_result_fields()
+
+    async def fake_existing(*_args):
+        return {}
+
+    async def fake_order(*_args):
+        return None
+
+    commands = []
+
+    async def fake_run(command, **_kwargs):
+        commands.append(command)
+        return {"ok": True, "data": {"record_id_list": ["rec1"]}}
+
+    monkeypatch.setattr(creator_screening, "_read_table_field_defs", fake_read_defs)
+    monkeypatch.setattr(creator_screening, "_read_existing_base_records", fake_existing)
+    monkeypatch.setattr(creator_screening, "_set_table_view_field_order", fake_order)
+    monkeypatch.setattr(creator_screening, "_run_lark_cli", fake_run)
+
+    result = await creator_screening.sync_job(
+        job.id,
+        CreatorScreeningSyncRequest(base_token="bas1", table_id="tbl1"),
+    )
+
+    assert result["approved"] == 1
+    assert result["created"] == 1
+    assert result["updated"] == 0
+    assert any("+record-batch-create" in command for command in commands)
 
 
 @pytest.mark.asyncio
