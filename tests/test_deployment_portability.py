@@ -6,6 +6,7 @@ from pathlib import Path
 from api.routers import crawler
 from api.schemas import CrawlerStartRequest
 from api.services.crawler_manager import CrawlerManager
+from tools.async_file_writer import AsyncFileWriter
 
 crawler_manager_module = importlib.import_module("api.services.crawler_manager")
 
@@ -19,6 +20,35 @@ def test_latest_local_file_reads_runtime_data_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(crawler, "data_dir", lambda: runtime_data)
 
     assert crawler._latest_local_file("notes", "search") == target
+
+
+def test_async_file_writer_uses_process_run_id(monkeypatch, tmp_path):
+    monkeypatch.setattr("config.SAVE_DATA_PATH", str(tmp_path))
+    monkeypatch.setenv("MEDIACRAWLER_RUN_ID", "run-20260723")
+    first = AsyncFileWriter("xhs", "search")
+    second = AsyncFileWriter("xhs", "search")
+
+    assert first._get_file_path("jsonl", "contents") == second._get_file_path("jsonl", "contents")
+    assert "run-20260723" in first._get_file_path("jsonl", "contents")
+
+
+def test_latest_local_file_prefers_requested_mode_over_newer_other_mode(monkeypatch, tmp_path):
+    runtime_data = tmp_path / "runtime-data"
+    data_folder = runtime_data / "xhs" / "jsonl"
+    data_folder.mkdir(parents=True)
+    search_file = data_folder / "search_contents_search-run.jsonl"
+    creator_file = data_folder / "creator_contents_creator-run.jsonl"
+    search_file.write_text('{"note_id":"search-note"}\n', encoding="utf-8")
+    creator_file.write_text('{"note_id":"creator-note"}\n', encoding="utf-8")
+    os.utime(search_file, (100, 100))
+    os.utime(creator_file, (200, 200))
+    fake_module = tmp_path / "project" / "api" / "routers" / "crawler.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.write_text("", encoding="utf-8")
+    monkeypatch.setattr(crawler, "data_dir", lambda: runtime_data)
+    monkeypatch.setattr(crawler, "__file__", str(fake_module))
+
+    assert crawler._latest_local_file("notes", "search") == search_file
 
 
 def test_latest_local_file_can_isolate_current_creator_run(monkeypatch, tmp_path):

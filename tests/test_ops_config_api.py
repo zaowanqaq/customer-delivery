@@ -69,7 +69,10 @@ def test_scenario_setup_fields_match_customer_template():
         "序号", "达人昵称", "小红书id", "发布笔记链接", "发布时间", "笔记tag", "笔记标题", "点赞", "收藏",
         "评论", "总互动（点赞+收藏+评论）", "分享", "曝光量", "阅读量", "笔记失效/正常（有失效链接作标记）",
     ]
-    assert sentiment_fields[:5] == ["项目名", "笔记链接", "笔记标题", "评论总数", "舆情风险"]
+    assert sentiment_fields[:8] == [
+        "项目名", "笔记链接", "笔记标题", "点赞数", "评论总数",
+        "评论区敏感词", "评论区敏感词监测", "舆情风险",
+    ]
     risk_field = next(field for field in crawler._sentiment_monitor_fields() if field["name"] == "舆情风险")
     assert risk_field == {
         "name": "舆情风险",
@@ -77,6 +80,14 @@ def test_scenario_setup_fields_match_customer_template():
         "expression": "\"\"",
         "description": "笔记舆情监控自动汇总的风险类型",
     }
+    keyword_field = next(
+        field for field in crawler._sentiment_monitor_fields() if field["name"] == "评论区敏感词"
+    )
+    monitor_field = next(
+        field for field in crawler._sentiment_monitor_fields() if field["name"] == "评论区敏感词监测"
+    )
+    assert keyword_field["type"] == "formula"
+    assert monitor_field["type"] == "formula"
     assert recreation_fields == [
         "收藏数", "当日使用标记", "改写打分", "笔记ID", "博主名", "笔记链接", "标题", "采集时间",
         "博主主页", "标题改写.输出结果", "封面改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
@@ -858,6 +869,18 @@ def test_xhs_short_link_retries_only_certificate_failure_without_verification(mo
     assert calls == [(True, 15), (False, 15)]
 
 
+def test_sentiment_keyword_formula_lists_actual_matches():
+    groups = crawler._normalize_sentiment_risk_groups([
+        {"name": "电商风险", "keywords": "投诉,价格高"},
+    ])
+
+    assert crawler._sentiment_keyword_formula(groups) == (
+        'REGEXREPLACE(CONCATENATE(IF(CONTAINTEXT([评论内容], "投诉"), "投诉、", ""), '
+        'IF(CONTAINTEXT([评论内容], "价格高"), "价格高、", "")), "、$", "")'
+    )
+    assert crawler._sentiment_monitor_formula() == 'IF([评论区敏感词] != "", "命中", "未命中")'
+
+
 def test_sentiment_formula_marks_any_keyword_match():
     keywords = crawler._split_sentiment_keywords("投诉，质量问题\n欺骗,投诉")
 
@@ -1174,3 +1197,62 @@ def test_normalize_base_cell_uses_cli_shapes_for_text_and_select_fields():
     assert crawler._normalize_base_cell_value(
         "美食,探店", {"type": "multi_select"}
     ) == ["美食", "探店"]
+
+
+@pytest.mark.asyncio
+async def test_search_sync_rejects_rows_without_current_keyword(monkeypatch, tmp_path):
+    notes_path = tmp_path / "search.json"
+    notes_path.write_text(json.dumps([
+        {"note_id": "old-record", "title": "历史无关键词内容", "source_keyword": ""},
+        {"note_id": "wanted", "title": "许嵩演唱会现场", "source_keyword": "许嵩演唱会"},
+    ], ensure_ascii=False), encoding="utf-8")
+    payloads = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        payloads.append(json.loads(payload_path.read_text(encoding="utf-8")))
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_field_defs(_base_token, _table_id):
+        return [{"name": "笔记ID", "type": "text"}, {"name": "标题", "type": "text"}]
+
+    async def fake_read_existing_base_records(*_args):
+        return {}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_table_field_defs)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(crawler.LocalToBaseSyncRequest(
+        base_token="base",
+        table_id="table",
+        data_type="notes",
+        crawler_type_hint="search",
+        source_keyword="许嵩演唱会",
+        file_path=str(notes_path),
+    ))
+
+    assert result["created"] == 1
+    assert payloads[0]["rows"] == [["wanted", "许嵩演唱会现场"]]
+
+
+def test_sentiment_comment_enrichment_keeps_note_and_comment_likes_separate():
+    rows = crawler._enrich_sentiment_comment_rows(
+        [{"note_id": "note-1", "content": "价格高", "like_count": "7"}],
+        [{
+            "note_id": "note-1",
+            "title": "演唱会攻略",
+            "note_url": "https://www.xiaohongshu.com/explore/note-1",
+            "liked_count": "321",
+            "comment_count": "45",
+        }],
+        "",
+    )
+
+    assert rows[0]["笔记链接"] == "https://www.xiaohongshu.com/explore/note-1"
+    assert rows[0]["笔记标题"] == "演唱会攻略"
+    assert rows[0]["点赞数"] == "321"
+    assert rows[0]["评论总数"] == "45"
+    assert rows[0]["comment_like_count"] == "7"

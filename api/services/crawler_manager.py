@@ -128,7 +128,7 @@ class CrawlerManager:
             await self._push_log(entry)
 
             try:
-                # Start subprocess
+                run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -137,7 +137,12 @@ class CrawlerManager:
                     encoding='utf-8',
                     bufsize=1,
                     cwd=str(self._project_root),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONPATH": str(self._project_root)}
+                    env={
+                        **os.environ,
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTHONPATH": str(self._project_root),
+                        "MEDIACRAWLER_RUN_ID": run_id,
+                    }
                 )
 
                 self.status = "running"

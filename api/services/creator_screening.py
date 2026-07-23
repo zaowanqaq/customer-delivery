@@ -28,6 +28,7 @@ SILICONFLOW_CHAT_COMPLETIONS_URL = "https://api.siliconflow.cn/v1/chat/completio
 SCREENING_PAGE_NAME_PREFIX = "mediacrawler_creator_screening"
 DEFAULT_SCREENING_CONCURRENCY = 3
 MAX_SCREENING_CONCURRENCY = 4
+DEFAULT_AI_TIMEOUT_SECONDS = 90.0
 
 
 def screening_concurrency() -> int:
@@ -37,6 +38,14 @@ def screening_concurrency() -> int:
     except ValueError:
         configured = DEFAULT_SCREENING_CONCURRENCY
     return max(1, min(configured, MAX_SCREENING_CONCURRENCY))
+
+
+def ai_timeout_seconds() -> float:
+    try:
+        configured = float(os.getenv("CREATOR_SCREENING_AI_TIMEOUT_SECONDS", str(DEFAULT_AI_TIMEOUT_SECONDS)))
+    except ValueError:
+        configured = DEFAULT_AI_TIMEOUT_SECONDS
+    return max(30.0, min(configured, 300.0))
 
 
 @dataclass
@@ -168,7 +177,7 @@ class CreatorScreeningAI:
         return f"{provider} 响应处理失败：{type(exc).__name__}"
 
     async def _post_json(self, url: str, headers: dict, body: dict) -> dict:
-        async with httpx.AsyncClient(timeout=45) as client:
+        async with httpx.AsyncClient(timeout=ai_timeout_seconds()) as client:
             response = await client.post(url, headers=headers, json=body)
             response.raise_for_status()
             payload = response.json()

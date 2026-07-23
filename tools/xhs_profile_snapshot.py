@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -21,6 +22,16 @@ from tools.browser_launcher import BrowserLauncher
 
 LOGIN_MARKERS = ("登录", "验证码", "滑动验证", "请先登录")
 SCREENING_PAGE_NAME = "mediacrawler_creator_screening"
+DEFAULT_PROFILE_NAVIGATION_TIMEOUT_MS = 60_000
+DEFAULT_PROFILE_TEXT_TIMEOUT_MS = 15_000
+
+
+def _bounded_timeout_ms(env_name: str, default: int) -> int:
+    try:
+        configured = int(os.getenv(env_name, str(default)))
+    except ValueError:
+        configured = default
+    return max(5_000, min(configured, 180_000))
 
 
 def shared_xhs_login_profile_dir() -> Path:
@@ -109,9 +120,17 @@ async def _save_profile_screenshot(page: Page, output_dir: Path) -> list[str]:
 
 async def capture_visible_profile(page: Page, profile_url: str, output_dir: Path) -> ProfileSnapshot:
     try:
-        await page.goto(profile_url, wait_until="domcontentloaded", timeout=30_000)
+        await page.goto(
+            profile_url,
+            wait_until="domcontentloaded",
+            timeout=_bounded_timeout_ms("CREATOR_SCREENING_PROFILE_TIMEOUT_MS", DEFAULT_PROFILE_NAVIGATION_TIMEOUT_MS),
+        )
         await _dismiss_login_prompt(page)
-        profile_header_text = (await page.locator("body").inner_text(timeout=5_000)).strip()
+        profile_header_text = (
+            await page.locator("body").inner_text(
+                timeout=_bounded_timeout_ms("CREATOR_SCREENING_TEXT_TIMEOUT_MS", DEFAULT_PROFILE_TEXT_TIMEOUT_MS)
+            )
+        ).strip()
         profile_ip_location = extract_profile_ip(profile_header_text)
         for _ in range(2):
             await page.evaluate("window.scrollBy(0, Math.max(600, window.innerHeight * 0.8))")

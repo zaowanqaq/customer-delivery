@@ -501,6 +501,26 @@ def _risk_group_formula(group: Dict[str, Any]) -> str:
     return f'IF({_risk_group_condition(group["keywords"])}, "{_escape_formula_string(group["name"])}", "")'
 
 
+def _sentiment_keyword_formula(groups: List[Any]) -> str:
+    normalized = (
+        [{"name": "电商风险", "keywords": groups}]
+        if groups and isinstance(groups[0], str)
+        else groups
+        if groups and isinstance(groups[0], dict) and isinstance(groups[0].get("keywords"), list)
+        else _normalize_sentiment_risk_groups(groups)
+    )
+    keywords = list(dict.fromkeys(keyword for group in normalized for keyword in group["keywords"]))
+    matches = [
+        f'IF(CONTAINTEXT([评论内容], "{_escape_formula_string(keyword)}"), "{_escape_formula_string(keyword)}、", "")'
+        for keyword in keywords
+    ]
+    return f'REGEXREPLACE(CONCATENATE({", ".join(matches)}), "、$", "")'
+
+
+def _sentiment_monitor_formula() -> str:
+    return 'IF([评论区敏感词] != "", "命中", "未命中")'
+
+
 def _sentiment_risk_formula(groups: List[Any]) -> str:
     """Return the aggregate risk label; a comment can match more than one category."""
     if groups and isinstance(groups[0], str):
@@ -1415,14 +1435,17 @@ def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("项目名"),
         _text_field("笔记链接"),
         _text_field("笔记标题"),
+        _number_field("点赞数"),
         _number_field("评论总数"),
+        _formula_field("评论区敏感词", "\"\"", "评论内容实际命中的敏感词"),
+        _formula_field("评论区敏感词监测", "\"\"", "评论区是否命中敏感词"),
         _formula_field("舆情风险", "\"\"", "笔记舆情监控自动汇总的风险类型"),
         _text_field("首评评论用户"),
         _text_field("IP属地"),
         _datetime_field("评论时间"),
         _text_field("评论内容"),
         _text_field("评论图片"),
-        _number_field("点赞数"),
+        _number_field("评论点赞数"),
         _text_field("二级评论用户"),
         _text_field("三级评论用户"),
         _text_field("四级评论用户"),
@@ -1474,11 +1497,25 @@ async def _ensure_sentiment_monitor_fields(base_token: str, table_id: str, risk_
     existing = await _read_table_field_defs(base_token, table_id)
     existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
     for field in _sentiment_monitor_fields():
-        if field["name"] != "舆情风险" and field["name"] not in existing_by_name:
+        if field["name"] not in {"舆情风险", "评论区敏感词", "评论区敏感词监测"} and field["name"] not in existing_by_name:
             await _create_base_field(base_token, table_id, field)
 
     summary = _formula_field("舆情风险", _sentiment_risk_formula(groups), "笔记舆情监控自动汇总的风险类型")
     await _upsert_sentiment_formula_field(base_token, table_id, existing_by_name.get("舆情风险"), summary)
+    keyword_summary = _formula_field("评论区敏感词", _sentiment_keyword_formula(groups), "评论内容实际命中的敏感词")
+    await _upsert_sentiment_formula_field(
+        base_token,
+        table_id,
+        existing_by_name.get("评论区敏感词"),
+        keyword_summary,
+    )
+    monitor_summary = _formula_field("评论区敏感词监测", _sentiment_monitor_formula(), "评论区是否命中敏感词")
+    await _upsert_sentiment_formula_field(
+        base_token,
+        table_id,
+        existing_by_name.get("评论区敏感词监测"),
+        monitor_summary,
+    )
     active_group_fields = set()
     for group in groups:
         name = _risk_group_field_name(group["name"])
@@ -1831,42 +1868,46 @@ def _latest_local_file(
     if legacy_data_root.resolve() != data_roots[0].resolve():
         data_roots.append(legacy_data_root)
     mode = (crawler_type_hint or "").strip()
-    patterns: List[tuple[str, str]] = []
+
+    def collect(patterns: List[tuple[str, str]]) -> List[Path]:
+        candidates: List[Path] = []
+        for data_root in data_roots:
+            for folder, pattern in patterns:
+                dir_path = data_root / folder
+                if not dir_path.exists():
+                    continue
+                for candidate in dir_path.glob(pattern):
+                    try:
+                        if modified_after is not None and candidate.stat().st_mtime < modified_after:
+                            continue
+                    except OSError:
+                        continue
+                    candidates.append(candidate)
+        return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
+
     if mode:
-        patterns.extend([
+        mode_candidates = collect([
             ("jsonl", f"{mode}_{suffix}_*.jsonl"),
             ("csv", f"{mode}_{suffix}_*.csv"),
             ("json", f"{mode}_{suffix}_*.json"),
             ("excel", f"{mode}_{suffix}_*.xlsx"),
             ("excel", f"{mode}_{suffix}_*.xls"),
         ])
-    if not strict_mode:
-        patterns.extend([
-            # Fallback: support all crawler modes (search/creator/detail/...).
-            ("jsonl", f"*_{suffix}_*.jsonl"),
-            ("csv", f"*_{suffix}_*.csv"),
-            ("json", f"*_{suffix}_*.json"),
-            ("excel", f"*_{suffix}_*.xlsx"),
-            ("excel", f"*_{suffix}_*.xls"),
-        ])
+        if mode_candidates:
+            return mode_candidates[0]
+        if strict_mode:
+            raise HTTPException(status_code=404, detail=f"未找到本地 {mode} 模式的 {data_type} 数据文件")
 
-    candidates: List[Path] = []
-    for data_root in data_roots:
-        for folder, pattern in patterns:
-            dir_path = data_root / folder
-            if not dir_path.exists():
-                continue
-            for candidate in dir_path.glob(pattern):
-                try:
-                    if modified_after is not None and candidate.stat().st_mtime < modified_after:
-                        continue
-                except OSError:
-                    continue
-                candidates.append(candidate)
-    candidates = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
-    if not candidates:
+    fallback_candidates = collect([
+        ("jsonl", f"*_{suffix}_*.jsonl"),
+        ("csv", f"*_{suffix}_*.csv"),
+        ("json", f"*_{suffix}_*.json"),
+        ("excel", f"*_{suffix}_*.xlsx"),
+        ("excel", f"*_{suffix}_*.xls"),
+    ])
+    if not fallback_candidates:
         raise HTTPException(status_code=404, detail=f"未找到本地 {data_type} 数据文件（jsonl/csv/json/xlsx/xls）")
-    return candidates[0]
+    return fallback_candidates[0]
 
 
 def _read_jsonl_rows(file_path: Path) -> List[Dict[str, Any]]:
@@ -2221,6 +2262,7 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "笔记tag": ["tag_list", "topics", "话题标签", "语义标签"],
         "点赞量": ["liked_count", "like_count", "点赞数"],
         "点赞数": ["liked_count", "like_count", "点赞量"],
+        "评论点赞数": ["comment_like_count", "like_count", "点赞数"],
         "点赞": ["liked_count", "like_count", "点赞量", "点赞数"],
         "收藏量": ["collected_count", "收藏数"],
         "收藏数": ["collected_count", "收藏量"],
@@ -3883,6 +3925,38 @@ async def account_monitor_status(job_id: str):
     }
 
 
+def _enrich_sentiment_comment_rows(
+    comments: List[Dict[str, Any]],
+    notes: List[Dict[str, Any]],
+    note_links: str,
+) -> List[Dict[str, Any]]:
+    note_by_id = {
+        str(row.get("note_id") or row.get("id") or "").strip(): row
+        for row in notes
+        if str(row.get("note_id") or row.get("id") or "").strip()
+    }
+    normalized_links: Dict[str, str] = {}
+    for link in re.split(r"[\n\r,，;；]+", note_links or ""):
+        link = link.strip()
+        if not link:
+            continue
+        with contextlib.suppress(ValueError):
+            normalized_links[_note_id_from_link(link, resolve_short_link=False)] = link
+
+    enriched: List[Dict[str, Any]] = []
+    for comment in comments:
+        row = dict(comment)
+        note_id = str(row.get("note_id") or "").strip()
+        note = note_by_id.get(note_id, {})
+        row["笔记链接"] = str(note.get("note_url") or normalized_links.get(note_id) or "")
+        row["笔记标题"] = str(note.get("title") or "")
+        row["点赞数"] = note.get("liked_count") or note.get("like_count") or ""
+        row["评论总数"] = note.get("comment_count") or ""
+        row["comment_like_count"] = row.get("like_count") or ""
+        enriched.append(row)
+    return enriched
+
+
 async def _build_sentiment_monitor_job(job_id: str, request: NoteSentimentStartRequest, risk_groups: List[Dict[str, Any]]) -> None:
     job = sentiment_monitor_jobs[job_id]
     try:
@@ -3891,17 +3965,37 @@ async def _build_sentiment_monitor_job(job_id: str, request: NoteSentimentStartR
             raise RuntimeError("等待笔记评论抓取完成超时")
         job.update({"status": "configuring", "stage": "正在配置多维表格舆情风险规则"})
         await _ensure_sentiment_monitor_fields(request.base_token, request.table_id, risk_groups)
-        comments_path = _latest_local_file("comments", "detail")
-        job.update({"status": "syncing", "stage": "正在同步评论至笔记舆情监控表"})
-        sync_result = await sync_local_to_base(
-            LocalToBaseSyncRequest(
-                base_token=request.base_token,
-                table_id=request.table_id,
-                data_type="comments",
-                crawler_type_hint="detail",
-                file_path=str(comments_path),
-            )
+        crawl_started_at = float(job.get("crawl_started_at") or 0)
+        comments_path = _latest_local_file(
+            "comments", "detail", modified_after=crawl_started_at, strict_mode=True
         )
+        notes_path = _latest_local_file(
+            "notes", "detail", modified_after=crawl_started_at, strict_mode=True
+        )
+        enriched_comments = _enrich_sentiment_comment_rows(
+            _read_local_rows(comments_path),
+            _read_local_rows(notes_path),
+            request.note_links,
+        )
+        enriched_path = temp_dir() / f"sentiment_comments_{job_id}.jsonl"
+        enriched_path.parent.mkdir(parents=True, exist_ok=True)
+        enriched_path.write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in enriched_comments),
+            encoding="utf-8",
+        )
+        job.update({"status": "syncing", "stage": "正在同步评论至笔记舆情监控表"})
+        try:
+            sync_result = await sync_local_to_base(
+                LocalToBaseSyncRequest(
+                    base_token=request.base_token,
+                    table_id=request.table_id,
+                    data_type="comments",
+                    crawler_type_hint="detail",
+                    file_path=str(enriched_path),
+                )
+            )
+        finally:
+            enriched_path.unlink(missing_ok=True)
         job.update({
             "status": "completed",
         "stage": "评论已同步，各风险类型由多维表格规则自动标记",
@@ -3952,6 +4046,7 @@ async def start_sentiment_monitor(request: NoteSentimentStartRequest):
         cookies=request.cookies,
         headless=request.headless,
     )
+    crawl_started_at = time.time()
     success = await crawler_manager.start(start_request)
     if not success:
         if crawler_manager.process and crawler_manager.process.poll() is None:
@@ -3968,6 +4063,7 @@ async def start_sentiment_monitor(request: NoteSentimentStartRequest):
         "sync_result": {},
         "error": "",
         "started_at": datetime.now().isoformat(),
+        "crawl_started_at": crawl_started_at,
     }
     sentiment_monitor_jobs[job_id]["task"] = asyncio.create_task(_build_sentiment_monitor_job(job_id, request, risk_groups))
     return {"status": "ok", "message": "笔记舆情监控任务已启动", "job_id": job_id, "note_count": len(note_urls)}
@@ -4459,7 +4555,9 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
         if request.source_keyword:
             row_keyword = str(obj.get("source_keyword", "")).strip()
-            if row_keyword and row_keyword != request.source_keyword:
+            if request.crawler_type_hint == "search" and row_keyword != request.source_keyword:
+                continue
+            if request.crawler_type_hint != "search" and row_keyword and row_keyword != request.source_keyword:
                 continue
         if request.project_name:
             obj["项目名"] = request.project_name

@@ -16,6 +16,7 @@ class AsyncFileWriter:
         self.lock = asyncio.Lock()
         self.platform = platform
         self.crawler_type = crawler_type
+        self.run_timestamp = os.getenv("MEDIACRAWLER_RUN_ID") or utils.get_current_date()
         self.wordcloud_generator = AsyncWordCloudGenerator() if config.ENABLE_GET_WORDCLOUD else None
 
     def _get_file_path(self, file_type: str, item_type: str) -> str:
@@ -24,7 +25,7 @@ class AsyncFileWriter:
         else:
             base_path = f"data/{self.platform}/{file_type}"
         pathlib.Path(base_path).mkdir(parents=True, exist_ok=True)
-        file_name = f"{self.crawler_type}_{item_type}_{utils.get_current_date()}.{file_type}"
+        file_name = f"{self.crawler_type}_{item_type}_{self.run_timestamp}.{file_type}"
         return f"{base_path}/{file_name}"
 
     def _get_fallback_file_path(self, target_file_path: str) -> str:
