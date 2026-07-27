@@ -1238,6 +1238,98 @@ async def test_search_sync_rejects_rows_without_current_keyword(monkeypatch, tmp
     assert payloads[0]["rows"] == [["wanted", "许嵩演唱会现场"]]
 
 
+@pytest.mark.asyncio
+async def test_search_sync_accepts_each_keyword_from_multi_keyword_request(monkeypatch, tmp_path):
+    notes_path = tmp_path / "search.json"
+    notes_path.write_text(json.dumps([
+        {"note_id": "gift", "title": "七夕礼物清单", "source_keyword": "七夕礼物"},
+        {"note_id": "guide", "title": "七夕约会攻略", "source_keyword": "七夕攻略"},
+        {"note_id": "other", "title": "无关历史内容", "source_keyword": "暑期"},
+    ], ensure_ascii=False), encoding="utf-8")
+    payloads = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        payloads.append(json.loads(payload_path.read_text(encoding="utf-8")))
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_field_defs(_base_token, _table_id):
+        return [{"name": "笔记ID", "type": "text"}, {"name": "标题", "type": "text"}]
+
+    async def fake_read_existing_base_records(*_args):
+        return {}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_table_field_defs)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(crawler.LocalToBaseSyncRequest(
+        base_token="base",
+        table_id="table",
+        data_type="notes",
+        crawler_type_hint="search",
+        source_keyword="七夕礼物, 七夕攻略",
+        file_path=str(notes_path),
+    ))
+
+    assert result["created"] == 2
+    assert payloads[0]["rows"] == [
+        ["gift", "七夕礼物清单"],
+        ["guide", "七夕约会攻略"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_comment_sync_scopes_rows_by_related_notes(monkeypatch, tmp_path):
+    notes_path = tmp_path / "search_contents_2026-07-27.json"
+    comments_path = tmp_path / "search_comments_2026-07-27.json"
+    notes_path.write_text(json.dumps([
+        {"note_id": "gift", "source_keyword": "七夕礼物"},
+        {"note_id": "guide", "source_keyword": "七夕攻略"},
+        {"note_id": "other", "source_keyword": "暑期"},
+    ], ensure_ascii=False), encoding="utf-8")
+    comments_path.write_text(json.dumps([
+        {"comment_id": "comment-1", "note_id": "gift", "content": "礼物评论"},
+        {"comment_id": "comment-2", "note_id": "guide", "content": "攻略评论"},
+        {"comment_id": "comment-3", "note_id": "other", "content": "历史评论"},
+    ], ensure_ascii=False), encoding="utf-8")
+    payloads = []
+
+    async def fake_run_lark_cli(cmd, timeout_sec=30):
+        json_arg = cmd[cmd.index("--json") + 1]
+        payload_path = Path(crawler.__file__).resolve().parents[2] / json_arg[3:]
+        payloads.append(json.loads(payload_path.read_text(encoding="utf-8")))
+        return {"ok": True, "data": {}}
+
+    async def fake_read_table_field_defs(_base_token, _table_id):
+        return [{"name": "评论ID", "type": "text"}, {"name": "笔记ID", "type": "text"}, {"name": "评论内容", "type": "text"}]
+
+    async def fake_read_existing_base_records(*_args):
+        return {}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_table_field_defs)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(crawler.LocalToBaseSyncRequest(
+        base_token="base",
+        table_id="table",
+        data_type="comments",
+        crawler_type_hint="search",
+        source_keyword="七夕礼物，七夕攻略",
+        file_path=str(comments_path),
+    ))
+
+    assert result["created"] == 2
+    assert payloads[0]["rows"] == [
+        ["comment-1", "gift", "礼物评论"],
+        ["comment-2", "guide", "攻略评论"],
+    ]
+
+
 def test_sentiment_comment_enrichment_keeps_note_and_comment_likes_separate():
     rows = crawler._enrich_sentiment_comment_rows(
         [{"note_id": "note-1", "content": "价格高", "like_count": "7"}],

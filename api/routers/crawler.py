@@ -1964,6 +1964,15 @@ def _read_local_rows(file_path: Path) -> List[Dict[str, Any]]:
     raise HTTPException(status_code=400, detail=f"不支持的文件类型：{file_path.suffix}，仅支持 jsonl/json/csv/xlsx/xls")
 
 
+def _related_notes_file(comment_file: Path, crawler_type_hint: str = "") -> Path:
+    related_name = re.sub(r"_comments_", "_contents_", comment_file.name, count=1)
+    if related_name != comment_file.name:
+        related_file = comment_file.with_name(related_name)
+        if related_file.exists():
+            return related_file
+    return _latest_local_file("notes", crawler_type_hint)
+
+
 def _account_monitor_public_row(source: Dict[str, Any]) -> Dict[str, Any]:
     fields = _account_content_monitor_public_field_names()
     return dict(zip(fields, _row_to_table_values(source, fields, "notes")))
@@ -4551,13 +4560,35 @@ async def sync_local_to_base(request: LocalToBaseSyncRequest):
         raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
     row_items: List[Dict[str, Any]] = []
     local_rows = _read_local_rows(file_path)
+    requested_keywords = {
+        keyword.strip()
+        for keyword in re.split(r"[,，\r\n]+", request.source_keyword)
+        if keyword.strip()
+    }
+    scoped_note_ids: set[str] | None = None
+    if requested_keywords and request.data_type == "comments" and request.crawler_type_hint == "search":
+        notes_file = _related_notes_file(file_path, request.crawler_type_hint)
+        scoped_note_ids = {
+            str(note.get("note_id") or note.get("笔记ID") or "").strip()
+            for note in _read_local_rows(notes_file)
+            if str(note.get("source_keyword") or note.get("关键词") or "").strip() in requested_keywords
+        }
+        scoped_note_ids.discard("")
     for obj in local_rows:
         # Creator-mode rows usually do not contain source_keyword; do not over-filter them.
-        if request.source_keyword:
+        if requested_keywords:
             row_keyword = str(obj.get("source_keyword", "")).strip()
-            if request.crawler_type_hint == "search" and row_keyword != request.source_keyword:
-                continue
-            if request.crawler_type_hint != "search" and row_keyword and row_keyword != request.source_keyword:
+            if request.crawler_type_hint == "search":
+                if row_keyword:
+                    if row_keyword not in requested_keywords:
+                        continue
+                elif request.data_type == "comments":
+                    row_note_id = str(obj.get("note_id") or obj.get("笔记ID") or "").strip()
+                    if scoped_note_ids is None or row_note_id not in scoped_note_ids:
+                        continue
+                else:
+                    continue
+            if request.crawler_type_hint != "search" and row_keyword and row_keyword not in requested_keywords:
                 continue
         if request.project_name:
             obj["项目名"] = request.project_name
