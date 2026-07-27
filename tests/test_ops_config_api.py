@@ -47,7 +47,7 @@ def test_scenario_setup_fields_match_customer_template():
 
     assert viral_fields == [
         "归属项目", "检索关键词", "笔记发布时间", "博主名", "博主ID", "博主粉丝数", "博主主页", "笔记类型",
-        "笔记标题", "笔记内容", "笔记封面", "笔记图片1", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
+        "笔记标题", "笔记ID", "笔记链接", "笔记内容", "笔记封面", "笔记图片1", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
         "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "笔记封面URL",
     ]
     viral_cover = next(field for field in crawler._viral_monitor_fields() if field["name"] == "笔记封面")
@@ -569,6 +569,8 @@ def test_historical_note_row_maps_to_customer_viral_payload():
         "author_user_id": "xhs_user_1",
         "author_fans_count": "1.2万",
         "note_type": "normal",
+        "note_id": "note_1",
+        "note_url": "https://www.xiaohongshu.com/explore/note_1",
         "title": "历史爆款标题",
         "desc": "历史正文",
         "image_list": ["https://img.example/1.jpg", "https://img.example/2.jpg"],
@@ -585,6 +587,8 @@ def test_historical_note_row_maps_to_customer_viral_payload():
 
     assert payload["检索关键词"] == "护肤"
     assert payload["博主ID"] == "xhs_user_1"
+    assert payload["笔记ID"] == "note_1"
+    assert payload["笔记链接"] == "https://www.xiaohongshu.com/explore/note_1"
     assert payload["博主粉丝数"] == 12000
     assert payload["笔记类型"] == "图文"
     assert payload["笔记tag"] == "护肤,测评"
@@ -1090,6 +1094,50 @@ async def test_sync_local_to_base_batches_new_records(monkeypatch, tmp_path):
     assert result["created"] == 55
     assert result["updated"] == 0
     assert [len(payload["rows"]) for payload in batch_payloads] == [50, 5]
+
+
+@pytest.mark.asyncio
+async def test_sync_local_to_base_repairs_missing_note_identity_fields(monkeypatch, tmp_path):
+    notes_path = tmp_path / "notes.json"
+    notes_path.write_text(json.dumps([{
+        "note_id": "note-1",
+        "note_url": "https://www.xiaohongshu.com/explore/note-1",
+        "title": "测试笔记",
+    }], ensure_ascii=False), encoding="utf-8")
+    created_fields = []
+
+    async def fake_read_table_field_defs(_base_token, _table_id):
+        fields = [{"name": "笔记标题", "type": "text"}]
+        fields.extend(created_fields)
+        return fields
+
+    async def fake_create_base_field(_base_token, _table_id, field):
+        created_fields.append(field)
+        return field
+
+    async def fake_read_existing_base_records(*_args):
+        return {}
+
+    async def fake_run_lark_cli(_cmd, timeout_sec=30):
+        return {"ok": True, "data": {}}
+
+    monkeypatch.setattr(crawler, "_read_table_field_defs", fake_read_table_field_defs)
+    monkeypatch.setattr(crawler, "_create_base_field", fake_create_base_field)
+    monkeypatch.setattr(crawler, "_read_existing_base_records", fake_read_existing_base_records)
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+
+    result = await crawler.sync_local_to_base(crawler.LocalToBaseSyncRequest(
+        base_token="base",
+        table_id="table",
+        data_type="notes",
+        file_path=str(notes_path),
+    ))
+
+    assert [field["name"] for field in created_fields] == ["笔记ID", "笔记链接"]
+    assert result["created"] == 1
+    assert "笔记ID" in result["fields"]
+    assert "笔记链接" in result["fields"]
 
 
 @pytest.mark.asyncio

@@ -1202,6 +1202,8 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _text_field("博主主页"),
         _text_field("笔记类型"),
         _text_field("笔记标题"),
+        _text_field("笔记ID"),
+        _text_field("笔记链接"),
         _text_field("笔记内容"),
         _attachment_field("笔记封面"),
         _text_field("笔记图片1"),
@@ -4554,6 +4556,11 @@ async def bootstrap_project(request: ScenarioBootstrapRequest):
 @router.post("/sync-local-to-base")
 async def sync_local_to_base(request: LocalToBaseSyncRequest):
     field_defs = await _read_table_field_defs(request.base_token, request.table_id)
+    field_names = {str(field.get("name")) for field in field_defs if field.get("name")}
+    if request.data_type == "notes" and not field_names.intersection(_base_dedupe_field_candidates("notes")):
+        await _create_base_field(request.base_token, request.table_id, _text_field("笔记ID"))
+        await _create_base_field(request.base_token, request.table_id, _text_field("笔记链接"))
+        field_defs = await _read_table_field_defs(request.base_token, request.table_id)
     field_defs_by_name = {
         str(field.get("name")): field
         for field in field_defs
