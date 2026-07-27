@@ -55,6 +55,7 @@ router = APIRouter(prefix="/crawler", tags=["crawler"])
 collaboration_monitor_jobs: Dict[str, Dict[str, Any]] = {}
 account_monitor_jobs: Dict[str, Dict[str, Any]] = {}
 sentiment_monitor_jobs: Dict[str, Dict[str, Any]] = {}
+pgy_login_launch_lock = asyncio.Lock()
 PGY_CDP_PORT = 9223
 PGY_CDP_ENDPOINT = f"http://127.0.0.1:{PGY_CDP_PORT}"
 PGY_LOGIN_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
@@ -67,6 +68,19 @@ def _pgy_cdp_available() -> bool:
             return response.status == 200
     except Exception:
         return False
+
+
+async def _wait_for_pgy_cdp(timeout_sec: float = 15.0, process: Any = None) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while True:
+        if await asyncio.to_thread(_pgy_cdp_available):
+            return True
+        if process is not None and process.poll() is not None:
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(0.25, remaining))
 
 
 def _xhs_cdp_available(cdp_endpoint: str) -> bool:
@@ -4266,56 +4280,62 @@ async def pgy_login(request: PgyLoginRequest):
     wait_seconds = max(30, min(1800, int(request.timeout_ms / 1000)))
     args.extend(["--login-wait-seconds", str(wait_seconds)])
     if request.keep_open:
-        project_root = Path(__file__).resolve().parents[2]
-        script_path = project_root / "tools" / "pgy_automation.py"
-        if _pgy_cdp_available():
-            opened_url = _open_url_in_cdp(PGY_CDP_ENDPOINT, PGY_LOGIN_URL)
-            browser_focused = _focus_detected_browser()
-            return {
-                "status": "login_window_opened",
-                "message": "蒲公英登录窗口已打开",
-                "cdp": PGY_CDP_ENDPOINT,
-                "url": PGY_LOGIN_URL,
-                "opened_url": opened_url,
-                "browser_focused": browser_focused,
-                "wait_seconds": wait_seconds,
-            }
-        cmd = [
-            sys.executable,
-            str(script_path),
-            *args,
-            *_pgy_browser_args(args),
-            "--remote-debugging-port",
-            str(PGY_CDP_PORT),
-            "--detach-hold-open",
-        ]
-        try:
-            pgy_log = project_root / "tmp_logs_pgy_automation.txt"
-            pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(project_root),
-                stdout=open(pgy_log, "w"),
-                stderr=open(pgy_log, "a"),
-                stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                env=pgy_env,
-            )
-            await asyncio.sleep(2)
-            if proc.poll() is not None:
-                err = pgy_log.read_text(encoding="utf-8", errors="replace")[:800] if pgy_log.exists() else ""
-                raise HTTPException(status_code=500, detail=f"蒲公英登录进程启动后立即退出(code={proc.returncode}): {err}")
-            browser_focused = _focus_detected_browser()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"蒲公英登录窗口启动失败: {exc}") from exc
+        async with pgy_login_launch_lock:
+            project_root = Path(__file__).resolve().parents[2]
+            script_path = project_root / "tools" / "pgy_automation.py"
+            if _pgy_cdp_available():
+                opened_url = _open_url_in_cdp(PGY_CDP_ENDPOINT, PGY_LOGIN_URL)
+                browser_focused = _focus_detected_browser()
+                return {
+                    "status": "login_window_opened",
+                    "message": "蒲公英登录窗口已打开",
+                    "cdp": PGY_CDP_ENDPOINT,
+                    "url": PGY_LOGIN_URL,
+                    "opened_url": opened_url,
+                    "browser_focused": browser_focused,
+                    "wait_seconds": wait_seconds,
+                }
+            cmd = [
+                sys.executable,
+                str(script_path),
+                *args,
+                *_pgy_browser_args(args),
+                "--remote-debugging-port",
+                str(PGY_CDP_PORT),
+                "--detach-hold-open",
+            ]
+            try:
+                pgy_log = project_root / "tmp_logs_pgy_automation.txt"
+                pgy_env = {**os.environ, "PYTHONPATH": str(project_root)}
+                with contextlib.ExitStack() as stack:
+                    stdout_handle = stack.enter_context(open(pgy_log, "w", encoding="utf-8"))
+                    stderr_handle = stack.enter_context(open(pgy_log, "a", encoding="utf-8"))
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=str(project_root),
+                        stdout=stdout_handle,
+                        stderr=stderr_handle,
+                        stdin=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        env=pgy_env,
+                    )
+                if not await _wait_for_pgy_cdp(timeout_sec=15.0, process=proc):
+                    err = pgy_log.read_text(encoding="utf-8", errors="replace")[:800] if pgy_log.exists() else ""
+                    if proc.poll() is not None:
+                        raise HTTPException(status_code=500, detail=f"蒲公英登录进程启动后立即退出(code={proc.returncode}): {err}")
+                    raise HTTPException(status_code=504, detail=f"蒲公英浏览器启动超时，CDP 端口 {PGY_CDP_PORT} 未就绪: {err}")
+                opened_url = _open_url_in_cdp(PGY_CDP_ENDPOINT, PGY_LOGIN_URL)
+                browser_focused = _focus_detected_browser()
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"蒲公英登录窗口启动失败: {exc}") from exc
         return {
             "status": "login_window_opened",
             "message": "蒲公英登录窗口已打开，请在浏览器内完成登录；登录状态每 1 秒检测一次",
             "cdp": PGY_CDP_ENDPOINT,
             "url": PGY_LOGIN_URL,
-            "opened_url": True,
+            "opened_url": opened_url,
             "browser_focused": browser_focused,
             "wait_seconds": wait_seconds,
         }

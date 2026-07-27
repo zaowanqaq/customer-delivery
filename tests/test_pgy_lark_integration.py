@@ -343,16 +343,19 @@ async def test_pgy_login_keep_open_uses_detected_browser_path(monkeypatch, tmp_p
     monkeypatch.setattr(crawler, "BrowserLauncher", lambda: FakeLauncher())
     monkeypatch.setattr(crawler, "_pgy_cdp_available", lambda: False)
     monkeypatch.setattr(crawler.subprocess, "Popen", fake_popen)
-    async def fake_sleep(_seconds):
-        return None
+    async def fake_wait_for_cdp(timeout_sec=15.0, process=None):
+        assert process is not None
+        return True
 
-    monkeypatch.setattr(crawler.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(crawler, "_wait_for_pgy_cdp", fake_wait_for_cdp)
+    monkeypatch.setattr(crawler, "_open_url_in_cdp", lambda *_args: True)
 
-    await crawler.pgy_login(PgyLoginRequest(keep_open=True, timeout_ms=30000))
+    result = await crawler.pgy_login(PgyLoginRequest(keep_open=True, timeout_ms=30000))
 
     assert "--executable-path" in captured_cmd
     assert str(browser_path) in captured_cmd
     assert "--channel" not in captured_cmd
+    assert result["opened_url"] is True
 
 
 @pytest.mark.asyncio
