@@ -638,7 +638,10 @@ def _parse_collaboration_note_file(filename: str, content: bytes) -> List[Dict[s
     rows: List[Dict[str, str]] = []
     seen = set()
     for index, source in enumerate(frame.to_dict(orient="records"), start=2):
-        raw_note_link = str(source.get("发布笔记链接") or "").strip()
+        normalized_row = {name: str(source.get(name) or "").strip() for name in COLLAB_NOTE_REQUIRED_COLUMNS}
+        if not any(normalized_row.values()):
+            continue
+        raw_note_link = normalized_row["发布笔记链接"]
         if not raw_note_link:
             raise HTTPException(status_code=400, detail=f"第 {index} 行缺少发布笔记链接")
         extracted_urls = _extract_xhs_urls(raw_note_link)
@@ -658,7 +661,6 @@ def _parse_collaboration_note_file(filename: str, content: bytes) -> List[Dict[s
         if key in seen:
             continue
         seen.add(key)
-        normalized_row = {name: str(source.get(name) or "").strip() for name in COLLAB_NOTE_REQUIRED_COLUMNS}
         normalized_row["发布笔记链接"] = note_link
         rows.append(normalized_row)
     return rows
@@ -1113,8 +1115,15 @@ async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> Li
     wanted = _creator_selection_fields()
     for field in wanted:
         name = field["name"]
-        if name not in existing_by_name:
+        current = existing_by_name.get(name)
+        if current is None:
             await _create_base_field(base_token, table_id, field)
+        elif (
+            name in PGY_PLATFORM_NO_DATA_FIELDS
+            and current.get("type") != field.get("type")
+            and current.get("id")
+        ):
+            await _update_base_field(base_token, table_id, str(current["id"]), field)
     creator_type_field = next(field for field in wanted if field["name"] == "目标/推荐博主")
     existing_creator_type = existing_by_name.get("目标/推荐博主")
     if existing_creator_type and existing_creator_type.get("type") != "select" and existing_creator_type.get("id"):
@@ -1198,7 +1207,6 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _datetime_field("笔记发布时间"),
         _text_field("博主名"),
         _text_field("博主ID"),
-        _number_field("博主粉丝数"),
         _text_field("博主主页"),
         _text_field("笔记类型"),
         _text_field("笔记标题"),
@@ -1212,8 +1220,6 @@ def _viral_monitor_fields() -> List[Dict[str, Any]]:
         _number_field("收藏数"),
         _number_field("分享数"),
         _number_field("评论数"),
-        _number_field("阅读量"),
-        _number_field("曝光量"),
         _number_field("总互动数据（赞+藏+评，不算分享）"),
         _datetime_field("采集数据时间"),
         # Preserve the source URL for diagnostics while the customer-facing
@@ -1454,7 +1460,6 @@ def _sentiment_monitor_fields() -> List[Dict[str, Any]]:
         _number_field("点赞数"),
         _number_field("评论总数"),
         _formula_field("评论区敏感词", "\"\"", "评论内容实际命中的敏感词"),
-        _formula_field("评论区敏感词监测", "\"\"", "评论区是否命中敏感词"),
         _formula_field("舆情风险", "\"\"", "笔记舆情监控自动汇总的风险类型"),
         _text_field("首评评论用户"),
         _text_field("IP属地"),
@@ -1513,7 +1518,7 @@ async def _ensure_sentiment_monitor_fields(base_token: str, table_id: str, risk_
     existing = await _read_table_field_defs(base_token, table_id)
     existing_by_name = {str(field.get("name")): field for field in existing if field.get("name")}
     for field in _sentiment_monitor_fields():
-        if field["name"] not in {"舆情风险", "评论区敏感词", "评论区敏感词监测"} and field["name"] not in existing_by_name:
+        if field["name"] not in {"舆情风险", "评论区敏感词"} and field["name"] not in existing_by_name:
             await _create_base_field(base_token, table_id, field)
 
     summary = _formula_field("舆情风险", _sentiment_risk_formula(groups), "笔记舆情监控自动汇总的风险类型")
@@ -1524,13 +1529,6 @@ async def _ensure_sentiment_monitor_fields(base_token: str, table_id: str, risk_
         table_id,
         existing_by_name.get("评论区敏感词"),
         keyword_summary,
-    )
-    monitor_summary = _formula_field("评论区敏感词监测", _sentiment_monitor_formula(), "评论区是否命中敏感词")
-    await _upsert_sentiment_formula_field(
-        base_token,
-        table_id,
-        existing_by_name.get("评论区敏感词监测"),
-        monitor_summary,
     )
     active_group_fields = set()
     for group in groups:
@@ -1553,6 +1551,22 @@ async def _ensure_sentiment_monitor_fields(base_token: str, table_id: str, risk_
     return await _read_table_field_defs(base_token, table_id)
 
 
+PGY_PLATFORM_NO_DATA = "平台无数据"
+PGY_PLATFORM_NO_DATA_FIELDS = {
+    "内容类目（标签）", "合作行业",
+    "粉丝数", "获赞收藏", "发布笔记数", "商业笔记数", "图文报价", "视频报价",
+    "日常笔记曝光中位数", "日常笔记阅读中位数", "日常笔记互动中位数", "日常笔记互动率",
+    "日常笔记中位点赞量", "日常笔记中位收藏量", "日常笔记中位评论量",
+    "日常笔记中位分享量", "日常笔记中位关注量", "日常笔记视频完播率", "日常笔记图文3秒阅读率",
+    "合作笔记曝光中位数", "合作笔记阅读中位数", "合作笔记互动中位数", "合作笔记互动率",
+    "合作笔记中位点赞量", "合作笔记中位收藏量", "合作笔记中位评论量",
+    "合作笔记中位分享量", "合作笔记中位关注量", "合作笔记视频完播率", "合作笔记图文3秒阅读率",
+    "粉丝增量", "千赞笔记比例", "百赞笔记比例", "活跃粉丝占比", "阅读粉丝占比", "互动粉丝占比",
+    "近7日活跃天数", "地区", "邀约数", "响应率", "粉丝增长率", "付费粉丝占比",
+    "女性粉丝占比", "男性粉丝占比", "主要年龄段", "省份TOP5", "城市TOP5", "兴趣TOP8",
+}
+
+
 def _creator_selection_fields() -> List[Dict[str, Any]]:
     return [
         _creator_type_field(),
@@ -1564,22 +1578,22 @@ def _creator_selection_fields() -> List[Dict[str, Any]]:
         _text_field("蒲公英主页链接"),
         _text_field("内容类目（标签）"),
         _text_field("合作行业"),
-        _number_field("粉丝数"),
-        _number_field("获赞收藏"),
-        _number_field("发布笔记数"),
-        _number_field("商业笔记数"),
-        _number_field("图文报价"),
-        _number_field("视频报价"),
+        _text_field("粉丝数"),
+        _text_field("获赞收藏"),
+        _text_field("发布笔记数"),
+        _text_field("商业笔记数"),
+        _text_field("图文报价"),
+        _text_field("视频报价"),
         *_pgy_metric_fields(),
-        _number_field("粉丝增量"),
+        _text_field("粉丝增量"),
         _text_field("千赞笔记比例"),
         _text_field("百赞笔记比例"),
         _text_field("活跃粉丝占比"),
         _text_field("阅读粉丝占比"),
         _text_field("互动粉丝占比"),
-        _number_field("近7日活跃天数"),
+        _text_field("近7日活跃天数"),
         _text_field("地区"),
-        _number_field("邀约数"),
+        _text_field("邀约数"),
         _text_field("响应率"),
         _text_field("粉丝增长率"),
         _text_field("付费粉丝占比"),
@@ -1599,15 +1613,15 @@ def _pgy_metric_fields() -> List[Dict[str, Any]]:
     metrics: List[Dict[str, Any]] = []
     for prefix in prefixes:
         metrics.extend([
-            _number_field(f"{prefix}曝光中位数"),
-            _number_field(f"{prefix}阅读中位数"),
-            _number_field(f"{prefix}互动中位数"),
+            _text_field(f"{prefix}曝光中位数"),
+            _text_field(f"{prefix}阅读中位数"),
+            _text_field(f"{prefix}互动中位数"),
             _text_field(f"{prefix}互动率"),
-            _number_field(f"{prefix}中位点赞量"),
-            _number_field(f"{prefix}中位收藏量"),
-            _number_field(f"{prefix}中位评论量"),
-            _number_field(f"{prefix}中位分享量"),
-            _number_field(f"{prefix}中位关注量"),
+            _text_field(f"{prefix}中位点赞量"),
+            _text_field(f"{prefix}中位收藏量"),
+            _text_field(f"{prefix}中位评论量"),
+            _text_field(f"{prefix}中位分享量"),
+            _text_field(f"{prefix}中位关注量"),
             _text_field(f"{prefix}视频完播率"),
             _text_field(f"{prefix}图文3秒阅读率"),
         ])
@@ -2307,8 +2321,8 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
         "发布笔记倒序（发布时间由近及远）": ["publish_date", "发布时间", "time", "create_time", "首发时间"],
         "博主粉丝数": ["author_fans", "author_fans_count", "fans_count"],
         "首发时间": ["time", "create_time", "发布时间"],
-        "采集时间": ["last_update_time", "crawl_time", "抓取时间"],
-        "采集数据时间": ["last_update_time", "crawl_time", "抓取时间", "采集时间"],
+        "采集时间": ["last_modify_ts", "crawl_time", "抓取时间", "last_update_time"],
+        "采集数据时间": ["last_modify_ts", "crawl_time", "抓取时间", "采集时间", "last_update_time"],
         "评论ID": ["comment_id"],
         "评论内容": ["content"],
         "评论用户": ["comment_user_nickname", "nickname"],
@@ -2403,6 +2417,12 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
             except Exception:
                 pass
         if field_name in numeric_fields:
+            # Preserve an unavailable metric as blank.  Converting missing
+            # PGY values to 0 makes a failed/partial sync look like a real
+            # zero (notably exposure and read counts in the monitor table).
+            if value in ("", None):
+                values.append("")
+                continue
             try:
                 text = str(value).strip()
                 multiplier = 1
@@ -2414,7 +2434,7 @@ def _row_to_table_values(row: Dict[str, Any], table_fields: List[str], data_type
                     text = text[:-1]
                 value = int(float(text) * multiplier)
             except Exception:
-                value = 0
+                value = ""
         values.append(value)
     return values
 
@@ -2682,7 +2702,11 @@ def _pick_number(*values: Any) -> Any:
     return ""
 
 
-def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any]:
+def _pgy_row_to_values(
+    row: Dict[str, Any],
+    table_fields: List[str],
+    field_types: Dict[str, str] | None = None,
+) -> List[Any]:
     alias_map = {
         "类型": ["row_type", "类型"],
         "目标/推荐博主": ["row_type", "类型"],
@@ -2786,6 +2810,8 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
         "合作笔记中位关注量", "近7日活跃天数", "邀约数", "粉丝增量",
     }
     values: List[Any] = []
+    detail_checked = row.get("row_type") == "目标达人" or row.get("detail_fetched") is True
+    resolved_field_types = field_types or {}
     for field_name in table_fields:
         keys = alias_map.get(field_name, [field_name])
         value = ""
@@ -2793,7 +2819,17 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
             if key in row and row[key] not in ("", None):
                 value = row[key]
                 break
-        if field_name in numeric_fields and value not in ("", None):
+        field_type = resolved_field_types.get(field_name)
+        if (
+            value in ("", None)
+            and detail_checked
+            and field_name in PGY_PLATFORM_NO_DATA_FIELDS
+            and field_type == "text"
+        ):
+            value = PGY_PLATFORM_NO_DATA
+        elif field_type == "text" and value not in ("", None):
+            value = str(value)
+        elif field_name in numeric_fields and value not in ("", None):
             try:
                 value = float(str(value).replace(",", ""))
                 if value.is_integer():
@@ -2804,27 +2840,37 @@ def _pgy_row_to_values(row: Dict[str, Any], table_fields: List[str]) -> List[Any
     return values
 
 
+def _pgy_key_text(value: Any) -> str:
+    if isinstance(value, list):
+        return _pgy_key_text(value[0]) if value else ""
+    if isinstance(value, dict):
+        return _pgy_key_text(value.get("name") or value.get("text") or value.get("value"))
+    return str(value or "").strip()
+
+
 def _pgy_dedupe_key(row: Dict[str, Any]) -> str:
-    row_type = str(row.get("row_type") or row.get("类型") or "").strip() or "未知"
-    target = str(
-        row.get("target_red_id")
-        or row.get("目标小红书号")
-        or row.get("target_nickname")
+    row_type = _pgy_key_text(row.get("row_type") or row.get("目标/推荐博主") or row.get("类型")) or "未知"
+    target = _pgy_key_text(
+        row.get("target_nickname")
         or row.get("目标达人昵称")
-        or ""
-    ).strip()
-    identity = str(
+        or row.get("target_red_id")
+        or row.get("目标小红书号")
+    )
+    identity = _pgy_key_text(
         row.get("red_id")
         or row.get("小红书号")
         or row.get("nickname")
         or row.get("达人昵称")
-        or ""
-    ).strip()
+    )
     return " :: ".join([row_type, target, identity]).lower()
 
 
-def _pgy_row_to_record(row: Dict[str, Any], table_fields: List[str]) -> Dict[str, Any]:
-    values = _pgy_row_to_values(row, table_fields)
+def _pgy_row_to_record(
+    row: Dict[str, Any],
+    table_fields: List[str],
+    field_types: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    values = _pgy_row_to_values(row, table_fields, field_types)
     return {
         field_name: value
         for field_name, value in zip(table_fields, values)
@@ -2832,9 +2878,9 @@ def _pgy_row_to_record(row: Dict[str, Any], table_fields: List[str]) -> Dict[str
     }
 
 
-async def _read_existing_pgy_records(base_token: str, table_id: str, field_names: List[str]) -> Dict[str, str]:
+async def _read_existing_pgy_records(base_token: str, table_id: str, field_names: List[str]) -> Dict[str, List[str]]:
     lark_cli_bin = _find_lark_cli()
-    existing: Dict[str, str] = {}
+    existing: Dict[str, List[str]] = {}
     offset = 0
     limit = 200
     requested_fields = [name for name in field_names if name]
@@ -2868,14 +2914,14 @@ async def _read_existing_pgy_records(base_token: str, table_id: str, field_names
                 continue
             existing_row = {field_name: value for field_name, value in zip(fields, values)}
             key = str(existing_row.get("去重键") or "").strip().lower() or _pgy_dedupe_key({
-                "row_type": existing_row.get("类型"),
+                "row_type": existing_row.get("目标/推荐博主") or existing_row.get("类型"),
                 "target_red_id": existing_row.get("目标小红书号"),
                 "target_nickname": existing_row.get("目标达人昵称"),
                 "red_id": existing_row.get("小红书号"),
                 "nickname": existing_row.get("达人昵称"),
             })
-            if key and key not in existing:
-                existing[key] = str(record_id)
+            if key:
+                existing.setdefault(key, []).append(str(record_id))
         if not data.get("has_more"):
             break
         offset += limit
@@ -3137,7 +3183,7 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
     writable_fields = [name for name in table_fields if field_types.get(name) != "attachment"]
     output_dir = str(summary_path.parent)
     rows = _pgy_summary_to_rows(summary, output_dir)
-    dedupe_fields = [name for name in ["去重键", "类型", "达人昵称", "小红书号", "目标达人昵称", "目标小红书号"] if name in table_fields]
+    dedupe_fields = [name for name in ["去重键", "目标/推荐博主", "类型", "达人昵称", "小红书号", "目标达人昵称", "目标小红书号"] if name in table_fields]
     existing_records = await _read_existing_pgy_records(request.base_token, request.table_id, dedupe_fields)
     lark_cli_bin = _find_lark_cli()
     created = 0
@@ -3152,34 +3198,35 @@ async def _sync_pgy_summary_to_base(request: PgyKolSyncRequest) -> Dict[str, Any
         if key in seen_new_keys:
             skipped += 1
             continue
-        record_id = existing_records.get(key)
-        if record_id:
-            payload = _pgy_row_to_record(row, writable_fields)
-            with _lark_json_arg(payload) as json_arg:
-                await _run_lark_cli(
-                    [
-                        lark_cli_bin,
-                        "base",
-                        "+record-upsert",
-                        "--as",
-                        "user",
-                        "--base-token",
-                        request.base_token,
-                        "--table-id",
-                        request.table_id,
-                        "--record-id",
-                        record_id,
-                        "--json",
-                        json_arg,
-                    ],
-                    timeout_sec=60,
-                )
-            updated += 1
+        existing_record_ids = existing_records.get(key) or []
+        if existing_record_ids:
+            payload = _pgy_row_to_record(row, writable_fields, field_types)
+            for record_id in existing_record_ids:
+                with _lark_json_arg(payload) as json_arg:
+                    await _run_lark_cli(
+                        [
+                            lark_cli_bin,
+                            "base",
+                            "+record-upsert",
+                            "--as",
+                            "user",
+                            "--base-token",
+                            request.base_token,
+                            "--table-id",
+                            request.table_id,
+                            "--record-id",
+                            record_id,
+                            "--json",
+                            json_arg,
+                        ],
+                        timeout_sec=60,
+                    )
+            updated += len(existing_record_ids)
         else:
             new_rows.append(row)
             seen_new_keys.add(key)
 
-    table_rows = [_pgy_row_to_values(row, writable_fields) for row in new_rows]
+    table_rows = [_pgy_row_to_values(row, writable_fields, field_types) for row in new_rows]
     for i in range(0, len(table_rows), 200):
         payload = {"fields": writable_fields, "rows": table_rows[i:i + 200]}
         with _lark_json_arg(payload) as json_arg:

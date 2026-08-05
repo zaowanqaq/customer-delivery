@@ -46,9 +46,9 @@ def test_scenario_setup_fields_match_customer_template():
     recreation_fields = [field["name"] for field in crawler._note_recreation_fields()]
 
     assert viral_fields == [
-        "归属项目", "检索关键词", "笔记发布时间", "博主名", "博主ID", "博主粉丝数", "博主主页", "笔记类型",
+        "归属项目", "检索关键词", "笔记发布时间", "博主名", "博主ID", "博主主页", "笔记类型",
         "笔记标题", "笔记ID", "笔记链接", "笔记内容", "笔记封面", "笔记图片1", "笔记tag", "点赞", "收藏数", "分享数", "评论数",
-        "阅读量", "曝光量", "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "笔记封面URL",
+        "总互动数据（赞+藏+评，不算分享）", "采集数据时间", "笔记封面URL",
     ]
     viral_cover = next(field for field in crawler._viral_monitor_fields() if field["name"] == "笔记封面")
     assert viral_cover["type"] == "attachment"
@@ -69,9 +69,9 @@ def test_scenario_setup_fields_match_customer_template():
         "序号", "达人昵称", "小红书id", "发布笔记链接", "发布时间", "笔记tag", "笔记标题", "点赞", "收藏",
         "评论", "总互动（点赞+收藏+评论）", "分享", "曝光量", "阅读量", "笔记失效/正常（有失效链接作标记）",
     ]
-    assert sentiment_fields[:8] == [
+    assert sentiment_fields[:7] == [
         "项目名", "笔记链接", "笔记标题", "点赞数", "评论总数",
-        "评论区敏感词", "评论区敏感词监测", "舆情风险",
+        "评论区敏感词", "舆情风险",
     ]
     risk_field = next(field for field in crawler._sentiment_monitor_fields() if field["name"] == "舆情风险")
     assert risk_field == {
@@ -83,11 +83,7 @@ def test_scenario_setup_fields_match_customer_template():
     keyword_field = next(
         field for field in crawler._sentiment_monitor_fields() if field["name"] == "评论区敏感词"
     )
-    monitor_field = next(
-        field for field in crawler._sentiment_monitor_fields() if field["name"] == "评论区敏感词监测"
-    )
     assert keyword_field["type"] == "formula"
-    assert monitor_field["type"] == "formula"
     assert recreation_fields == [
         "收藏数", "当日使用标记", "改写打分", "笔记ID", "博主名", "笔记链接", "标题", "采集时间",
         "博主主页", "标题改写.输出结果", "封面改写", "关键词", "点赞数", "评论数", "内容", "笔记类型", "首发时间",
@@ -330,6 +326,15 @@ def test_account_monitor_report_writes_selected_layout(monkeypatch, tmp_path):
     assert list(pd.read_excel(report).columns) == crawler._account_content_monitor_public_field_names()
 
 
+def test_creator_selection_platform_metrics_are_text_fields():
+    fields = {field["name"]: field["type"] for field in crawler._creator_selection_fields()}
+
+    assert fields["粉丝数"] == "text"
+    assert fields["日常笔记曝光中位数"] == "text"
+    assert fields["合作笔记互动中位数"] == "text"
+    assert fields["粉丝增量"] == "text"
+
+
 def test_creator_selection_type_field_uses_colored_single_select_options():
     field = next(item for item in crawler._creator_selection_fields() if item["name"] == "目标/推荐博主")
 
@@ -543,6 +548,68 @@ def test_collaboration_note_form_parser_requires_customer_columns():
         )
 
 
+def test_collaboration_note_form_parser_ignores_whitespace_only_xlsx_rows():
+    import io
+
+    import pandas as pd
+
+    frame = pd.DataFrame([
+        {
+            "序号": "1",
+            "达人昵称": "甲",
+            "小红书id": "red_1",
+            "发布笔记链接": "https://www.xiaohongshu.com/explore/note_1",
+        },
+        {
+            "序号": "",
+            "达人昵称": "",
+            "小红书id": "",
+            "发布笔记链接": " ",
+        },
+    ])
+    workbook = io.BytesIO()
+    frame.to_excel(workbook, index=False)
+
+    rows = crawler._parse_collaboration_note_file("合作笔记.xlsx", workbook.getvalue())
+
+    assert rows == [{
+        "序号": "1",
+        "达人昵称": "甲",
+        "小红书id": "red_1",
+        "发布笔记链接": "https://www.xiaohongshu.com/explore/note_1",
+    }]
+
+
+def test_collaboration_note_form_parser_ignores_whitespace_only_csv_rows():
+    rows = crawler._parse_collaboration_note_file(
+        "合作笔记.csv",
+        (
+            "序号,达人昵称,小红书id,发布笔记链接\n"
+            "1,甲,red_1,https://www.xiaohongshu.com/explore/note_1\n"
+            " , , , \n"
+        ).encode("utf-8"),
+    )
+
+    assert rows == [{
+        "序号": "1",
+        "达人昵称": "甲",
+        "小红书id": "red_1",
+        "发布笔记链接": "https://www.xiaohongshu.com/explore/note_1",
+    }]
+
+
+def test_collaboration_note_form_parser_rejects_nonempty_row_without_note_link():
+    with pytest.raises(crawler.HTTPException, match="第 3 行缺少发布笔记链接"):
+        crawler._parse_collaboration_note_file(
+            "合作笔记.csv",
+            (
+                "序号,达人昵称,小红书id,发布笔记链接\n"
+                "1,甲,red_1,https://www.xiaohongshu.com/explore/note_1\n"
+                "2,乙,red_2, \n"
+            ).encode("utf-8"),
+        )
+
+
 @pytest.mark.asyncio
 async def test_sentiment_note_form_import_returns_clean_note_links():
     content = base64.b64encode(
@@ -589,7 +656,6 @@ def test_historical_note_row_maps_to_customer_viral_payload():
     assert payload["博主ID"] == "xhs_user_1"
     assert payload["笔记ID"] == "note_1"
     assert payload["笔记链接"] == "https://www.xiaohongshu.com/explore/note_1"
-    assert payload["博主粉丝数"] == 12000
     assert payload["笔记类型"] == "图文"
     assert payload["笔记tag"] == "护肤,测评"
     assert payload["总互动数据（赞+藏+评，不算分享）"] == 127
@@ -629,6 +695,29 @@ def test_historical_note_row_maps_to_customer_recreation_payload():
     assert payload["话题标签"] == "户外,路线"
     assert payload["博主粉丝数"] == 12000
     assert payload["笔记类型"] == "视频"
+
+
+def test_missing_monitor_metrics_remain_blank_instead_of_zero():
+    values = crawler._row_to_table_values(
+        {"note_id": "note_1", "exposure_count": "", "read_count": None},
+        ["note_id", "曝光量", "阅读量"],
+        "notes",
+    )
+
+    assert values == ["note_1", "", ""]
+
+def test_collection_time_prefers_crawler_last_modify_timestamp():
+    last_modify_ts = 1710003600000
+    last_update_time = 1710000000000
+    values = crawler._row_to_table_values(
+        {"last_modify_ts": last_modify_ts, "last_update_time": last_update_time},
+        ["采集数据时间"],
+        "notes",
+    )
+
+    expected = crawler.datetime.fromtimestamp(last_modify_ts // 1000).strftime("%Y-%m-%d %H:%M:%S")
+    assert values == [expected]
+
 
 
 @pytest.mark.asyncio

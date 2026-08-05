@@ -28,6 +28,13 @@ def test_step2_and_step3_start_flows_auto_sync_after_crawler_finishes():
     assert "table_id: payload.account_filter_table_id" in html
     assert "/api/crawler/account-monitor/status" in html
     assert 'waitCrawlerIdleThenAutoSync("viral")' in html
+
+def test_pgy_initial_analysis_only_lists_similar_creators():
+    html = _ops_config_text()
+
+    assert "similar_detail_limit: 0" in html
+    assert "similar_detail_limit: checked.length" in html
+
     assert "AUTO_SYNC_POLL_INTERVAL_MS" in html
 
 

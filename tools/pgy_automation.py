@@ -815,6 +815,15 @@ def api_request_json(request: APIRequestContext, method: str, path: str, **kwarg
         raise RuntimeError(f"{method.upper()} {path} 返回非 JSON: {text[:200]}") from exc
 
 
+def format_pgy_api_errors(errors: list[str]) -> str:
+    message = sanitize_log_text("; ".join(errors[-4:]))
+    if re.search(r"HTTP 401\b", message, flags=re.IGNORECASE):
+        endpoints = ", ".join(dict.fromkeys(re.findall(r"(?:GET|POST)\s+(/api/[^: ]+)", message)))
+        suffix = f"；接口：{endpoints}" if endpoints else ""
+        return "蒲公英登录态已失效或未授权（HTTP 401），请重新登录蒲公英后再试" + suffix
+    return message
+
+
 def first_successful_api_call(request: APIRequestContext, attempts: list[tuple[str, str, dict]], timeout_ms: int = 15_000) -> dict:
     errors: list[str] = []
     for method, path, payload in attempts:
@@ -830,7 +839,7 @@ def first_successful_api_call(request: APIRequestContext, attempts: list[tuple[s
             errors.append(f"{method} {path}: {str(data)[:180]}")
         except Exception as exc:
             errors.append(sanitize_log_text(f"{method} {path}: {exc}"))
-    raise RuntimeError(sanitize_log_text("; ".join(errors[-4:])))
+    raise RuntimeError(format_pgy_api_errors(errors))
 
 
 def extract_api_payload(raw: dict) -> object:
@@ -1024,7 +1033,7 @@ def _note_metrics(api_data: dict, prefix: str) -> dict:
         f"{prefix}_read_count": core_sum.get("read") or data_summary.get("read") or "",
         f"{prefix}_imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or core_sum.get("imp") or "",
         f"{prefix}_read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or core_sum.get("read") or "",
-        f"{prefix}_interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
+        f"{prefix}_interaction_median": data_summary.get("mEngagementNum") or core_sum.get("engage") or notes_rate.get("mEngagementNum") or notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
         f"{prefix}_like_median": notes_rate.get("likeMedian") or "",
         f"{prefix}_collect_median": notes_rate.get("collectMedian") or "",
         f"{prefix}_comment_median": notes_rate.get("commentMedian") or "",
@@ -1041,14 +1050,30 @@ def flatten_detail_metrics(api_data: dict) -> dict:
     daily = _note_metrics(api_data, "daily")
     business = _note_metrics(api_data, "business")
     daily_data_summary = extract_api_payload(api_data.get("daily_data_summary") or api_data.get("data_summary") or {}) or {}
+    business_data_summary = extract_api_payload(api_data.get("business_data_summary") or {}) or {}
     fans_summary = extract_api_payload(api_data.get("fans_summary") or {}) or {}
+    fans_history = extract_api_payload(api_data.get("fans_history") or {}) or {}
     fans_profile = extract_api_payload(api_data.get("fans_profile") or {}) or {}
     gender = fans_profile.get("gender") or {}
     user_id = blogger.get("userId") or ""
+    # The current PGY page exposes these values in blogger_detail even when
+    # the legacy data_summary/notes_rate endpoints return 406.  Prefer the
+    # report APIs when present, then fall back to the values shown in the UI.
+    daily["daily_imp_median"] = daily["daily_imp_median"] or blogger.get("accumCommonImpMedinNum30d") or ""
+    daily["daily_read_median"] = daily["daily_read_median"] or blogger.get("clickMidNum") or ""
+    daily["daily_interaction_median"] = daily["daily_interaction_median"] or blogger.get("mEngagementNum") or blogger.get("interMidNum") or ""
+    business["business_read_median"] = business["business_read_median"] or blogger.get("readMidCoop30") or ""
+    business["business_interaction_median"] = business["business_interaction_median"] or blogger.get("interMidCoop30") or ""
     return {
         "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{user_id}" if user_id else "",
         "content_category": _profile_text(blogger.get("contentTags") or blogger.get("featureTags")),
-        "cooperation_industry": _profile_text(blogger.get("industryTag") or blogger.get("cooperationIndustry")),
+        "cooperation_industry": _profile_text(
+            business_data_summary.get("tradeNames")
+            or daily_data_summary.get("tradeNames")
+            or blogger.get("industryTag")
+            or blogger.get("cooperationIndustry")
+            or blogger.get("tradeType")
+        ) or "平台无数据",
         "kol_advantage": daily_data_summary.get("kolAdvantage") or "",
         "data_date": daily_data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
         "note_number": daily_data_summary.get("noteNumber") or "",
@@ -1065,14 +1090,14 @@ def flatten_detail_metrics(api_data: dict) -> dict:
         "interaction_rate": daily["daily_interaction_rate"],
         "video_full_view_rate": daily["daily_video_full_view_rate"],
         "picture_3s_view_rate": daily["daily_picture_3s_view_rate"],
-        "thousand_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("thousandLikePercent") or "",
-        "hundred_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("hundredLikePercent") or "",
+        "thousand_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("thousandLikePercent") or blogger.get("thousandLikePercent30") or "",
+        "hundred_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("hundredLikePercent") or blogger.get("hundredLikePercent30") or "",
         "active_day_7": daily_data_summary.get("activeDayInLast7") or "",
         "invite_num": daily_data_summary.get("inviteNum") or "",
         "response_rate": daily_data_summary.get("responseRate") or "",
         "fans_num": fans_summary.get("fansNum") or blogger.get("fansCount") or "",
-        "fans_increase": fans_summary.get("fansIncreaseNum") or "",
-        "fans_growth_rate": fans_summary.get("fansGrowthRate") or daily_data_summary.get("fans30GrowthRate") or "",
+        "fans_increase": fans_summary.get("fansIncreaseNum") or fans_history.get("fansNumInc") or blogger.get("fans30GrowthNum") or blogger.get("fansRiseNum") or "",
+        "fans_growth_rate": fans_summary.get("fansGrowthRate") or fans_history.get("fansNumIncRate") or daily_data_summary.get("fans30GrowthRate") or blogger.get("fans30GrowthRate") or "",
         "active_fans_rate": fans_summary.get("activeFansRate") or "",
         "read_fans_rate": fans_summary.get("readFansRate") or "",
         "engage_fans_rate": fans_summary.get("engageFansRate") or "",
@@ -1595,25 +1620,67 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
                 detail_data["similar_creators"] = {"code": 0, "success": True, "data": {"kols": similar_kols}}
 
             similar_details: dict = {}
+            browser_session: Optional[BrowserSession] = None
             selected_user_ids = {item.strip() for item in (args.similar_user_ids or "").split(",") if item.strip()}
             similar_to_fetch = filter_similar_kols(similar_kols, selected_user_ids, args.similar_detail_limit)
-            for index, item in enumerate(similar_to_fetch, start=1):
-                similar_user_id = item.get("userId")
-                if not similar_user_id:
-                    continue
-                _progress(f"API 模式：读取相似博主详情 {index}/{len(similar_to_fetch)}：{item.get('name') or similar_user_id}", "api_similar_detail")
-                try:
-                    similar_details[similar_user_id] = {
-                        "api_data": _api_fetch_kol_detail(
+            detail_output_dir = DEFAULT_OUTPUT_DIR / (
+                "".join(ch for ch in matched_name if ch not in r'\/:*?"<>|').strip() or "kol"
+            )
+            detail_output_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                for index, item in enumerate(similar_to_fetch, start=1):
+                    similar_user_id = item.get("userId")
+                    if not similar_user_id:
+                        continue
+                    creator_name = item.get("name") or similar_user_id
+                    _progress(f"API 模式：读取相似博主详情 {index}/{len(similar_to_fetch)}：{creator_name}", "api_similar_detail")
+                    api_detail: dict = {}
+                    detail_error = ""
+                    try:
+                        api_detail = _api_fetch_kol_detail(
                             request,
                             similar_user_id,
                             include_similar=False,
                             fallback_blogger=item,
                         )
-                    }
-                except Exception as exc:
-                    similar_details[similar_user_id] = {"api_data": {}, "error": str(exc)}
-                time.sleep(random.uniform(0.8, 2.2))
+                    except Exception as exc:
+                        detail_error = str(exc)
+
+                    # The report-only endpoints return HTTP 406 to the standalone
+                    # request context, while the signed-in PGY detail page returns
+                    # the full notes_rate/data_summary payloads.  The explicit
+                    # "fetch selected details" action therefore supplements the
+                    # lightweight API result with one hidden browser pass.
+                    try:
+                        if browser_session is None:
+                            browser_args = argparse.Namespace(**vars(args))
+                            browser_args.headless = True
+                            browser_args.keep_open = False
+                            browser_args.cdp = ""
+                            browser_session = open_browser_session(playwright, browser_args)
+                        _progress(f"补齐蒲公英页面指标：{creator_name}", "browser_supplement_detail")
+                        browser_session.page, browser_detail = _capture_kol_detail(
+                            browser_session.context,
+                            browser_session.page,
+                            similar_user_id,
+                            detail_output_dir,
+                            f"similar_{index:02d}",
+                        )
+                        api_detail.update(browser_detail.get("api_data") or {})
+                        browser_detail["api_data"] = api_detail
+                        if detail_error:
+                            browser_detail["api_error"] = detail_error
+                        similar_details[similar_user_id] = browser_detail
+                    except Exception as exc:
+                        errors = [value for value in [detail_error, str(exc)] if value]
+                        similar_details[similar_user_id] = {
+                            "api_data": api_detail,
+                            "error": "；".join(errors),
+                        }
+                    time.sleep(random.uniform(0.8, 2.2))
+            finally:
+                if browser_session is not None:
+                    close_browser_session(browser_session, keep_open=False)
             detail_data["similar_details"] = similar_details
 
             _progress("API 模式：保存本地文件", "api_write_outputs")

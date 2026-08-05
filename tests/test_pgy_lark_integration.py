@@ -138,6 +138,121 @@ def test_pgy_summary_only_syncs_similar_creators_after_detail_fetch():
     assert [row["nickname"] for row in rows] == ["目标达人", "已抓完整详情"]
     assert rows[1]["fans_count"] == 12345
 
+def test_pgy_dedupe_key_handles_base_select_value():
+    key = crawler._pgy_dedupe_key({
+        "目标/推荐博主": ["相似博主"],
+        "目标小红书号": "wzglyay2023",
+        "小红书号": "alchain",
+    })
+
+    assert key == "相似博主 :: wzglyay2023 :: alchain"
+
+
+def test_pgy_dedupe_key_prefers_target_nickname_used_by_current_base_template():
+    new_row_key = crawler._pgy_dedupe_key({
+        "row_type": "相似博主",
+        "target_red_id": "wzglyay2023",
+        "target_nickname": "数字生命卡兹克",
+        "red_id": "alchain",
+    })
+    existing_base_row_key = crawler._pgy_dedupe_key({
+        "目标/推荐博主": ["相似博主"],
+        "目标达人昵称": "数字生命卡兹克",
+        "小红书号": "alchain",
+    })
+
+    assert new_row_key == existing_base_row_key
+    assert new_row_key == "相似博主 :: 数字生命卡兹克 :: alchain"
+
+
+@pytest.mark.asyncio
+async def test_read_existing_pgy_records_matches_select_field_and_keeps_duplicates(monkeypatch):
+    async def fake_run_lark_cli(command, timeout_sec=60):
+        return {
+            "data": {
+                "fields": ["目标/推荐博主", "目标小红书号", "小红书号"],
+                "data": [
+                    [["相似博主"], "wzglyay2023", "alchain"],
+                    [["相似博主"], "wzglyay2023", "alchain"],
+                ],
+                "record_id_list": ["rec-1", "rec-2"],
+                "has_more": False,
+            }
+        }
+
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_lark_cli)
+    existing = await crawler._read_existing_pgy_records(
+        "base-1",
+        "table-1",
+        ["目标/推荐博主", "目标小红书号", "小红书号"],
+    )
+
+    assert existing["相似博主 :: wzglyay2023 :: alchain"] == ["rec-1", "rec-2"]
+
+
+
+
+def test_pgy_detail_metrics_use_fans_history_fallback():
+    metrics = pgy_automation.flatten_detail_metrics(
+        {
+            "blogger_detail": {"data": {"userId": "user-1", "fansCount": 10000}},
+            "fans_history": {"data": {"fansNumInc": 8663, "fansNumIncRate": 0.073}},
+        }
+    )
+
+    assert metrics["fans_increase"] == 8663
+    assert metrics["fans_growth_rate"] == 0.073
+
+
+def test_pgy_detail_metrics_map_page_displayed_interactions_and_industry():
+    metrics = pgy_automation.flatten_detail_metrics(
+        {
+            "blogger_detail": {"data": {"tradeType": "互联网", "mEngagementNum": 517}},
+            "daily_data_summary": {
+                "data": {"tradeNames": ["互联网"], "interactionMedian": 422, "mEngagementNum": 517}
+            },
+            "daily_core_data": {"data": {"sumData": {"imp": 32624, "read": 4553, "engage": 517}}},
+            "daily_notes_rate": {"data": {"likeMedian": 190}},
+            "business_core_data": {
+                "data": {"sumData": {"imp": 369958, "read": 56651, "engage": 1153}}
+            },
+            "business_notes_rate": {"data": {"likeMedian": 775}},
+        }
+    )
+
+    assert metrics["cooperation_industry"] == "互联网"
+    assert metrics["daily_interaction_median"] == 517
+    assert metrics["daily_like_median"] == 190
+    assert metrics["business_interaction_median"] == 1153
+    assert metrics["business_like_median"] == 775
+
+
+def test_pgy_detail_metrics_mark_missing_cooperation_industry_as_platform_no_data():
+    metrics = pgy_automation.flatten_detail_metrics({"blogger_detail": {"data": {"userId": "user-1"}}})
+
+    assert metrics["cooperation_industry"] == "平台无数据"
+
+
+
+
+def test_pgy_row_uses_platform_no_data_only_after_detail_was_checked():
+    fields = ["合作行业", "合作笔记互动中位数"]
+    field_types = {name: "text" for name in fields}
+
+    target_values = crawler._pgy_row_to_values(
+        {"row_type": "目标达人"},
+        fields,
+        field_types,
+    )
+    listed_only_values = crawler._pgy_row_to_values(
+        {"row_type": "相似博主", "detail_fetched": False},
+        fields,
+        field_types,
+    )
+
+    assert target_values == ["平台无数据", "平台无数据"]
+    assert listed_only_values == ["", ""]
+
 
 def test_pgy_detail_attempts_request_daily_and_business_note_metrics():
     attempts = pgy_automation.make_detail_attempts("user-1")
