@@ -4304,6 +4304,8 @@ async def pgy_run_kol(request: PgyKolRunRequest):
         args.extend(["--similar-user-ids", request.similar_user_ids.strip()])
     if request.keep_open:
         args.append("--keep-open")
+    if _pgy_cdp_available():
+        args.extend(["--cdp", PGY_CDP_ENDPOINT])
     result = await _run_pgy_automation(args, timeout_sec=900)
     if result.get("status") == "login_required":
         raise HTTPException(status_code=401, detail=result.get("error") or "蒲公英需要登录")

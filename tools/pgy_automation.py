@@ -9,6 +9,7 @@ The first supported workflow opens the pre-trade KOL note page and selects the
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import random
@@ -1656,8 +1657,9 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
                             browser_args = argparse.Namespace(**vars(args))
                             browser_args.headless = True
                             browser_args.keep_open = False
-                            browser_args.cdp = ""
                             browser_session = open_browser_session(playwright, browser_args)
+                            if browser_session.connected_over_cdp:
+                                browser_session.page = browser_session.context.new_page()
                         _progress(f"补齐蒲公英页面指标：{creator_name}", "browser_supplement_detail")
                         browser_session.page, browser_detail = _capture_kol_detail(
                             browser_session.context,
@@ -1680,6 +1682,9 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
                     time.sleep(random.uniform(0.8, 2.2))
             finally:
                 if browser_session is not None:
+                    if browser_session.connected_over_cdp and not browser_session.page.is_closed():
+                        with contextlib.suppress(Exception):
+                            browser_session.page.close()
                     close_browser_session(browser_session, keep_open=False)
             detail_data["similar_details"] = similar_details
 

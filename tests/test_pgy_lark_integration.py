@@ -413,11 +413,30 @@ async def test_pgy_run_kol_route_forces_api_only(monkeypatch):
         captured_args.extend(args)
         return {"status": "logged_in_or_public", "outputs": {}, "returncode": 0}
 
+    monkeypatch.setattr(crawler, "_pgy_cdp_available", lambda: False)
     monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run_pgy_automation)
 
     await crawler.pgy_run_kol(PgyKolRunRequest(nickname="数字生命卡兹克"))
 
     assert captured_args[:2] == ["run-kol", "--api-only"]
+    assert "--cdp" not in captured_args
+
+
+@pytest.mark.asyncio
+async def test_pgy_run_kol_route_reuses_active_login_cdp(monkeypatch):
+    captured_args = []
+
+    async def fake_run_pgy_automation(args, timeout_sec=240):
+        captured_args.extend(args)
+        return {"status": "logged_in_or_public", "outputs": {}, "returncode": 0}
+
+    monkeypatch.setattr(crawler, "_pgy_cdp_available", lambda: True)
+    monkeypatch.setattr(crawler, "_run_pgy_automation", fake_run_pgy_automation)
+
+    await crawler.pgy_run_kol(PgyKolRunRequest(nickname="数字生命卡兹克"))
+
+    cdp_index = captured_args.index("--cdp")
+    assert captured_args[cdp_index + 1] == crawler.PGY_CDP_ENDPOINT
 
 
 def test_pgy_browser_args_prefers_detected_browser_path(monkeypatch, tmp_path):
