@@ -970,7 +970,9 @@ async def _read_xhs_cookies_from_cdp(cdp_base: str) -> Dict[str, Any]:
 
     usable_targets = [
         t for t in targets
-        if isinstance(t, dict) and t.get("webSocketDebuggerUrl")
+        if isinstance(t, dict)
+        and t.get("type") in {None, "page"}
+        and t.get("webSocketDebuggerUrl")
     ]
     xhs_target = next(
         (t for t in usable_targets if "xiaohongshu.com" in (t.get("url") or "")),
@@ -979,7 +981,10 @@ async def _read_xhs_cookies_from_cdp(cdp_base: str) -> Dict[str, Any]:
     if not xhs_target:
         raise HTTPException(status_code=400, detail="未找到可读取 Cookie 的浏览器页面，请先打开小红书页面")
 
-    ws_url = xhs_target.get("webSocketDebuggerUrl")
+    ws_url = str(xhs_target.get("webSocketDebuggerUrl") or "").strip()
+    parsed_ws_url = urlparse(ws_url)
+    if parsed_ws_url.scheme not in {"ws", "wss"} or not parsed_ws_url.netloc:
+        raise HTTPException(status_code=502, detail="浏览器返回的 CDP Cookie 地址无效，请重新打开登录浏览器")
     async with websockets.connect(ws_url, max_size=10 * 1024 * 1024) as ws:
         await ws.send(_json.dumps({
             "id": 1,
@@ -4305,6 +4310,7 @@ async def pgy_run_kol(request: PgyKolRunRequest):
     if request.keep_open:
         args.append("--keep-open")
     if _pgy_cdp_available():
+        args.remove("--api-only")
         args.extend(["--cdp", PGY_CDP_ENDPOINT])
     result = await _run_pgy_automation(args, timeout_sec=900)
     if result.get("status") == "login_required":

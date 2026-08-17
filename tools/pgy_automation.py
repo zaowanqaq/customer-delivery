@@ -70,8 +70,15 @@ def _progress(message: str, step: str = "") -> None:
 
 def save_storage_state(context: BrowserContext, storage_state_path: str = "") -> str:
     path = Path(storage_state_path or DEFAULT_STORAGE_STATE).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    context.storage_state(path=str(path))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(path))
+    except OSError as exc:
+        _progress(
+            f"蒲公英登录态文件保存失败，继续使用当前浏览器会话：{type(exc).__name__}: {exc}",
+            "storage_state_save_warning",
+        )
+        return ""
     return str(path)
 
 
@@ -1752,6 +1759,9 @@ def _build_success_result(
 
 
 def action_run_kol(args: argparse.Namespace) -> None:
+    if args.cdp:
+        args.api_first = False
+
     if args.api_first:
         try:
             api_done = action_run_kol_api(args)
