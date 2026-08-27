@@ -422,6 +422,77 @@ async def test_account_monitor_template_repair_adds_status_fields_and_filtered_v
 
 
 @pytest.mark.asyncio
+async def test_set_view_visible_fields_batches_and_falls_back_on_lark_limit(monkeypatch):
+    cli_payloads = []
+    limit_detail = (
+        'lark-cli 调用失败: {"error":{"code":800040813,'
+        '"message":"The visible field update exceeds the operation limit."}}'
+    )
+    view_reads = 0
+
+    async def fake_run_cli(command, timeout_sec=30):
+        nonlocal view_reads
+        if "+view-get" in command:
+            view_reads += 1
+            return {
+                "ok": True,
+                "data": {"visible_fields": ["已有字段", "待隐藏字段"]},
+            }
+        json_arg = command[command.index("--json") + 1]
+        payload = json.loads(json_arg)["visible_fields"]
+        cli_payloads.append(payload)
+        if len(cli_payloads) == 1:
+            raise HTTPException(status_code=400, detail=limit_detail)
+        return {"ok": True, "data": {}}
+
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_cli)
+
+    await crawler._set_view_visible_fields(
+        "base_token",
+        "tbl_test",
+        "vew_test",
+        ["已有字段", "字段1", "字段2", "字段3", "字段4", "字段5", "字段6"],
+    )
+
+    assert view_reads == 1
+    assert cli_payloads[0] == ["已有字段", "字段1", "字段2", "字段3", "字段4", "字段5", "字段6"]
+    assert cli_payloads[-1] == ["已有字段", "字段1", "字段2", "字段3", "字段4", "字段5", "字段6"]
+    assert len(cli_payloads) == 7
+
+
+@pytest.mark.asyncio
+async def test_set_view_visible_fields_batches_removals_without_limit(monkeypatch):
+    cli_payloads = []
+
+    async def fake_run_cli(command, timeout_sec=30):
+        if "+view-get" in command:
+            return {
+                "ok": True,
+                "data": {
+                    "visible_fields": [
+                        "保留字段", "隐藏1", "隐藏2", "隐藏3",
+                        "隐藏4", "隐藏5", "隐藏6",
+                    ]
+                },
+            }
+        json_arg = command[command.index("--json") + 1]
+        cli_payloads.append(json.loads(json_arg)["visible_fields"])
+        return {"ok": True, "data": {}}
+
+    monkeypatch.setattr(crawler, "_find_lark_cli", lambda: "lark-cli")
+    monkeypatch.setattr(crawler, "_run_lark_cli", fake_run_cli)
+
+    await crawler._set_view_visible_fields(
+        "base_token", "tbl_test", "vew_test", ["保留字段"]
+    )
+
+    assert len(cli_payloads[0]) == 1
+    assert cli_payloads[1] == ["保留字段", "隐藏1", "隐藏2", "隐藏3", "隐藏4", "隐藏5"]
+    assert cli_payloads[-1] == ["保留字段"]
+
+
+@pytest.mark.asyncio
 async def test_viral_template_migration_preserves_cover_url_and_renames_attachment(monkeypatch):
     wanted = crawler._viral_monitor_fields()
     initial = [

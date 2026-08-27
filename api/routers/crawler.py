@@ -1091,7 +1091,122 @@ async def _list_table_views(base_token: str, table_id: str) -> List[Dict[str, An
     return [view for view in views if isinstance(view, dict) and view.get("id")]
 
 
+VIEW_VISIBLE_FIELDS_BATCH_SIZE = 5
+
+
 async def _set_view_visible_fields(
+    base_token: str, table_id: str, view_id: str, visible_fields: List[str]
+) -> None:
+    current_fields = await _get_view_visible_field_names(base_token, table_id, view_id)
+    additions = [name for name in visible_fields if name not in current_fields]
+    removals = [name for name in current_fields if name not in visible_fields]
+    kept_fields = [name for name in current_fields if name in visible_fields]
+
+    try:
+        await _patch_view_visible_fields(base_token, table_id, view_id, visible_fields)
+        return
+    except HTTPException as exc:
+        if not _is_lark_visible_field_limit_error(exc):
+            raise
+
+    if additions and not removals:
+        await _set_view_visible_fields_in_batches(
+            base_token, table_id, view_id, visible_fields, current_fields, additions,
+        )
+        return
+    if removals and not additions:
+        await _hide_view_fields_in_batches(
+            base_token, table_id, view_id, visible_fields, removals,
+        )
+        return
+    if additions:
+        await _set_view_visible_fields_in_batches(
+            base_token, table_id, view_id, visible_fields, current_fields, additions,
+        )
+    if removals:
+        await _hide_view_fields_in_batches(
+            base_token, table_id, view_id, visible_fields, removals,
+        )
+
+
+async def _set_view_visible_fields_in_batches(
+    base_token: str,
+    table_id: str,
+    view_id: str,
+    visible_fields: List[str],
+    current_fields: set[str],
+    additions: List[str],
+) -> None:
+    current_payload = [name for name in current_fields if name in visible_fields]
+    for start in range(0, len(additions), VIEW_VISIBLE_FIELDS_BATCH_SIZE):
+        batch = additions[start:start + VIEW_VISIBLE_FIELDS_BATCH_SIZE]
+        await _patch_view_visible_fields(base_token, table_id, view_id, [*current_payload, *batch])
+        current_payload.extend(batch)
+
+
+async def _hide_view_fields_in_batches(
+    base_token: str,
+    table_id: str,
+    view_id: str,
+    visible_fields: List[str],
+    removals: List[str],
+) -> None:
+    for start in range(0, len(removals), VIEW_VISIBLE_FIELDS_BATCH_SIZE):
+        batch = removals[start:start + VIEW_VISIBLE_FIELDS_BATCH_SIZE]
+        await _patch_view_visible_fields(
+            base_token, table_id, view_id,
+            [name for name in visible_fields if name not in batch],
+        )
+
+async def _get_view_visible_field_names(base_token: str, table_id: str, view_id: str) -> set[str]:
+    payload = await _run_lark_cli(
+        [
+            _find_lark_cli(), "base", "+view-get", "--as", "user",
+            "--base-token", base_token, "--table-id", table_id,
+            "--view-id", view_id,
+        ],
+        timeout_sec=45,
+    )
+    return _extract_visible_field_names(payload)
+
+
+def _extract_visible_field_names(payload: Dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+
+    def collect(node: Any, key: str = "") -> None:
+        lowered = key.lower()
+        if isinstance(node, dict):
+            if "field_name" in node and "visible" not in node:
+                field_name = str(node.get("field_name") or "")
+                if field_name:
+                    names.add(field_name)
+            for current_key, current_value in node.items():
+                collect(current_value, current_key)
+            return
+        if isinstance(node, list):
+            if lowered in {"visible_fields", "visible_field_names", "visiblefields", "visiblefieldnames"}:
+                for item in node:
+                    if isinstance(item, str) and item:
+                        names.add(item)
+                    elif isinstance(item, dict):
+                        field_name = str(
+                            item.get("field_name")
+                            or item.get("name")
+                            or item.get("title")
+                            or item.get("field")
+                            or item.get("id")
+                            or ""
+                        )
+                        if field_name:
+                            names.add(field_name)
+            for item in node:
+                collect(item, key)
+
+    collect(payload)
+    return names
+
+
+async def _patch_view_visible_fields(
     base_token: str, table_id: str, view_id: str, visible_fields: List[str]
 ) -> None:
     try:
@@ -1112,6 +1227,11 @@ async def _set_view_visible_fields(
 def _is_lark_noop_error(exc: Exception) -> bool:
     detail = str(getattr(exc, "detail", exc) or "").lower()
     return "800070003" in detail or "no operation produced" in detail
+
+
+def _is_lark_visible_field_limit_error(exc: Exception) -> bool:
+    detail = str(getattr(exc, "detail", exc) or "").lower()
+    return "800040813" in detail or "visible field update exceeds the operation limit" in detail
 
 
 async def _ensure_creator_selection_fields(base_token: str, table_id: str) -> List[Dict[str, Any]]:
@@ -2227,15 +2347,34 @@ async def _build_account_monitor_report(
                     pgy_errors.append(f"{nickname}: 读取蒲公英结果失败（{exc}）")
                 job.update({"_pgy_summaries": summaries, "_pgy_lookups": pgy_lookups})
 
+        # Fetch per-note PGY metrics so exposure/read are note-specific.
+        pgy_note_data: Dict[str, Dict[str, Any]] = {}
+        if report_mode in {"pgy", "auto"}:
+            note_ids = [
+                str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
+                for row in source_rows
+            ]
+            note_ids = [nid for nid in note_ids if nid]
+            if note_ids:
+                pgy_note_result = await _fetch_pgy_note_data(note_ids)
+                for item in (pgy_note_result.get("notes") or []):
+                    if isinstance(item, dict) and str(item.get("note_id") or "").strip():
+                        pgy_note_data[str(item["note_id"]).strip()] = item
+
         job.update({"status": "exporting", "stage": "正在生成账号内容监测表"})
-        report_rows = [
-            _account_monitor_pgy_row(
-                row, summaries.get(_account_monitor_creator_key(row)), pgy_lookups.get(_account_monitor_creator_key(row))
-            )
-            if report_mode in {"pgy", "auto"}
-            else _account_monitor_public_row(row)
-            for row in source_rows
-        ]
+        report_rows = []
+        for row in source_rows:
+            if report_mode in {"pgy", "auto"}:
+                merged = _account_monitor_pgy_row(
+                    row,
+                    summaries.get(_account_monitor_creator_key(row)),
+                    pgy_lookups.get(_account_monitor_creator_key(row)),
+                )
+                note_key = str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
+                merged = _merge_pgy_note_data(merged, pgy_note_data.get(note_key))
+                report_rows.append(merged)
+            else:
+                report_rows.append(_account_monitor_public_row(row))
         report_path = _write_account_monitor_report(report_rows, report_mode, job_id)
         sync_result: Dict[str, Any] = {"status": "skipped", "reason": "未绑定账号内容监测表"}
         if base_token and table_id:

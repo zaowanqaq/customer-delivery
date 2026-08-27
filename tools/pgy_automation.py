@@ -195,6 +195,71 @@ def parse_pgy_metric_number(value: object) -> Any:
         number *= 1_000
     return int(number) if number.is_integer() else number
 
+def normalize_pgy_note_api_row(note_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Map a PGY note-report API record to MediaCrawler note keys."""
+    note_info = item if isinstance(item, dict) else {}
+    for wrapper_key in ("noteInfo", "note", "noteVO", "content"):
+        inner = note_info.get(wrapper_key)
+        if isinstance(inner, dict):
+            note_info = {**inner, **{k: v for k, v in note_info.items() if k != wrapper_key}}
+            break
+    kol_info = note_info.get("kolInfo") or note_info.get("bloggerInfo") or note_info.get("kol") or {}
+    if not isinstance(kol_info, dict):
+        kol_info = {}
+    actual_note_id = str(note_info.get("noteId") or note_info.get("note_id") or note_id or "").strip()
+    note_url = str(note_info.get("noteUrl") or note_info.get("note_url") or "").strip()
+    if not note_url and actual_note_id:
+        note_url = f"https://www.xiaohongshu.com/explore/{actual_note_id}"
+    author_homepage_url = str(kol_info.get("homepageUrl") or kol_info.get("homePageUrl") or "").strip()
+    if not author_homepage_url:
+        kol_user_id = str(kol_info.get("userId") or kol_info.get("user_id") or "").strip()
+        if kol_user_id:
+            author_homepage_url = f"https://www.xiaohongshu.com/user/profile/{kol_user_id}"
+    metric_map = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    rate_map = {
+        "videoPlay5sRate": "pgy_video_5s_play_rate",
+        "picRead3sRate": "pgy_picture_3s_read_rate",
+        "avgViewTime": "pgy_avg_view_time",
+        "engageRate": "pgy_engage_rate",
+        "duration": "pgy_video_duration",
+        "cooperateType": "pgy_cooperate_type",
+    }
+    result: dict[str, Any] = {
+        "note_id": actual_note_id,
+        "note_url": note_url,
+        "title": str(note_info.get("title") or note_info.get("noteTitle") or "").strip(),
+        "author_nickname": str(kol_info.get("name") or kol_info.get("nickname") or kol_info.get("nickName") or "").strip(),
+        "author_homepage_url": author_homepage_url,
+        "publish_date": str(note_info.get("publishTime") or note_info.get("notePublishTime") or note_info.get("publishDate") or "").strip(),
+        "pgy_note_source": "蒲公英笔记报告(API)",
+    }
+    raw_tags = note_info.get("collectionType") or note_info.get("tags") or []
+    if isinstance(raw_tags, list):
+        result["tag_list"] = ",".join(str(t) for t in raw_tags if t)
+    elif isinstance(raw_tags, str) and raw_tags.strip():
+        result["tag_list"] = raw_tags.strip()
+    for source_key, target_key in metric_map.items():
+        raw = note_info.get(source_key)
+        if raw is None:
+            raw = item.get(source_key) if isinstance(item, dict) else None
+        if raw not in (None, ""):
+            result[target_key] = parse_pgy_metric_number(raw)
+    for source_key, target_key in rate_map.items():
+        raw = note_info.get(source_key) or (item.get(source_key) if isinstance(item, dict) else None)
+        if raw not in (None, ""):
+            result[target_key] = str(raw)
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
 
 def _pgy_cell_lines(cell: object) -> list[str]:
     if not isinstance(cell, dict):
@@ -1323,6 +1388,39 @@ def action_run_note_data(args: argparse.Namespace) -> None:
         if note_input.count() != 1 or query_button.count() != 1:
             raise RuntimeError("蒲公英笔记报告页面结构已变化，未找到笔记 ID 查询控件")
 
+        note_api_captures: dict[str, dict] = {}
+
+        def _collect_note_api(response) -> None:
+            """Capture note-report API responses containing impNum/readNum."""
+            try:
+                if not response.url or "/api/" not in response.url:
+                    return
+                body = response.json()
+            except Exception:
+                return
+            if not isinstance(body, dict):
+                return
+            data = body.get("data") if isinstance(body.get("data"), (dict, list)) else body
+            candidates = []
+            if isinstance(data, list):
+                candidates = [item for item in data if isinstance(item, dict)]
+            elif isinstance(data, dict):
+                for key in ("list", "records", "items", "notes", "data", "rows"):
+                    inner = data.get(key)
+                    if isinstance(inner, list):
+                        candidates.extend(item for item in inner if isinstance(item, dict))
+                if not candidates and data:
+                    candidates = [data]
+            for entry in candidates:
+                nid = str(entry.get("noteId") or entry.get("note_id") or "").strip()
+                if not nid:
+                    continue
+                has_metrics = any(entry.get(k) is not None for k in ("impNum", "readNum", "likeNum"))
+                if has_metrics or nid in [n.strip() for n in note_ids]:
+                    note_api_captures[nid] = entry
+
+        page.on("response", _collect_note_api)
+
         notes: list[dict[str, Any]] = []
         missing_note_ids: list[str] = []
         for index, note_id in enumerate(note_ids, start=1):
@@ -1336,12 +1434,21 @@ def action_run_note_data(args: argparse.Namespace) -> None:
                     loading.wait_for(state="hidden", timeout=max(5_000, args.note_data_wait_ms))
                 except TimeoutError:
                     pass
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(500)
+            # Prefer API interception; fall back to DOM grid parsing.
+            api_entry = note_api_captures.get(note_id)
+            if api_entry:
+                normalized = normalize_pgy_note_api_row(note_id, api_entry)
+                if normalized:
+                    notes.append(normalized)
+                    _progress(f"API 拦截成功：{note_id}", "note_data_api")
+                    continue
             matches = extract_note_data_grid(page, note_id)
             if matches:
                 notes.append(matches[0])
             else:
                 missing_note_ids.append(note_id)
+        page.remove_listener("response", _collect_note_api)
 
         _json_line(
             {
