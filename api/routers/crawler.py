@@ -3469,8 +3469,10 @@ async def _refresh_collab_creator_notes(request: CollaborationMonitorStartReques
     creator_id_list = _split_creator_inputs(request.creator_ids)
     if not raw_note_links and not creator_id_list:
         return
-    if crawler_manager.process and crawler_manager.process.poll() is None:
-        raise HTTPException(status_code=400, detail="当前有任务正在运行，无法启动合作监控抓取")
+    if crawler_manager.is_running():
+        desc = crawler_manager.current_task_description()
+        detail = f"当前已有抓取任务在运行（{desc}），无法启动合作监控抓取；如需重新开始可点击【停止当前抓取】" if desc else "当前有任务正在运行，无法启动合作监控抓取"
+        raise HTTPException(status_code=400, detail=detail)
     if raw_note_links:
         note_urls_by_id: Dict[str, str] = {}
         errors: List[str] = []
@@ -4003,8 +4005,10 @@ async def start_account_monitor(request: SampleCreatorStartRequest):
     creator_links = _split_creator_inputs(request.creator_ids)
     if not creator_links:
         raise HTTPException(status_code=400, detail="请至少提供 1 个小红书账号主页链接")
-    if crawler_manager.process and crawler_manager.process.poll() is None:
-        raise HTTPException(status_code=400, detail="当前已有抓取任务在运行，请等待完成后再启动账号内容监测")
+    if crawler_manager.is_running():
+        desc = crawler_manager.current_task_description()
+        detail = f"当前已有抓取任务在运行（{desc}），请等待完成后再启动账号内容监测" if desc else "当前已有抓取任务在运行，请等待完成后再启动账号内容监测"
+        raise HTTPException(status_code=400, detail=detail)
 
     normalized_links: List[str] = []
     link_errors: List[str] = []
@@ -4230,8 +4234,10 @@ async def start_sentiment_monitor(request: NoteSentimentStartRequest):
         risk_groups = _normalize_sentiment_risk_groups(request.risk_groups, request.risk_keywords)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if crawler_manager.process and crawler_manager.process.poll() is None:
-        raise HTTPException(status_code=400, detail="当前已有抓取任务在运行，请等待完成后再启动笔记舆情监控")
+    if crawler_manager.is_running():
+        desc = crawler_manager.current_task_description()
+        detail = f"当前已有抓取任务在运行（{desc}），请等待完成后再启动笔记舆情监控" if desc else "当前已有抓取任务在运行，请等待完成后再启动笔记舆情监控"
+        raise HTTPException(status_code=400, detail=detail)
 
     note_urls_by_id: Dict[str, str] = {}
     errors: List[str] = []

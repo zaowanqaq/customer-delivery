@@ -858,9 +858,10 @@
       <div class="btns">
         <button class="ghost" onclick="pgyLogin()">打开蒲公英登录窗口</button>
         <button class="ghost" onclick="pgyCheckStatus()">验证蒲公英登录态</button>
-        <button class="ghost" onclick="crawlOnceAndSync()">抓取并同步</button>
-        <button class="primary" onclick="startCollabMonitor()">启动合作监控</button>
+        <button id="btn_collab_crawl_once" class="ghost" onclick="crawlOnceAndSync()">抓取并同步</button>
+        <button id="btn_collab_start_monitor" class="primary" onclick="startCollabMonitor()">启动合作监控</button>
         <button class="ghost" onclick="queryCollabStatus()">查询监控状态</button>
+        <button class="danger" onclick="stopCrawler()">停止当前抓取</button>
         <button class="danger" onclick="stopLatestCollabJob()">停止最新监控任务</button>
       </div>
     </section>
@@ -3481,36 +3482,46 @@
         log("请先导入合作笔记表单，或填写发布笔记链接");
         return;
       }
-      await saveConfig();
-      const body = {
-        base_token: payload.sync_base_token,
-        table_id: payload.collab_table_id,
-        interval_hours: payload.collab_interval_hours,
-        project_name: payload.project_name,
-        source_keyword: payload.collab_source_keyword || payload.keywords,
-        note_links: payload.collab_note_links,
-        creator_ids: "",
-        notes_per_creator: payload.collab_notes_per_creator,
-        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
-        login_type: payload.login_type,
-        save_option: payload.save_option,
-        enable_comments: payload.enable_comments,
-        enable_sub_comments: payload.enable_sub_comments,
-        enable_media: payload.enable_media,
-        cookies: payload.cookies,
-        headless: payload.headless,
+      const btn = document.getElementById("btn_collab_crawl_once");
+      const origText = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "正在抓取同步..."; }
+      try {
+        await saveConfig();
+        const body = {
+          base_token: payload.sync_base_token,
+          table_id: payload.collab_table_id,
+          interval_hours: payload.collab_interval_hours,
+          project_name: payload.project_name,
+          source_keyword: payload.collab_source_keyword || payload.keywords,
+          note_links: payload.collab_note_links,
+          creator_ids: "",
+          notes_per_creator: payload.collab_notes_per_creator,
+          max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+          login_type: payload.login_type,
+          save_option: payload.save_option,
+          enable_comments: payload.enable_comments,
+          enable_sub_comments: payload.enable_sub_comments,
+          enable_media: payload.enable_media,
+          cookies: payload.cookies,
+          headless: payload.headless,
 
-        comments_table_id: payload.collab_comments_table_id
-      };
-      log("开始抓取并同步（单次）...");
-      const res = await fetch("/api/crawler/collaboration-monitor/crawl-once", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      log("抓取并同步结果: " + JSON.stringify(data));
-      logCollabPgyStatus(data);
+          comments_table_id: payload.collab_comments_table_id
+        };
+        log("开始抓取并同步（单次）...");
+        const res = await fetch("/api/crawler/collaboration-monitor/crawl-once", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        log("抓取并同步结果: " + (data.detail || JSON.stringify(data)));
+        logCollabPgyStatus(data);
+      } catch (err) {
+        log("抓取并同步请求异常: " + (err.message || String(err)));
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+        await refreshProgressMonitor();
+      }
     }
 
     async function startCollabMonitor() {
@@ -3524,36 +3535,46 @@
         log("请先导入合作笔记表单，或填写发布笔记链接");
         return;
       }
-      await saveConfig();
-      const body = {
-        base_token: payload.sync_base_token,
-        table_id: payload.collab_table_id,
-        interval_hours: payload.collab_interval_hours,
-        project_name: payload.project_name,
-        source_keyword: payload.collab_source_keyword || payload.keywords,
-        note_links: payload.collab_note_links,
-        creator_ids: "",
-        notes_per_creator: payload.collab_notes_per_creator,
-        max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
-        login_type: payload.login_type,
-        save_option: payload.save_option,
-        enable_comments: payload.enable_comments,
-        enable_sub_comments: payload.enable_sub_comments,
-        enable_media: payload.enable_media,
-        cookies: payload.cookies,
-        headless: payload.headless,
+      const btn = document.getElementById("btn_collab_start_monitor");
+      const origText = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "正在启动..."; }
+      try {
+        await saveConfig();
+        const body = {
+          base_token: payload.sync_base_token,
+          table_id: payload.collab_table_id,
+          interval_hours: payload.collab_interval_hours,
+          project_name: payload.project_name,
+          source_keyword: payload.collab_source_keyword || payload.keywords,
+          note_links: payload.collab_note_links,
+          creator_ids: "",
+          notes_per_creator: payload.collab_notes_per_creator,
+          max_comments_count_singlenotes: payload.max_comments_count_singlenotes,
+          login_type: payload.login_type,
+          save_option: payload.save_option,
+          enable_comments: payload.enable_comments,
+          enable_sub_comments: payload.enable_sub_comments,
+          enable_media: payload.enable_media,
+          cookies: payload.cookies,
+          headless: payload.headless,
 
-        comments_table_id: payload.collab_comments_table_id
-      };
-      const res = await fetch("/api/crawler/collaboration-monitor/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      latestCollabJobId = data.job_id || latestCollabJobId;
-      log("合作监控启动结果: " + JSON.stringify(data));
-      logCollabPgyStatus(data);
+          comments_table_id: payload.collab_comments_table_id
+        };
+        const res = await fetch("/api/crawler/collaboration-monitor/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        latestCollabJobId = data.job_id || latestCollabJobId;
+        log("合作监控启动结果: " + (data.detail || JSON.stringify(data)));
+        logCollabPgyStatus(data);
+      } catch (err) {
+        log("合作监控启动异常: " + (err.message || String(err)));
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+        await refreshProgressMonitor();
+      }
     }
 
     async function queryCollabStatus() {

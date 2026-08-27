@@ -207,14 +207,46 @@ class CrawlerManager:
 
             return True
 
+    def is_running(self) -> bool:
+        """Check if process is genuinely active."""
+        if self.process:
+            if self.process.poll() is not None:
+                self.status = "idle"
+                return False
+            return True
+        return False
+
+    def current_task_description(self) -> str:
+        """Human-readable description of current running task."""
+        if not self.is_running() or not self.current_config:
+            return ""
+        ctype = getattr(self.current_config.crawler_type, "value", str(self.current_config.crawler_type))
+        type_names = {
+            "search": "关键词搜索",
+            "detail": "指定笔记详情抓取",
+            "creator": "创作者主页抓取",
+        }
+        name = type_names.get(ctype, ctype)
+        pid_info = f"PID {self.process.pid}" if self.process else ""
+        elapsed = ""
+        if self.started_at:
+            secs = max(0, int((datetime.now() - self.started_at).total_seconds()))
+            elapsed = f"已运行 {secs}秒"
+        parts = [p for p in [name, pid_info, elapsed] if p]
+        return "，".join(parts)
+
     def get_status(self) -> dict:
         """Get current status"""
+        if self.process and self.process.poll() is not None and self.status == "running":
+            self.status = "idle"
         login_message = self._latest_login_issue()
         return {
             "status": self.status,
             "platform": self.current_config.platform.value if self.current_config else None,
             "crawler_type": self.current_config.crawler_type.value if self.current_config else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
+            "pid": self.process.pid if self.process and self.process.poll() is None else None,
+            "task_description": self.current_task_description(),
             "error_message": login_message,
             "login_required": bool(login_message),
             "login_platform": "xhs" if login_message else None,
