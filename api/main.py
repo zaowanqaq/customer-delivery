@@ -23,7 +23,7 @@ from pydantic import BaseModel
 import config
 from config.runtime_paths import ensure_runtime_dirs, ops_config_path
 from tools.browser_launcher import BrowserLauncher
-from .routers import crawler_router, data_router, notes_router, websocket_router
+from .routers import crawler_router, creator_screening_router, data_router, notes_router, websocket_router
 
 app = FastAPI(
     title="MediaCrawler WebUI API",
@@ -69,18 +69,24 @@ OPS_CONFIG_DEFAULT = {
     "sync_limit": 0,
     "sync_file_path": "",
     "sample_creator_ids": "",
-    "notes_per_creator": 20,
+    "notes_per_creator": 10,
+    "account_monitor_mode": "auto",
+    "sentiment_note_links": "",
+    "sentiment_risk_keywords": "骗人,差,价格高,贵,jd,pdd",
+    "sentiment_risk_groups": '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]',
     "scenario_base_token": "",
-    "account_filter_table_name": "账号筛选表",
-    "viral_monitor_table_name": "爆款监控表",
-    "note_recreation_table_name": "笔记二创表",
-    "comments_table_name": "笔记评论表",
-    "collaboration_monitor_table_name": "合作笔记监控表",
-    "collab_comments_table_name": "合作笔记评论表",
+    "account_filter_table_name": "账号内容监测表",
+    "viral_monitor_table_name": "平台爆款监测表",
+    "note_recreation_table_name": "笔记内容二创表",
+    "comments_table_name": "笔记舆情监控表",
+    "collaboration_monitor_table_name": "笔记数据监测表",
+    "collab_comments_table_name": "合作笔记舆情监控表",
     "creator_selection_table_name": "达人智能圈选表",
+    "creator_screening_table_name": "AI初筛结果表",
     "collab_project_name": "",
     "collab_source_keyword": "",
     "collab_creator_ids": "",
+    "collab_note_links": "",
     "collab_notes_per_creator": 20,
     "note_recreation_table_id": "",
     "collab_table_id": "",
@@ -90,6 +96,7 @@ OPS_CONFIG_DEFAULT = {
     "pgy_nickname": "",
     "pgy_red_id": "",
     "pgy_table_id": "",
+    "creator_screening_table_id": "",
     "pgy_sync_after_run": "true",
     "project_name": "",
     "current_project_key": "",
@@ -106,6 +113,7 @@ PROJECT_BOUND_FIELDS = {
     "sync_comments_table_id",
     "collab_table_id",
     "collab_comments_table_id",
+    "creator_screening_table_id",
     "keywords",
     "xhs_sort_by",
     "xhs_note_type",
@@ -114,12 +122,26 @@ PROJECT_BOUND_FIELDS = {
     "max_comments_count_singlenotes",
     "sample_creator_ids",
     "notes_per_creator",
+    "account_monitor_mode",
+    "sentiment_note_links",
+    "sentiment_risk_keywords",
+    "sentiment_risk_groups",
     "collab_creator_ids",
+    "collab_note_links",
     "collab_notes_per_creator",
     "collab_interval_hours",
     "collab_sync_limit",
     "pgy_table_id",
     "pgy_sync_after_run",
+}
+
+OPS_TABLE_NAME_MIGRATIONS = {
+    "account_filter_table_name": {"账号筛选表": "账号内容监测表"},
+    "viral_monitor_table_name": {"爆款监控表": "平台爆款监测表"},
+    "note_recreation_table_name": {"笔记二创表": "笔记内容二创表"},
+    "comments_table_name": {"笔记评论表": "笔记舆情监控表"},
+    "collaboration_monitor_table_name": {"合作笔记监控表": "笔记数据监测表"},
+    "collab_comments_table_name": {"合作笔记评论表": "合作笔记舆情监控表"},
 }
 
 REQUIRED_RUNTIME_IMPORTS = {
@@ -165,18 +187,24 @@ class OpsConfigPayload(BaseModel):
     sync_limit: int = 0
     sync_file_path: str = ""
     sample_creator_ids: str = ""
-    notes_per_creator: int = 20
+    notes_per_creator: int = 10
+    account_monitor_mode: str = "auto"
+    sentiment_note_links: str = ""
+    sentiment_risk_keywords: str = "骗人,差,价格高,贵,jd,pdd"
+    sentiment_risk_groups: str = '[{"name":"电商风险","keywords":"骗人,差,价格高,贵,jd,pdd"}]'
     scenario_base_token: str = ""
-    account_filter_table_name: str = "账号筛选表"
-    viral_monitor_table_name: str = "爆款监控表"
-    note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "笔记评论表"
-    collaboration_monitor_table_name: str = "合作笔记监控表"
-    collab_comments_table_name: str = "合作笔记评论表"
+    account_filter_table_name: str = "账号内容监测表"
+    viral_monitor_table_name: str = "平台爆款监测表"
+    note_recreation_table_name: str = "笔记内容二创表"
+    comments_table_name: str = "笔记舆情监控表"
+    collaboration_monitor_table_name: str = "笔记数据监测表"
+    collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
     collab_project_name: str = ""
     collab_source_keyword: str = ""
     collab_creator_ids: str = ""
+    collab_note_links: str = ""
     collab_notes_per_creator: int = 20
     note_recreation_table_id: str = ""
     collab_table_id: str = ""
@@ -186,10 +214,29 @@ class OpsConfigPayload(BaseModel):
     pgy_nickname: str = ""
     pgy_red_id: str = ""
     pgy_table_id: str = ""
+    creator_screening_table_id: str = ""
     pgy_sync_after_run: str = "true"
     project_name: str = ""
     current_project_key: str = ""
     project_profiles: Dict[str, Dict[str, Any]] = {}
+
+
+def _migrate_ops_table_names(config: dict) -> dict:
+    migrated = dict(config)
+    for field, replacements in OPS_TABLE_NAME_MIGRATIONS.items():
+        current = migrated.get(field)
+        if current in replacements:
+            migrated[field] = replacements[current]
+    profiles = migrated.get("project_profiles")
+    if isinstance(profiles, dict):
+        for profile in profiles.values():
+            if not isinstance(profile, dict):
+                continue
+            for field, replacements in OPS_TABLE_NAME_MIGRATIONS.items():
+                current = profile.get(field)
+                if current in replacements:
+                    profile[field] = replacements[current]
+    return migrated
 
 
 def _load_ops_config() -> dict:
@@ -203,6 +250,15 @@ def _load_ops_config() -> dict:
                 config.update(loaded)
         except Exception:
             pass
+    config = _migrate_ops_table_names(config)
+    # Account content monitoring is intentionally capped at 10 notes per creator
+    # for the customer workflow, including previously saved project profiles.
+    config["notes_per_creator"] = 10
+    profiles = config.get("project_profiles")
+    if isinstance(profiles, dict):
+        for profile in profiles.values():
+            if isinstance(profile, dict):
+                profile["notes_per_creator"] = 10
     return config
 
 
@@ -260,6 +316,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(crawler_router, prefix="/api")
+app.include_router(creator_screening_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
 app.include_router(notes_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
@@ -443,7 +500,7 @@ async def get_ops_config():
 @app.post("/api/ops-config")
 async def save_ops_config(payload: OpsConfigPayload):
     """Save ops config for independent ops page."""
-    config_data = payload.model_dump()
+    config_data = _migrate_ops_table_names(payload.model_dump())
     # Keep start_page >= 1 for stability.
     if config_data["start_page"] < 1:
         config_data["start_page"] = 1
@@ -453,8 +510,12 @@ async def save_ops_config(payload: OpsConfigPayload):
         config_data["max_comments_count_singlenotes"] = 1
     if config_data["sync_limit"] < 0:
         config_data["sync_limit"] = 0
-    if config_data["notes_per_creator"] < 1:
-        config_data["notes_per_creator"] = 1
+    config_data["notes_per_creator"] = 10
+    for profile in (config_data.get("project_profiles") or {}).values():
+        if isinstance(profile, dict):
+            profile["notes_per_creator"] = 10
+    if config_data.get("account_monitor_mode") not in {"auto", "public", "pgy"}:
+        config_data["account_monitor_mode"] = "auto"
     if config_data["collab_interval_hours"] not in (4, 8, 24):
         config_data["collab_interval_hours"] = 4
     if config_data["collab_sync_limit"] < 1:

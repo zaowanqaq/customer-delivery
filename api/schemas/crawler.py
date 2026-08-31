@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from enum import Enum
-from typing import Optional, Literal
+from typing import List, Optional, Literal
 from pydantic import BaseModel
 
 
@@ -93,8 +93,8 @@ class SampleCreatorStartRequest(BaseModel):
     """Start creator-mode crawling for sample accounts."""
     platform: PlatformEnum = PlatformEnum.XHS
     login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
-    creator_ids: str  # Comma/newline separated creator profile URLs or IDs
-    notes_per_creator: int = 20
+    creator_ids: str  # Comma/newline separated Xiaohongshu creator profile URLs
+    notes_per_creator: int = 10
     max_comments_count_singlenotes: int = 10
     enable_comments: bool = True
     enable_sub_comments: bool = False
@@ -102,6 +102,12 @@ class SampleCreatorStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
+    # ``auto`` is the customer-facing default: first collect public notes,
+    # then check the creator in Pugongying's "find creator" result.
+    # Keep the two legacy values accepted for existing API callers.
+    report_mode: Literal["auto", "public", "pgy"] = "auto"
+    base_token: str = ""
+    table_id: str = ""
 
 
 class SampleAccountImportRequest(BaseModel):
@@ -110,16 +116,48 @@ class SampleAccountImportRequest(BaseModel):
     content_base64: str
 
 
+class SentimentRiskGroup(BaseModel):
+    """One editable risk category and its comment keywords."""
+    name: str
+    keywords: str
+
+
+class NoteSentimentStartRequest(BaseModel):
+    """Crawl comments from Xiaohongshu note links and sync Base risk-group formulas."""
+    note_links: str
+    base_token: str
+    table_id: str
+    risk_groups: List[SentimentRiskGroup] = []
+    # Keep accepting the former one-list payload so saved integrations do not break.
+    risk_keywords: str = ""
+    login_type: LoginTypeEnum = LoginTypeEnum.COOKIE
+    max_comments_count_singlenotes: int = 10
+    enable_sub_comments: bool = False
+    enable_media: bool = False
+    save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
+    cookies: str = ""
+    headless: bool = False
+
+
+class SentimentRuleSyncRequest(BaseModel):
+    """Synchronize editable sentiment risk groups to a Base table without crawling."""
+    base_token: str
+    table_id: str
+    risk_groups: List[SentimentRiskGroup] = []
+    risk_keywords: str = ""
+
+
 class ScenarioTableSetupRequest(BaseModel):
     """Create scenario tables for account filtering / viral monitor / note rewrite / collaboration monitor."""
     base_token: str
-    account_filter_table_name: str = "账号筛选表"
-    viral_monitor_table_name: str = "爆款监控表"
-    note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "笔记评论表"
-    collaboration_monitor_table_name: str = "合作笔记监控表"
-    collab_comments_table_name: str = "合作笔记评论表"
+    account_filter_table_name: str = "账号内容监测表"
+    viral_monitor_table_name: str = "平台爆款监测表"
+    note_recreation_table_name: str = "笔记内容二创表"
+    comments_table_name: str = "笔记舆情监控表"
+    collaboration_monitor_table_name: str = "笔记数据监测表"
+    collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
 
 
 class ScenarioBootstrapRequest(BaseModel):
@@ -127,13 +165,14 @@ class ScenarioBootstrapRequest(BaseModel):
     project_name: str
     template_base_token: str = ""
     root_table_name: str = "项目主表"
-    account_filter_table_name: str = "账号筛选表"
-    viral_monitor_table_name: str = "爆款监控表"
-    note_recreation_table_name: str = "笔记二创表"
-    comments_table_name: str = "笔记评论表"
-    collaboration_monitor_table_name: str = "合作笔记监控表"
-    collab_comments_table_name: str = "合作笔记评论表"
+    account_filter_table_name: str = "账号内容监测表"
+    viral_monitor_table_name: str = "平台爆款监测表"
+    note_recreation_table_name: str = "笔记内容二创表"
+    comments_table_name: str = "笔记舆情监控表"
+    collaboration_monitor_table_name: str = "笔记数据监测表"
+    collab_comments_table_name: str = "合作笔记舆情监控表"
     creator_selection_table_name: str = "达人智能圈选表"
+    creator_screening_table_name: str = "AI初筛结果表"
     folder_token: str = ""
     time_zone: str = "Asia/Shanghai"
 
@@ -145,6 +184,7 @@ class CollaborationMonitorStartRequest(BaseModel):
     interval_hours: Literal[4, 8, 24] = 4
     project_name: str = ""
     source_keyword: str = ""
+    note_links: str = ""  # comma/newline separated Xiaohongshu note links
     creator_ids: str = ""  # comma/newline separated creator profile URLs or IDs
     notes_per_creator: int = 20
     max_comments_count_singlenotes: int = 10
@@ -217,6 +257,9 @@ class CrawlerStatusResponse(BaseModel):
     crawler_type: Optional[str] = None
     started_at: Optional[str] = None
     error_message: Optional[str] = None
+    login_required: bool = False
+    login_platform: Optional[str] = None
+    login_message: Optional[str] = None
 
 
 class LogEntry(BaseModel):

@@ -128,7 +128,7 @@ class CrawlerManager:
             await self._push_log(entry)
 
             try:
-                # Start subprocess
+                run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -137,7 +137,12 @@ class CrawlerManager:
                     encoding='utf-8',
                     bufsize=1,
                     cwd=str(self._project_root),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONPATH": str(self._project_root)}
+                    env={
+                        **os.environ,
+                        "PYTHONUNBUFFERED": "1",
+                        "PYTHONPATH": str(self._project_root),
+                        "MEDIACRAWLER_RUN_ID": run_id,
+                    }
                 )
 
                 self.status = "running"
@@ -202,15 +207,73 @@ class CrawlerManager:
 
             return True
 
+    def is_running(self) -> bool:
+        """Check if process is genuinely active."""
+        if self.process:
+            if self.process.poll() is not None:
+                self.status = "idle"
+                return False
+            return True
+        return False
+
+    def current_task_description(self) -> str:
+        """Human-readable description of current running task."""
+        if not self.is_running() or not self.current_config:
+            return ""
+        ctype = getattr(self.current_config.crawler_type, "value", str(self.current_config.crawler_type))
+        type_names = {
+            "search": "关键词搜索",
+            "detail": "指定笔记详情抓取",
+            "creator": "创作者主页抓取",
+        }
+        name = type_names.get(ctype, ctype)
+        pid_info = f"PID {self.process.pid}" if self.process else ""
+        elapsed = ""
+        if self.started_at:
+            secs = max(0, int((datetime.now() - self.started_at).total_seconds()))
+            elapsed = f"已运行 {secs}秒"
+        parts = [p for p in [name, pid_info, elapsed] if p]
+        return "，".join(parts)
+
     def get_status(self) -> dict:
         """Get current status"""
+        if self.process and self.process.poll() is not None and self.status == "running":
+            self.status = "idle"
+        login_message = self._latest_login_issue()
         return {
             "status": self.status,
             "platform": self.current_config.platform.value if self.current_config else None,
             "crawler_type": self.current_config.crawler_type.value if self.current_config else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
-            "error_message": None
+            "pid": self.process.pid if self.process and self.process.poll() is None else None,
+            "task_description": self.current_task_description(),
+            "error_message": login_message,
+            "login_required": bool(login_message),
+            "login_platform": "xhs" if login_message else None,
+            "login_message": login_message,
         }
+
+    def _latest_login_issue(self) -> Optional[str]:
+        """Return a customer-facing XHS login issue derived from recent process output."""
+        if not self.current_config or self.current_config.platform.value != "xhs":
+            return None
+
+        issue_terms = (
+            "登录态不一致",
+            "web_session expired",
+            "api login state invalid",
+            "please manually refresh the browser page and re-login",
+        )
+        for entry in reversed(self._logs[-80:]):
+            message = str(entry.message or "")
+            lowered = message.lower()
+            if any(term in lowered for term in issue_terms):
+                return "小红书登录已失效，请重新登录并读取 Cookie 后再启动抓取"
+            if entry.level == "error" and "预检失败" in message and any(
+                term in lowered for term in ("pong", "auth", "login", "web_session")
+            ):
+                return "小红书登录已失效，请重新登录并读取 Cookie 后再启动抓取"
+        return None
 
     def _build_command(self, config: CrawlerStartRequest) -> list:
         """Build main.py command line arguments"""

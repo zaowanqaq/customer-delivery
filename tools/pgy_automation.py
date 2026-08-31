@@ -9,6 +9,7 @@ The first supported workflow opens the pre-trade KOL note page and selects the
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import random
@@ -17,8 +18,8 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from urllib.parse import urlencode
+from typing import Any, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from playwright.sync_api import APIRequestContext, Browser, BrowserContext, Page, TimeoutError, sync_playwright
 
@@ -36,6 +37,7 @@ DEFAULT_USER_DATA_DIR = browser_data_dir() / "pgy_user_data_dir"
 DEFAULT_STORAGE_STATE = browser_data_dir() / "pgy_storage_state.json"
 DEFAULT_OUTPUT_DIR = downloads_dir() / "pgy"
 PGY_KOL_NOTE_URL = "https://pgy.xiaohongshu.com/solar/pre-trade/note/kol"
+PGY_NOTE_DATA_URL = "https://pgy.xiaohongshu.com/solar/post-trade/content-manage"
 PGY_ORIGIN = "https://pgy.xiaohongshu.com"
 
 
@@ -68,8 +70,15 @@ def _progress(message: str, step: str = "") -> None:
 
 def save_storage_state(context: BrowserContext, storage_state_path: str = "") -> str:
     path = Path(storage_state_path or DEFAULT_STORAGE_STATE).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    context.storage_state(path=str(path))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(path))
+    except OSError as exc:
+        _progress(
+            f"蒲公英登录态文件保存失败，继续使用当前浏览器会话：{type(exc).__name__}: {exc}",
+            "storage_state_save_warning",
+        )
+        return ""
     return str(path)
 
 
@@ -164,7 +173,225 @@ def login_state(page: Page) -> str:
         return "logged_in_or_public"
     if "/solar/pre-trade/blogger-detail" in page.url and ("传播表现" in text or "粉丝分析" in text):
         return "logged_in_or_public"
+    if "/solar/post-trade/content-manage" in page.url and ("笔记合作数据" in text or "笔记报告" in text):
+        return "logged_in_or_public"
     return "login_required"
+
+
+def parse_pgy_metric_number(value: object) -> Any:
+    """Convert PGY table counts such as ``1.2万`` to Base-compatible numbers."""
+    text = str(value or "").strip().replace(",", "")
+    if not text or text in {"-", "--"}:
+        return ""
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return ""
+    number = float(match.group(0))
+    if "亿" in text:
+        number *= 100_000_000
+    elif "万" in text or re.search(r"\d(?:\.\d+)?[wW]\b", text):
+        number *= 10_000
+    elif re.search(r"\d(?:\.\d+)?[kK]\b", text):
+        number *= 1_000
+    return int(number) if number.is_integer() else number
+
+def normalize_pgy_note_api_row(note_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Map a PGY note-report API record to MediaCrawler note keys."""
+    note_info = item if isinstance(item, dict) else {}
+    for wrapper_key in ("noteInfo", "note", "noteVO", "content"):
+        inner = note_info.get(wrapper_key)
+        if isinstance(inner, dict):
+            note_info = {**inner, **{k: v for k, v in note_info.items() if k != wrapper_key}}
+            break
+    kol_info = note_info.get("kolInfo") or note_info.get("bloggerInfo") or note_info.get("kol") or {}
+    if not isinstance(kol_info, dict):
+        kol_info = {}
+    actual_note_id = str(note_info.get("noteId") or note_info.get("note_id") or note_id or "").strip()
+    note_url = str(note_info.get("noteUrl") or note_info.get("note_url") or "").strip()
+    if not note_url and actual_note_id:
+        note_url = f"https://www.xiaohongshu.com/explore/{actual_note_id}"
+    author_homepage_url = str(kol_info.get("homepageUrl") or kol_info.get("homePageUrl") or "").strip()
+    if not author_homepage_url:
+        kol_user_id = str(kol_info.get("userId") or kol_info.get("user_id") or "").strip()
+        if kol_user_id:
+            author_homepage_url = f"https://www.xiaohongshu.com/user/profile/{kol_user_id}"
+    metric_map = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    rate_map = {
+        "videoPlay5sRate": "pgy_video_5s_play_rate",
+        "picRead3sRate": "pgy_picture_3s_read_rate",
+        "avgViewTime": "pgy_avg_view_time",
+        "engageRate": "pgy_engage_rate",
+        "duration": "pgy_video_duration",
+        "cooperateType": "pgy_cooperate_type",
+    }
+    result: dict[str, Any] = {
+        "note_id": actual_note_id,
+        "note_url": note_url,
+        "title": str(note_info.get("title") or note_info.get("noteTitle") or "").strip(),
+        "author_nickname": str(kol_info.get("name") or kol_info.get("nickname") or kol_info.get("nickName") or "").strip(),
+        "author_homepage_url": author_homepage_url,
+        "publish_date": str(note_info.get("publishTime") or note_info.get("notePublishTime") or note_info.get("publishDate") or "").strip(),
+        "pgy_note_source": "蒲公英笔记报告(API)",
+    }
+    raw_tags = note_info.get("collectionType") or note_info.get("tags") or []
+    if isinstance(raw_tags, list):
+        result["tag_list"] = ",".join(str(t) for t in raw_tags if t)
+    elif isinstance(raw_tags, str) and raw_tags.strip():
+        result["tag_list"] = raw_tags.strip()
+    for source_key, target_key in metric_map.items():
+        raw = note_info.get(source_key)
+        if raw is None:
+            raw = item.get(source_key) if isinstance(item, dict) else None
+        if raw not in (None, ""):
+            result[target_key] = parse_pgy_metric_number(raw)
+    for source_key, target_key in rate_map.items():
+        raw = note_info.get(source_key) or (item.get(source_key) if isinstance(item, dict) else None)
+        if raw not in (None, ""):
+            result[target_key] = str(raw)
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
+
+def _pgy_cell_lines(cell: object) -> list[str]:
+    if not isinstance(cell, dict):
+        return []
+    lines = cell.get("lines")
+    if isinstance(lines, list):
+        return [str(item).strip() for item in lines if str(item).strip()]
+    text = str(cell.get("text") or "")
+    return [item.strip() for item in text.splitlines() if item.strip()]
+
+
+def normalize_pgy_note_grid_row(note_id: str, cells: dict[str, object]) -> dict[str, Any]:
+    """Map one visible PGY note-report grid row to MediaCrawler note keys."""
+    note_cell = cells.get("note") or {}
+    kol_cell = cells.get("kol") or {}
+    note_lines = _pgy_cell_lines(note_cell)
+    kol_lines = _pgy_cell_lines(kol_cell)
+    note_links = note_cell.get("links") if isinstance(note_cell, dict) else []
+    kol_links = kol_cell.get("links") if isinstance(kol_cell, dict) else []
+    note_url = next(
+        (str(url) for url in (note_links or []) if "xiaohongshu.com" in str(url) and ("/explore/" in str(url) or "/discovery/item/" in str(url))),
+        "",
+    )
+    author_homepage_url = next(
+        (str(url) for url in (kol_links or []) if "/user/profile/" in str(url)),
+        "",
+    )
+    title = next(
+        (
+            line
+            for line in note_lines
+            if note_id not in line
+            and line not in {"图文", "视频", "笔记详情", "查看详情"}
+            and not line.startswith("笔记ID")
+        ),
+        "",
+    )
+    nickname = next(
+        (
+            line
+            for line in kol_lines
+            if not re.search(r"粉丝|小红书号|ID[:：]", line, re.IGNORECASE)
+        ),
+        "",
+    )
+    tag_lines = _pgy_cell_lines(cells.get("collectionType") or {})
+    metric_keys = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    result: dict[str, Any] = {
+        "note_id": note_id,
+        "note_url": note_url,
+        "title": title,
+        "author_nickname": nickname,
+        "author_homepage_url": author_homepage_url,
+        "publish_date": "\n".join(_pgy_cell_lines(cells.get("notePublishTime") or {})),
+        "tag_list": tag_lines,
+        "pgy_note_source": "蒲公英笔记报告",
+    }
+    for source_key, target_key in metric_keys.items():
+        lines = _pgy_cell_lines(cells.get(source_key) or {})
+        result[target_key] = parse_pgy_metric_number(lines[0] if lines else "")
+    for source_key, target_key in {
+        "videoPlay5sRate": "pgy_video_5s_play_rate",
+        "picRead3sRate": "pgy_picture_3s_read_rate",
+        "avgViewTime": "pgy_avg_view_time",
+        "engageRate": "pgy_engage_rate",
+        "duration": "pgy_video_duration",
+        "cooperateType": "pgy_cooperate_type",
+    }.items():
+        result[target_key] = "\n".join(_pgy_cell_lines(cells.get(source_key) or {}))
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
+
+def extract_note_data_grid(page: Page, requested_note_id: str = "") -> list[dict[str, Any]]:
+    """Read the visible PGY content-management grid using its stable column ids."""
+    raw_rows = page.evaluate(
+        """() => {
+        const parseArea = (value) => {
+            const parts = String(value || '').split('/').map((item) => Number(item.trim()));
+            return parts.length === 4 && parts.every(Number.isFinite) ? parts : null;
+        };
+        const grids = Array.from(document.querySelectorAll('.d-grid.d-table'));
+        const grid = grids.find((item) => item.querySelector('.d-th#note') && item.querySelector('.d-th#impNum'));
+        if (!grid) return [];
+        const headers = {};
+        for (const header of Array.from(grid.children)) {
+            if (!header.classList.contains('d-th') || !header.id) continue;
+            const area = parseArea(header.style.gridArea);
+            if (area) headers[area[1]] = header.id;
+        }
+        const rows = {};
+        for (const cell of Array.from(grid.children)) {
+            if (cell.classList.contains('d-th')) continue;
+            const area = parseArea(cell.style.gridArea);
+            if (!area || area[3] - area[1] !== 1) continue;
+            const key = headers[area[1]];
+            if (!key) continue;
+            const rowIndex = area[0];
+            if (!rows[rowIndex]) rows[rowIndex] = {};
+            const lines = String(cell.innerText || '')
+                .split(/\n+/)
+                .map((item) => item.trim())
+                .filter(Boolean);
+            const links = Array.from(cell.querySelectorAll('a[href]')).map((item) => item.href).filter(Boolean);
+            rows[rowIndex][key] = {text: lines.join('\n'), lines, links};
+        }
+        return Object.keys(rows).sort((a, b) => Number(a) - Number(b)).map((key) => rows[key]);
+        }"""
+    )
+    candidate_rows = [
+        raw_row
+        for raw_row in (raw_rows or [])
+        if "\n".join(_pgy_cell_lines((raw_row or {}).get("note") or {})).strip() not in {"总计", "合计"}
+    ]
+    normalized: list[dict[str, Any]] = []
+    for raw_row in candidate_rows:
+        note_text = "\n".join(_pgy_cell_lines((raw_row or {}).get("note") or {}))
+        if requested_note_id and requested_note_id not in note_text:
+            note_links = ((raw_row or {}).get("note") or {}).get("links") or []
+            if not any(requested_note_id in str(url) for url in note_links) and len(candidate_rows) != 1:
+                continue
+        normalized.append(normalize_pgy_note_grid_row(requested_note_id, raw_row or {}))
+    return normalized
 
 
 def find_visible_text_box(page: Page, text: str, exact: bool = True) -> Optional[dict]:
@@ -542,6 +769,20 @@ def find_kol_from_api_records(records: list[dict], nickname: str, red_id: str = 
     return {}
 
 
+NO_KOL_RESULT_MARKERS = ("暂无结果", "暂未找到相关博主", "未找到相关博主")
+
+
+def has_no_kol_result(text: str) -> bool:
+    """Whether Pugongying explicitly says the nickname has no result.
+
+    This reads the page text collected by the existing browser flow; it is not
+    image/OCR recognition.  The API flow mirrors it by treating an empty kols
+    list as the same outcome.
+    """
+    normalized = "".join(str(text or "").split())
+    return any(marker in normalized for marker in NO_KOL_RESULT_MARKERS)
+
+
 def latest_similar_kols_from_records(records: list[dict], original_user_id: str) -> list[dict]:
     best: list[dict] = []
     for record in records:
@@ -647,6 +888,15 @@ def api_request_json(request: APIRequestContext, method: str, path: str, **kwarg
         raise RuntimeError(f"{method.upper()} {path} 返回非 JSON: {text[:200]}") from exc
 
 
+def format_pgy_api_errors(errors: list[str]) -> str:
+    message = sanitize_log_text("; ".join(errors[-4:]))
+    if re.search(r"HTTP 401\b", message, flags=re.IGNORECASE):
+        endpoints = ", ".join(dict.fromkeys(re.findall(r"(?:GET|POST)\s+(/api/[^: ]+)", message)))
+        suffix = f"；接口：{endpoints}" if endpoints else ""
+        return "蒲公英登录态已失效或未授权（HTTP 401），请重新登录蒲公英后再试" + suffix
+    return message
+
+
 def first_successful_api_call(request: APIRequestContext, attempts: list[tuple[str, str, dict]], timeout_ms: int = 15_000) -> dict:
     errors: list[str] = []
     for method, path, payload in attempts:
@@ -662,7 +912,7 @@ def first_successful_api_call(request: APIRequestContext, attempts: list[tuple[s
             errors.append(f"{method} {path}: {str(data)[:180]}")
         except Exception as exc:
             errors.append(sanitize_log_text(f"{method} {path}: {exc}"))
-    raise RuntimeError(sanitize_log_text("; ".join(errors[-4:])))
+    raise RuntimeError(format_pgy_api_errors(errors))
 
 
 def extract_api_payload(raw: dict) -> object:
@@ -671,15 +921,28 @@ def extract_api_payload(raw: dict) -> object:
     return raw
 
 
-def classify_api_response(url: str) -> str:
+def _response_business(response) -> int:
+    query = parse_qs(urlparse(response.url).query)
+    value = (query.get("business") or [""])[0]
+    if value in ("", None):
+        try:
+            payload = json.loads(response.request.post_data or "{}")
+            value = payload.get("business", "")
+        except Exception:
+            value = ""
+    return 1 if str(value) == "1" else 0
+
+
+def classify_api_response(response) -> str:
+    url = response.url
     if "/api/solar/cooperator/user/blogger/" in url:
         return "blogger_detail"
     if "/api/pgy/kol/data/data_summary" in url:
-        return "data_summary"
+        return f"{'business' if _response_business(response) else 'daily'}_data_summary"
     if "/api/pgy/kol/data/core_data" in url:
-        return "core_data"
+        return f"{'business' if _response_business(response) else 'daily'}_core_data"
     if "/api/solar/kol/data_v3/notes_rate" in url:
-        return "notes_rate"
+        return f"{'business' if _response_business(response) else 'daily'}_notes_rate"
     if "/api/solar/kol/data_v3/fans_summary" in url:
         return "fans_summary"
     if "/fans_profile" in url:
@@ -714,17 +977,24 @@ def make_search_attempts(keyword: str) -> list[tuple[str, str, dict]]:
 
 
 def make_detail_attempts(user_id: str) -> dict[str, list[tuple[str, str, dict]]]:
-    metrics_params = {"userId": user_id, "business": 0, "noteType": 3, "dateType": 1, "advertiseSwitch": 1}
-    return {
+    attempts = {
         "blogger_detail": [("GET", f"/api/solar/cooperator/user/blogger/{user_id}", {})],
-        "data_summary": [("GET", "/api/pgy/kol/data/data_summary", {"userId": user_id, "business": 0})],
-        "core_data": [("POST", "/api/pgy/kol/data/core_data", {"userId": user_id, "business": "0", "noteType": 3, "dateType": 1, "advertiseSwitch": 1})],
-        "notes_rate": [("GET", "/api/solar/kol/data_v3/notes_rate", metrics_params)],
         "fans_summary": [("GET", "/api/solar/kol/data_v3/fans_summary", {"userId": user_id})],
         "fans_profile": [("GET", f"/api/solar/kol/data/{user_id}/fans_profile", {})],
         "fans_history": [("GET", f"/api/solar/kol/data/{user_id}/fans_overall_new_history", {"dateType": 1, "increaseType": 1})],
         "similar_creators": [("GET", "/api/solar/kol/get_similar_kol", {"userId": user_id, "pageNum": 1, "pageSize": 20})],
     }
+    for label, business in (("daily", 0), ("business", 1)):
+        attempts[f"{label}_data_summary"] = [
+            ("GET", "/api/pgy/kol/data/data_summary", {"userId": user_id, "business": business}),
+        ]
+        attempts[f"{label}_core_data"] = [
+            ("POST", "/api/pgy/kol/data/core_data", {"userId": user_id, "business": str(business), "noteType": 3, "dateType": 1, "advertiseSwitch": 1}),
+        ]
+        attempts[f"{label}_notes_rate"] = [
+            ("GET", "/api/solar/kol/data_v3/notes_rate", {"userId": user_id, "business": business, "noteType": 3, "dateType": 1, "advertiseSwitch": 1}),
+        ]
+    return attempts
 
 
 def extract_kols_from_payload(payload: dict) -> list[dict]:
@@ -740,10 +1010,62 @@ def extract_kols_from_payload(payload: dict) -> list[dict]:
     return candidates
 
 
+def _iter_payload_records(value: object, depth: int = 0) -> list[dict]:
+    """Yield dict records from common PGY list payload shapes."""
+    if depth > 5:
+        return []
+    if isinstance(value, list):
+        records: list[dict] = []
+        for item in value:
+            records.extend(_iter_payload_records(item, depth + 1))
+        return records
+    if not isinstance(value, dict):
+        return []
+    records = [value]
+    for key in ("data", "list", "records", "items", "rows", "notes", "noteList", "results", "voList", "content"):
+        if key in value:
+            records.extend(_iter_payload_records(value[key], depth + 1))
+    return records
+
+
+def normalize_pgy_detail_note_row(note_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Map a blogger-detail note-list record to single-note metrics."""
+    actual_note_id = str(
+        item.get("noteId") or item.get("note_id") or item.get("id") or note_id or ""
+    ).strip()
+    if not actual_note_id:
+        return {}
+    kol_info = item.get("kolInfo") or item.get("bloggerInfo") or item.get("kol") or {}
+    if not isinstance(kol_info, dict):
+        kol_info = {}
+    metric_map = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    result: dict[str, Any] = {
+        "note_id": actual_note_id,
+        "note_url": str(item.get("noteUrl") or item.get("note_url") or item.get("url") or "").strip(),
+        "title": str(item.get("title") or item.get("noteTitle") or item.get("name") or "").strip(),
+        "author_nickname": str(kol_info.get("name") or kol_info.get("nickname") or item.get("nickname") or "").strip(),
+        "publish_date": str(item.get("publishTime") or item.get("publishDate") or item.get("notePublishTime") or "").strip(),
+        "pgy_note_source": "蒲公英达人详情笔记列表",
+    }
+    for source_key, target_key in metric_map.items():
+        value = item.get(source_key)
+        if value not in (None, ""):
+            result[target_key] = parse_pgy_metric_number(value)
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
+
 def collect_detail_api_response(api_data: dict, response) -> None:
-    key = classify_api_response(response.url)
-    if not key:
-        return
+    key = classify_api_response(response)
     try:
         payload = response.json()
     except Exception:
@@ -754,7 +1076,24 @@ def collect_detail_api_response(api_data: dict, response) -> None:
         if new_count >= existing_count:
             api_data[key] = payload
         return
-    api_data[key] = payload
+    if key:
+        api_data[key] = payload
+
+    url_path = urlparse(response.url).path.lower()
+    note_list_markers = ("/note", "notelist", "note_list", "blogger_note", "notes", "content")
+    if key or "/api/" not in response.url.lower() or not any(marker in url_path for marker in note_list_markers):
+        return
+    for item in _iter_payload_records(payload):
+        if not isinstance(item, dict):
+            continue
+        note_id = str(item.get("noteId") or item.get("note_id") or item.get("id") or "").strip()
+        if not note_id:
+            continue
+        if not any(item.get(metric) is not None for metric in ("impNum", "readNum", "likeNum", "favNum")):
+            continue
+        normalized = normalize_pgy_detail_note_row(note_id, item)
+        if normalized:
+            api_data.setdefault("detail_note_rows", {})[note_id] = normalized
 
 
 def normalize_kol_row(rank: int, kol: dict) -> dict:
@@ -767,11 +1106,13 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
             tags.append(str(tag.get("name") or tag.get("tagName") or tag.get("taxonomy1Tag") or tag))
         else:
             tags.append(str(tag))
+    user_id = kol.get("userId") or ""
     return {
-        "_user_id": kol.get("userId") or "",
+        "_user_id": user_id,
         "rank": rank,
         "nickname": kol.get("name") or "",
         "red_id": kol.get("redId") or "",
+        "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{user_id}" if user_id else "",
         "location": kol.get("location") or "",
         "fans_count": kol.get("fansCount") or "",
         "like_collect_count": kol.get("likeCollectCountInfo") or "",
@@ -780,6 +1121,8 @@ def normalize_kol_row(rank: int, kol: dict) -> dict:
         "picture_price": kol.get("picturePrice") or "",
         "video_price": kol.get("videoPrice") or "",
         "tags": ",".join(tags),
+        "content_category": _profile_text(kol.get("contentTags") or kol.get("featureTags")),
+        "cooperation_industry": _profile_text(kol.get("industryTag") or kol.get("cooperationIndustry")),
     }
 
 
@@ -812,36 +1155,91 @@ def _dominant_group(items: list[dict], name_key: str = "name") -> str:
     return str(best.get(name_key) or best.get("group") or "")
 
 
+def _profile_text(value: object) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("taxonomy1Tag") or value.get("tagName") or "")
+    if isinstance(value, list):
+        values = [_profile_text(item) for item in value]
+        return ",".join(dict.fromkeys(value for value in values if value))
+    return str(value or "")
+
+
+def _note_metrics(api_data: dict, prefix: str) -> dict:
+    legacy = prefix == "daily"
+    data_summary = extract_api_payload(api_data.get(f"{prefix}_data_summary") or (api_data.get("data_summary") if legacy else {})) or {}
+    core_data = extract_api_payload(api_data.get(f"{prefix}_core_data") or (api_data.get("core_data") if legacy else {})) or {}
+    core_sum = core_data.get("sumData") or {}
+    notes_rate = extract_api_payload(api_data.get(f"{prefix}_notes_rate") or (api_data.get("notes_rate") if legacy else {})) or {}
+    return {
+        f"{prefix}_exposure_count": core_sum.get("imp") or data_summary.get("imp") or "",
+        f"{prefix}_read_count": core_sum.get("read") or data_summary.get("read") or "",
+        f"{prefix}_imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or core_sum.get("imp") or "",
+        f"{prefix}_read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or core_sum.get("read") or "",
+        f"{prefix}_interaction_median": data_summary.get("mEngagementNum") or core_sum.get("engage") or notes_rate.get("mEngagementNum") or notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
+        f"{prefix}_like_median": notes_rate.get("likeMedian") or "",
+        f"{prefix}_collect_median": notes_rate.get("collectMedian") or "",
+        f"{prefix}_comment_median": notes_rate.get("commentMedian") or "",
+        f"{prefix}_share_median": notes_rate.get("shareMedian") or "",
+        f"{prefix}_follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
+        f"{prefix}_interaction_rate": notes_rate.get("interactionRate") or "",
+        f"{prefix}_video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
+        f"{prefix}_picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
+    }
+
+
 def flatten_detail_metrics(api_data: dict) -> dict:
     blogger = extract_api_payload(api_data.get("blogger_detail") or {}) or {}
-    data_summary = extract_api_payload(api_data.get("data_summary") or {}) or {}
-    notes_rate = extract_api_payload(api_data.get("notes_rate") or {}) or {}
+    daily = _note_metrics(api_data, "daily")
+    business = _note_metrics(api_data, "business")
+    daily_data_summary = extract_api_payload(api_data.get("daily_data_summary") or api_data.get("data_summary") or {}) or {}
+    business_data_summary = extract_api_payload(api_data.get("business_data_summary") or {}) or {}
     fans_summary = extract_api_payload(api_data.get("fans_summary") or {}) or {}
+    fans_history = extract_api_payload(api_data.get("fans_history") or {}) or {}
     fans_profile = extract_api_payload(api_data.get("fans_profile") or {}) or {}
     gender = fans_profile.get("gender") or {}
+    user_id = blogger.get("userId") or ""
+    # The current PGY page exposes these values in blogger_detail even when
+    # the legacy data_summary/notes_rate endpoints return 406.  Prefer the
+    # report APIs when present, then fall back to the values shown in the UI.
+    daily["daily_imp_median"] = daily["daily_imp_median"] or blogger.get("accumCommonImpMedinNum30d") or ""
+    daily["daily_read_median"] = daily["daily_read_median"] or blogger.get("clickMidNum") or ""
+    daily["daily_interaction_median"] = daily["daily_interaction_median"] or blogger.get("mEngagementNum") or blogger.get("interMidNum") or ""
+    business["business_read_median"] = business["business_read_median"] or blogger.get("readMidCoop30") or ""
+    business["business_interaction_median"] = business["business_interaction_median"] or blogger.get("interMidCoop30") or ""
     return {
-        "kol_advantage": data_summary.get("kolAdvantage") or "",
-        "data_date": data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
-        "note_number": data_summary.get("noteNumber") or notes_rate.get("noteNumber") or "",
-        "imp_median": notes_rate.get("impMedian") or data_summary.get("mAccumImpNum") or "",
-        "read_median": notes_rate.get("readMedian") or data_summary.get("readMedian") or "",
-        "interaction_median": notes_rate.get("interactionMedian") or data_summary.get("interactionMedian") or "",
-        "like_median": notes_rate.get("likeMedian") or "",
-        "collect_median": notes_rate.get("collectMedian") or "",
-        "comment_median": notes_rate.get("commentMedian") or "",
-        "share_median": notes_rate.get("shareMedian") or "",
-        "follow_median": notes_rate.get("mFollowCnt") or notes_rate.get("mfollowCnt") or "",
-        "interaction_rate": notes_rate.get("interactionRate") or "",
-        "video_full_view_rate": notes_rate.get("videoFullViewRate") or "",
-        "picture_3s_view_rate": notes_rate.get("picture3sViewRate") or "",
-        "thousand_like_percent": notes_rate.get("thousandLikePercent") or "",
-        "hundred_like_percent": notes_rate.get("hundredLikePercent") or "",
-        "active_day_7": data_summary.get("activeDayInLast7") or "",
-        "invite_num": data_summary.get("inviteNum") or "",
-        "response_rate": data_summary.get("responseRate") or "",
+        "blogger_homepage_url": f"https://www.xiaohongshu.com/user/profile/{user_id}" if user_id else "",
+        "content_category": _profile_text(blogger.get("contentTags") or blogger.get("featureTags")),
+        "cooperation_industry": _profile_text(
+            business_data_summary.get("tradeNames")
+            or daily_data_summary.get("tradeNames")
+            or blogger.get("industryTag")
+            or blogger.get("cooperationIndustry")
+            or blogger.get("tradeType")
+        ) or "平台无数据",
+        "kol_advantage": daily_data_summary.get("kolAdvantage") or "",
+        "data_date": daily_data_summary.get("dateKey") or fans_profile.get("dateKey") or "",
+        "note_number": daily_data_summary.get("noteNumber") or "",
+        "exposure_count": daily["daily_exposure_count"],
+        "read_count": daily["daily_read_count"],
+        "imp_median": daily["daily_imp_median"],
+        "read_median": daily["daily_read_median"],
+        "interaction_median": daily["daily_interaction_median"],
+        "like_median": daily["daily_like_median"],
+        "collect_median": daily["daily_collect_median"],
+        "comment_median": daily["daily_comment_median"],
+        "share_median": daily["daily_share_median"],
+        "follow_median": daily["daily_follow_median"],
+        "interaction_rate": daily["daily_interaction_rate"],
+        "video_full_view_rate": daily["daily_video_full_view_rate"],
+        "picture_3s_view_rate": daily["daily_picture_3s_view_rate"],
+        "thousand_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("thousandLikePercent") or blogger.get("thousandLikePercent30") or "",
+        "hundred_like_percent": extract_api_payload(api_data.get("daily_notes_rate") or api_data.get("notes_rate") or {}).get("hundredLikePercent") or blogger.get("hundredLikePercent30") or "",
+        "active_day_7": daily_data_summary.get("activeDayInLast7") or "",
+        "invite_num": daily_data_summary.get("inviteNum") or "",
+        "response_rate": daily_data_summary.get("responseRate") or "",
         "fans_num": fans_summary.get("fansNum") or blogger.get("fansCount") or "",
-        "fans_increase": fans_summary.get("fansIncreaseNum") or "",
-        "fans_growth_rate": fans_summary.get("fansGrowthRate") or data_summary.get("fans30GrowthRate") or "",
+        "fans_increase": fans_summary.get("fansIncreaseNum") or fans_history.get("fansNumInc") or blogger.get("fans30GrowthNum") or blogger.get("fansRiseNum") or "",
+        "fans_growth_rate": fans_summary.get("fansGrowthRate") or fans_history.get("fansNumIncRate") or daily_data_summary.get("fans30GrowthRate") or blogger.get("fans30GrowthRate") or "",
         "active_fans_rate": fans_summary.get("activeFansRate") or "",
         "read_fans_rate": fans_summary.get("readFansRate") or "",
         "engage_fans_rate": fans_summary.get("engageFansRate") or "",
@@ -852,6 +1250,8 @@ def flatten_detail_metrics(api_data: dict) -> dict:
         "top_provinces": _top_name_percent(fans_profile.get("provinces") or [], limit=5),
         "top_cities": _top_name_percent(fans_profile.get("cities") or [], limit=5),
         "top_interests": _top_name_percent(fans_profile.get("interests") or [], limit=8),
+        **daily,
+        **business,
     }
 
 
@@ -882,6 +1282,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             row["screenshot"] = detail.get("screenshot") or ""
             row["detail_text"] = detail.get("detail_text") or ""
             row["url"] = detail.get("url") or ""
+        row["detail_fetched"] = bool(detail.get("api_data"))
+        row["detail_error"] = detail.get("error") or ""
     blogger_detail = extract_api_payload(api_data.get("blogger_detail") or {})
     red_id = blogger_detail.get("redId") or ""
     target_metrics = flatten_detail_metrics(api_data)
@@ -892,6 +1294,7 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "rank",
             "nickname",
             "red_id",
+            "blogger_homepage_url",
             "location",
             "fans_count",
             "like_collect_count",
@@ -903,6 +1306,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "kol_advantage",
             "data_date",
             "note_number",
+            "exposure_count",
+            "read_count",
             "imp_median",
             "read_median",
             "interaction_median",
@@ -931,6 +1336,8 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
             "screenshot",
             "detail_text",
             "url",
+            "detail_fetched",
+            "detail_error",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -945,6 +1352,7 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
         "raw_api": str(raw_path),
         "blogger_detail": blogger_detail,
         "target_metrics": target_metrics,
+        "detail_note_rows": dict(api_data.get("detail_note_rows") or {}),
         "propagation_performance": {
             "data_summary": extract_api_payload(api_data.get("data_summary") or {}),
             "core_data": extract_api_payload(api_data.get("core_data") or {}),
@@ -1011,6 +1419,118 @@ def action_screenshot(args: argparse.Namespace) -> None:
                 "storage_state": save_storage_state(session.context, args.storage_state),
                 "screenshot": save_screenshot(page, "pgy_page.png"),
                 "text_preview": visible_text(page, limit=1600),
+            }
+        )
+        close_browser_session(session, keep_open=args.keep_open)
+
+
+def action_run_note_data(args: argparse.Namespace) -> None:
+    note_ids = list(
+        dict.fromkeys(
+            item.strip()
+            for item in re.split(r"[\n\r,，;；]+", args.note_ids or "")
+            if item.strip()
+        )
+    )
+    if not note_ids:
+        raise ValueError("请至少提供 1 个笔记 ID")
+
+    with sync_playwright() as playwright:
+        session = open_browser_session(playwright, args)
+        page = session.page
+        goto_and_wait(page, PGY_NOTE_DATA_URL)
+        state = login_state(page)
+        if state == "login_required":
+            _json_line(
+                {
+                    "status": state,
+                    "url": page.url,
+                    "requested_count": len(note_ids),
+                    "notes": [],
+                    "error": "蒲公英需要登录，请先在插件中打开蒲公英登录窗口",
+                }
+            )
+            close_browser_session(session, keep_open=False)
+            return
+
+        note_input = page.get_by_placeholder("请输入笔记ID", exact=True)
+        query_button = page.get_by_role("button", name="查询", exact=True)
+        if note_input.count() != 1 or query_button.count() != 1:
+            raise RuntimeError("蒲公英笔记报告页面结构已变化，未找到笔记 ID 查询控件")
+
+        note_api_captures: dict[str, dict] = {}
+
+        def _collect_note_api(response) -> None:
+            """Capture note-report API responses containing impNum/readNum."""
+            try:
+                if not response.url or "/api/" not in response.url:
+                    return
+                body = response.json()
+            except Exception:
+                return
+            if not isinstance(body, dict):
+                return
+            data = body.get("data") if isinstance(body.get("data"), (dict, list)) else body
+            candidates = []
+            if isinstance(data, list):
+                candidates = [item for item in data if isinstance(item, dict)]
+            elif isinstance(data, dict):
+                for key in ("list", "records", "items", "notes", "data", "rows"):
+                    inner = data.get(key)
+                    if isinstance(inner, list):
+                        candidates.extend(item for item in inner if isinstance(item, dict))
+                if not candidates and data:
+                    candidates = [data]
+            for entry in candidates:
+                nid = str(entry.get("noteId") or entry.get("note_id") or "").strip()
+                if not nid:
+                    continue
+                has_metrics = any(entry.get(k) is not None for k in ("impNum", "readNum", "likeNum"))
+                if has_metrics or nid in [n.strip() for n in note_ids]:
+                    note_api_captures[nid] = entry
+
+        page.on("response", _collect_note_api)
+
+        notes: list[dict[str, Any]] = []
+        missing_note_ids: list[str] = []
+        for index, note_id in enumerate(note_ids, start=1):
+            _progress(f"正在读取蒲公英单篇数据（{index}/{len(note_ids)}）", "note_data")
+            note_input.fill(note_id)
+            query_button.click()
+            page.wait_for_timeout(300)
+            loading = page.get_by_text("加载中", exact=True)
+            if loading.count() == 1:
+                try:
+                    loading.wait_for(state="hidden", timeout=max(5_000, args.note_data_wait_ms))
+                except TimeoutError:
+                    pass
+            page.wait_for_timeout(500)
+            # Prefer API interception; fall back to DOM grid parsing.
+            api_entry = note_api_captures.get(note_id)
+            if api_entry:
+                normalized = normalize_pgy_note_api_row(note_id, api_entry)
+                if normalized:
+                    notes.append(normalized)
+                    _progress(f"API 拦截成功：{note_id}", "note_data_api")
+                    continue
+            matches = extract_note_data_grid(page, note_id)
+            if matches:
+                notes.append(matches[0])
+            else:
+                missing_note_ids.append(note_id)
+        page.remove_listener("response", _collect_note_api)
+
+        _json_line(
+            {
+                "status": "ok",
+                "source": "蒲公英笔记报告",
+                "url": page.url,
+                "requested_count": len(note_ids),
+                "matched_count": len(notes),
+                "missing_count": len(missing_note_ids),
+                "missing_note_ids": missing_note_ids,
+                "notes": notes,
+                "storage_state": save_storage_state(session.context, args.storage_state),
             }
         )
         close_browser_session(session, keep_open=args.keep_open)
@@ -1141,8 +1661,14 @@ def _navigate_to_kol_detail(context: BrowserContext, page: Page, user_id: str) -
     return page
 
 
-def _wait_for_detail_data(page: Page, detail_api_data: dict) -> None:
-    required_keys = {"blogger_detail", "data_summary", "core_data", "notes_rate", "fans_summary", "fans_profile"}
+def _wait_for_detail_data(page: Page, detail_api_data: dict, note_prefix: str = "daily") -> None:
+    required_keys = {
+        "blogger_detail",
+        f"{note_prefix}_core_data",
+        f"{note_prefix}_notes_rate",
+        "fans_summary",
+        "fans_profile",
+    }
     wait_until = time.time() + 10
     while time.time() < wait_until and not required_keys.issubset(detail_api_data.keys()):
         page.wait_for_timeout(500)
@@ -1163,7 +1689,11 @@ def _capture_kol_detail(
     page.on("response", collect_response)
     try:
         page = _navigate_to_kol_detail(context, page, user_id)
-        _wait_for_detail_data(page, local_data)
+        click_text(page, "传播表现", exact=True, timeout=2500)
+        click_text(page, "日常笔记", exact=True, timeout=2500)
+        _wait_for_detail_data(page, local_data, "daily")
+        if click_text(page, "合作笔记", exact=True, timeout=2500):
+            _wait_for_detail_data(page, local_data, "business")
         detail_text = visible_text(page, limit=60000)
         screenshot = output_dir / f"{file_prefix}_detail.png"
         page.screenshot(path=str(screenshot), full_page=True)
@@ -1210,7 +1740,11 @@ def _api_fetch_kol_detail(
 ) -> dict:
     api_data: dict = {}
     attempts_by_key = make_detail_attempts(user_id)
-    key_order = ["data_summary", "core_data", "notes_rate", "fans_summary", "fans_profile", "fans_history", "similar_creators", "blogger_detail"]
+    key_order = [
+        "daily_data_summary", "daily_core_data", "daily_notes_rate",
+        "business_data_summary", "business_core_data", "business_notes_rate",
+        "fans_summary", "fans_profile", "fans_history", "similar_creators", "blogger_detail",
+    ]
     for key in key_order:
         attempts = attempts_by_key.get(key) or []
         if not attempts:
@@ -1227,7 +1761,7 @@ def _api_fetch_kol_detail(
             api_data["blogger_detail"] = {"code": 0, "success": True, "data": fallback_blogger}
         else:
             raise RuntimeError(api_data.get("blogger_detail_error") or "API 未返回达人基础信息")
-    metric_keys = {"data_summary", "notes_rate", "fans_summary", "fans_profile"}
+    metric_keys = {"daily_core_data", "daily_notes_rate", "business_core_data", "business_notes_rate", "fans_summary", "fans_profile"}
     if not metric_keys.intersection(api_data.keys()):
         raise RuntimeError("API 未返回传播表现/粉丝分析数据")
     return api_data
@@ -1251,6 +1785,9 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
             _progress("API 模式：搜索达人", "api_search_creator")
             search_payload = first_successful_api_call(request, make_search_attempts(search_keyword), timeout_ms=20_000)
             candidates = extract_kols_from_payload(search_payload)
+            if not candidates:
+                _build_not_found_result(None, inputs["nickname"], target_red_id, "蒲公英接口返回空结果")
+                return True
             list_records = [{"data": {"data": {"kols": candidates}}}]
             kol = find_kol_from_api_records(list_records, inputs["nickname"], target_red_id)
             user_id = kol.get("userId")
@@ -1268,31 +1805,80 @@ def action_run_kol_api(args: argparse.Namespace) -> bool:
                 detail_data["similar_creators"] = {"code": 0, "success": True, "data": {"kols": similar_kols}}
 
             similar_details: dict = {}
+            browser_session: Optional[BrowserSession] = None
             selected_user_ids = {item.strip() for item in (args.similar_user_ids or "").split(",") if item.strip()}
             similar_to_fetch = filter_similar_kols(similar_kols, selected_user_ids, args.similar_detail_limit)
-            for index, item in enumerate(similar_to_fetch, start=1):
-                similar_user_id = item.get("userId")
-                if not similar_user_id:
-                    continue
-                _progress(f"API 模式：读取相似博主详情 {index}/{len(similar_to_fetch)}：{item.get('name') or similar_user_id}", "api_similar_detail")
-                try:
-                    similar_details[similar_user_id] = {
-                        "api_data": _api_fetch_kol_detail(
+            detail_output_dir = DEFAULT_OUTPUT_DIR / (
+                "".join(ch for ch in matched_name if ch not in r'\/:*?"<>|').strip() or "kol"
+            )
+            detail_output_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                for index, item in enumerate(similar_to_fetch, start=1):
+                    similar_user_id = item.get("userId")
+                    if not similar_user_id:
+                        continue
+                    creator_name = item.get("name") or similar_user_id
+                    _progress(f"API 模式：读取相似博主详情 {index}/{len(similar_to_fetch)}：{creator_name}", "api_similar_detail")
+                    api_detail: dict = {}
+                    detail_error = ""
+                    try:
+                        api_detail = _api_fetch_kol_detail(
                             request,
                             similar_user_id,
                             include_similar=False,
                             fallback_blogger=item,
                         )
-                    }
-                except Exception as exc:
-                    similar_details[similar_user_id] = {"api_data": {}, "error": str(exc)}
-                time.sleep(random.uniform(0.8, 2.2))
+                    except Exception as exc:
+                        detail_error = str(exc)
+
+                    # The report-only endpoints return HTTP 406 to the standalone
+                    # request context, while the signed-in PGY detail page returns
+                    # the full notes_rate/data_summary payloads.  The explicit
+                    # "fetch selected details" action therefore supplements the
+                    # lightweight API result with one hidden browser pass.
+                    try:
+                        if browser_session is None:
+                            browser_args = argparse.Namespace(**vars(args))
+                            browser_args.headless = True
+                            browser_args.keep_open = False
+                            browser_session = open_browser_session(playwright, browser_args)
+                            if browser_session.connected_over_cdp:
+                                browser_session.page = browser_session.context.new_page()
+                        _progress(f"补齐蒲公英页面指标：{creator_name}", "browser_supplement_detail")
+                        browser_session.page, browser_detail = _capture_kol_detail(
+                            browser_session.context,
+                            browser_session.page,
+                            similar_user_id,
+                            detail_output_dir,
+                            f"similar_{index:02d}",
+                        )
+                        api_detail.update(browser_detail.get("api_data") or {})
+                        browser_detail["api_data"] = api_detail
+                        if detail_error:
+                            browser_detail["api_error"] = detail_error
+                        similar_details[similar_user_id] = browser_detail
+                    except Exception as exc:
+                        errors = [value for value in [detail_error, str(exc)] if value]
+                        similar_details[similar_user_id] = {
+                            "api_data": api_detail,
+                            "error": "；".join(errors),
+                        }
+                    time.sleep(random.uniform(0.8, 2.2))
+            finally:
+                if browser_session is not None:
+                    if browser_session.connected_over_cdp and not browser_session.page.is_closed():
+                        with contextlib.suppress(Exception):
+                            browser_session.page.close()
+                    close_browser_session(browser_session, keep_open=False)
             detail_data["similar_details"] = similar_details
 
             _progress("API 模式：保存本地文件", "api_write_outputs")
             outputs = write_api_outputs(matched_name, user_id, detail_data, "", None)
             _progress("达人分析完成", "done")
-            _build_success_result(matched_name, red_id, target_red_id, None, {"api_mode": True, "keyword": search_keyword}, outputs, "")
+            _build_success_result(
+                matched_name, red_id, target_red_id, None,
+                {"api_mode": True, "keyword": search_keyword}, outputs, "",
+            )
             return True
         finally:
             request.dispose()
@@ -1307,6 +1893,19 @@ def _build_login_required_result(page: Page, nickname: str, red_id: str) -> dict
         "url": page.url if not page.is_closed() else "",
         "screenshot": save_screenshot(page, "run_kol_login_required.png"),
         "error": "蒲公英需要登录，请先运行 login 动作",
+    }
+    _json_line(result)
+    return result
+
+
+def _build_not_found_result(page: Optional[Page], nickname: str, red_id: str, evidence: str) -> dict:
+    result = {
+        "status": "not_found",
+        "clicked": True,
+        "nickname": nickname,
+        "red_id": red_id,
+        "url": page.url if page is not None and not page.is_closed() else PGY_KOL_NOTE_URL,
+        "evidence": evidence,
     }
     _json_line(result)
     return result
@@ -1337,6 +1936,9 @@ def _build_success_result(
 
 
 def action_run_kol(args: argparse.Namespace) -> None:
+    if args.cdp:
+        args.api_first = False
+
     if args.api_first:
         try:
             api_done = action_run_kol_api(args)
@@ -1384,6 +1986,10 @@ def action_run_kol(args: argparse.Namespace) -> None:
         _progress(f"搜索达人：{search_keyword}", "search_creator")
         input_meta = fill_nickname_keyword(page, search_keyword)
         page.wait_for_timeout(2500)
+        if has_no_kol_result(visible_text(page, limit=12000)):
+            _build_not_found_result(page, inputs["nickname"], target_red_id, "蒲公英页面显示暂无结果/未找到相关博主")
+            close_browser_session(session, keep_open=args.keep_open)
+            return
 
         _progress("读取搜索结果和相似博主推荐", "extract_search_result")
         kol_result = _extract_kol_data(list_records, inputs["nickname"], target_red_id, page)
@@ -1424,7 +2030,7 @@ def action_run_kol(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="小红书蒲公英 UI 自动化")
-    parser.add_argument("action", choices=["login", "screenshot", "click-nickname", "run-kol"])
+    parser.add_argument("action", choices=["login", "screenshot", "click-nickname", "run-kol", "run-note-data"])
     parser.add_argument("--user-data-dir", default=str(DEFAULT_USER_DATA_DIR), help="Playwright 持久化浏览器目录")
     parser.add_argument("--cdp", default="", help="连接已开启远程调试的 Chrome，例如 http://127.0.0.1:9222")
     parser.add_argument("--remote-debugging-port", default="", help="启动浏览器时开启远程调试端口")
@@ -1439,6 +2045,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--red-id", default="", help="小红书号；提供后优先用它搜索并精确匹配达人")
     parser.add_argument("--similar-detail-limit", type=int, default=20, help="逐个抓取相似博主详情页的数量")
     parser.add_argument("--similar-user-ids", default="", help="只抓取这些相似博主 userId，逗号分隔")
+    parser.add_argument("--note-ids", default="", help="run-note-data 要查询的笔记 ID，逗号分隔")
+    parser.add_argument("--note-data-wait-ms", type=int, default=15000, help="每次查询蒲公英单篇笔记数据的最长等待时间")
     parser.add_argument("--storage-state", default=str(DEFAULT_STORAGE_STATE), help="蒲公英 API 模式使用的登录态文件")
     parser.add_argument("--api-first", action=argparse.BooleanOptionalAction, default=True, help="优先使用无浏览器 API 模式")
     parser.add_argument("--api-only", action="store_true", help="只使用 API 模式，失败时不回退浏览器")
@@ -1461,6 +2069,8 @@ def main() -> int:
             action_click_nickname(args)
         elif args.action == "run-kol":
             action_run_kol(args)
+        elif args.action == "run-note-data":
+            action_run_note_data(args)
         else:
             parser.error(f"unsupported action: {args.action}")
     except Exception as exc:

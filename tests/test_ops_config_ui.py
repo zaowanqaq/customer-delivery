@@ -24,8 +24,17 @@ def test_customer_ui_hides_local_save_and_manual_sync_controls():
 def test_step2_and_step3_start_flows_auto_sync_after_crawler_finishes():
     html = _ops_config_text()
 
-    assert 'waitCrawlerIdleThenAutoSync("sample")' in html
+    assert "base_token: payload.sync_base_token" in html
+    assert "table_id: payload.account_filter_table_id" in html
+    assert "/api/crawler/account-monitor/status" in html
     assert 'waitCrawlerIdleThenAutoSync("viral")' in html
+
+def test_pgy_initial_analysis_only_lists_similar_creators():
+    html = _ops_config_text()
+
+    assert "similar_detail_limit: 0" in html
+    assert "similar_detail_limit: checked.length" in html
+
     assert "AUTO_SYNC_POLL_INTERVAL_MS" in html
 
 
@@ -35,9 +44,10 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     expected_nav = [
         "项目大盘",
         "平台爆款检索",
+        "爆款笔记二创",
         "达人智能圈选",
         "账号内容监测",
-        "笔记数据监控",
+        "笔记数据监测",
         "笔记舆情监控",
     ]
     positions = [html.index(f">{label}<") for label in expected_nav]
@@ -54,7 +64,20 @@ def test_customer_feedback_copy_and_navigation_are_updated():
     assert "项目检索栏" in html
     assert "一键新建项目" in html
     assert "Base 链接 / Token（必填）" in html
-    assert "二级评论就是楼中楼评论" in html
+    assert "爆款笔记二创" in html
+    assert "仅展示已上传“封面改写”的记录。" in html
+    assert "/api/crawler/note-recreation/cases" in html
+    assert "recreationImageUrl" in html
+    assert "recreation-note-card" in html
+    assert "recreation-cover" in html
+    assert "本页不调用 AI" in html
+    assert "笔记链接（逗号或换行）" in html
+    assert "风险类型分组" in html
+    assert "新增风险类型" in html
+    assert "同步规则到多维表格" in html
+    assert "评论区分析" not in html
+    assert "/api/crawler/sentiment-monitor/start" in html
+    assert "/api/crawler/sentiment-monitor/sync-rules" in html
     assert "需处理表示该项会影响对应功能，需要按右侧处理办法优先处理" in html
 
 
@@ -109,17 +132,113 @@ def test_project_overview_uses_single_full_width_panel_and_hot_content_compass()
     assert "<h2>爆款罗盘</h2>" in html
 
 
+def test_project_binding_uses_customer_table_names():
+    html = _ops_config_text()
+
+    assert "爆款评论 -> 笔记舆情监控表" in html
+    assert "步骤5合作笔记 -> 笔记数据监测表" in html
+    assert "步骤5合作评论 -> 合作笔记舆情监控表" in html
+    assert 'collab_comments_table_name: document.getElementById("collab_comments_table_name").value.trim()' in html
+    assert "爆款评论表" not in html
+    assert "合作监控表" not in html
+    assert "合作评论表" not in html
+
+
+def test_collaboration_monitor_keeps_latest_twenty_notes_without_exposing_a_count_control():
+    html = _ops_config_text()
+
+    assert "每轮每个账号抓取篇数" not in html
+    assert "按客户提供的合作博主名单持续监控，不依赖默认账号或开发机数据。" not in html
+    assert "collab_notes_per_creator: 20" in html
+    assert 'id="collab_sync_limit"' not in html
+    assert "collab_sync_limit" not in html
+    assert "优先使用蒲公英「我的数据 → 笔记报告」中的单篇数据" in html
+    assert "不会使用达人账号的中位数" in html
+    assert "logCollabPgyStatus" in html
+
+
 def test_sample_account_file_import_controls_are_present():
     html = _ops_config_text()
 
-    assert "提供的样本账号主页链接或账号 ID，也可以导入 txt、csv 或 Excel 文件；系统不会预置任何账号。" in html
-    assert "输入客户提供的样本账号主页链接" not in html
-    assert "文件格式：txt / csv 每行一个账号主页链接或账号 ID；Excel 每个单元格填写一个账号，表头会自动忽略。" in html
+    assert "第一阶段使用小红书登录态抓取笔记" in html
+    assert "第二阶段使用蒲公英登录态" in html
+    assert "表头固定为「主页链接」" in html
     assert 'id="sample_accounts_file"' in html
     assert 'accept=".txt,.csv,.xlsx,.xls"' in html
     assert "importSampleAccountsFile()" in html
     assert "/api/crawler/import-sample-accounts" in html
     assert "mergeSampleAccounts" in html
+    assert 'id="account_monitor_mode"' not in html
+    assert "在“找博主”中判断该达人是否开通蒲公英主页" in html
+    assert 'account_monitor_mode: "auto"' in html
+    assert "/api/crawler/account-monitor/start" in html
+    assert '<input id="notes_per_creator" type="number" min="10" max="10" value="10" readonly>' in html
+    assert 'notes_per_creator: 10' in html
+    assert "result.notes_per_creator || body.notes_per_creator" in html
+    assert "固定抓取最近10篇" in html
+    assert "downloadAccountMonitorTemplate()" in html
+    assert "账号内容监测_主页链接模板.csv" in html
+    assert "下载账号内容监测表" not in html
+
+
+def test_collaboration_monitor_imports_note_form_instead_of_creator_list():
+    html = _ops_config_text()
+
+    assert 'id="collab_notes_file"' in html
+    assert "序号、达人昵称、小红书id、发布笔记链接" in html
+    assert "/api/crawler/import-collaboration-notes" in html
+    assert 'note_links: payload.collab_note_links' in html
+    assert "合作博主账号名单（逗号或换行）" not in html
+
+
+def test_sentiment_monitor_imports_customer_note_form():
+    html = _ops_config_text()
+
+    assert 'id="sentiment_notes_file"' in html
+    assert "下载舆情监测笔记模板" in html
+    assert "/api/crawler/sentiment-notes-template" in html
+    assert "/api/crawler/import-sentiment-notes" in html
+    assert 'document.getElementById("sentiment_note_links").value = data.note_links || ""' in html
+
+
+def test_creator_screening_auto_sync_target_is_visible_in_project_mapping():
+    html = _ops_config_text()
+
+    assert "AI初筛结果表" in html
+    assert 'id="creator_screening_table_id"' in html
+    assert "/api/creator-screening/jobs/${encodeURIComponent(jobId)}/sync" in html
+    assert "仅“符合”的账号自动同步" in html
+
+
+def test_collaboration_sentiment_monitor_targets_collaboration_comment_table():
+    html = _ops_config_text()
+
+    assert "同步目标：当前项目的「合作笔记舆情监控表」" in html
+    assert "相似达人只有在勾选后" in html
+    assert "拿到完整详情后才会同步到飞书" in html
+    assert "table_id: payload.collab_comments_table_id" in html
+    assert "请先在项目大盘绑定合作笔记舆情监控表" in html
+
+
+def test_login_issues_open_actionable_prompts_in_the_matching_tabs():
+    html = _ops_config_text()
+
+    assert 'id="workflow_alert"' in html
+    assert 'tabId: "tab-step2"' in html
+    assert 'tabId = "tab-step3"' in html
+    assert "pgy_login_required" in html
+    assert "pgy_login_accounts" in html
+    assert "statusData.login_required" in html
+    assert "打开蒲公英登录窗口" in html
+    assert "打开小红书登录浏览器" in html
+    assert "onAction: pgyLogin" in html
+    assert "从蒲公英断点继续" in html
+    assert "/api/crawler/account-monitor/resume-pgy" in html
+    assert "不会重复抓取小红书" in html
+    assert '"tab-step2"' in html
+    assert "账号内容监测第一阶段需要使用小红书登录态" in html
+    assert 'id="account_monitor_start_btn"' in html
+    assert "从蒲公英断点继续" in html
 
 
 def test_file_preview_routes_api_requests_to_local_server():
