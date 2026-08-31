@@ -222,7 +222,10 @@ async def test_account_monitor_stops_remaining_pgy_queries_after_login_required(
         assert job["pgy_login_required"] is True
         assert job["pgy_login_accounts"] == ["达人A", "达人B", "达人C"]
         assert job["pgy_review_count"] == 3
-        assert len(job["pgy_errors"]) == 3
+        assert len(job["pgy_errors"]) == 4
+        assert any("小红书公开数据缺少笔记ID" in msg for msg in job["pgy_errors"])
+        assert job["pgy_note_metrics"]["status"] == "skipped"
+        assert job["pgy_note_metrics"]["reason"] == "no_note_ids_in_source_rows"
         assert job["ignored_historical_row_count"] == 1
         assert job["_pgy_pending_keys"] == ["creator_a", "creator_b", "creator_c"]
     finally:

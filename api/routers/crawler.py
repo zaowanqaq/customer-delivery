@@ -2349,17 +2349,52 @@ async def _build_account_monitor_report(
 
         # Fetch per-note PGY metrics so exposure/read are note-specific.
         pgy_note_data: Dict[str, Dict[str, Any]] = {}
+        pgy_note_metrics: Dict[str, Any] = {
+            "status": "skipped",
+            "reason": "report_mode_not_pgy",
+            "requested_count": 0,
+            "matched_count": 0,
+            "missing_note_ids": [],
+            "error": "",
+        }
         if report_mode in {"pgy", "auto"}:
+            pgy_note_metrics["status"] = "ok"
             note_ids = [
                 str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
                 for row in source_rows
             ]
             note_ids = [nid for nid in note_ids if nid]
+            pgy_note_metrics["requested_count"] = len(note_ids)
             if note_ids:
                 pgy_note_result = await _fetch_pgy_note_data(note_ids)
+                pgy_note_metrics.update(_pgy_note_result_summary(pgy_note_result))
+                if pgy_note_result.get("status") != "ok":
+                    pgy_errors.append(
+                        f"蒲公英单篇数据未命中：{pgy_note_metrics.get('error') or pgy_note_metrics.get('status')}"
+                    )
                 for item in (pgy_note_result.get("notes") or []):
                     if isinstance(item, dict) and str(item.get("note_id") or "").strip():
                         pgy_note_data[str(item["note_id"]).strip()] = item
+            else:
+                pgy_note_metrics.update({
+                    "status": "skipped",
+                    "reason": "no_note_ids_in_source_rows",
+                    "error": "小红书公开数据缺少笔记ID，无法查询蒲公英单篇数据",
+                })
+                pgy_errors.append(pgy_note_metrics["error"])
+            matched_ids = set(pgy_note_data)
+            pgy_note_metrics["missing_note_ids"] = [
+                note_id for note_id in note_ids if note_id not in matched_ids
+            ][:20]
+            if note_ids and pgy_note_metrics["missing_note_ids"]:
+                pgy_note_metrics["fallback_note_count"] = len(note_ids) - len(matched_ids)
+                fallback_message = (
+                    f"{len(note_ids) - len(matched_ids)} 篇笔记未命中蒲公英单篇数据，"
+                    "已回退到达人级汇总，曝光量/阅读量可能相同"
+                )
+                pgy_note_metrics["fallback_message"] = fallback_message
+                if fallback_message not in pgy_errors:
+                    pgy_errors.append(fallback_message)
 
         job.update({"status": "exporting", "stage": "正在生成账号内容监测表"})
         report_rows = []
@@ -2395,6 +2430,7 @@ async def _build_account_monitor_report(
             "row_count": len(report_rows),
             "source_path": str(source_path),
             "pgy_errors": pgy_errors,
+            "pgy_note_metrics": pgy_note_metrics,
             "pgy_login_required": bool(pgy_login_accounts),
             "pgy_login_accounts": pgy_login_accounts,
             "pgy_found_count": sum(1 for item in pgy_lookups.values() if item.get("status") == "有蒲公英主页"),

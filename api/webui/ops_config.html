@@ -2563,10 +2563,18 @@
         if (data.status === "completed") {
           stopAccountMonitorPolling();
           const sync = data.sync_result || {};
-          if ((data.pgy_errors || []).length) log(`蒲公英补充完成，但有 ${data.pgy_errors.length} 个账号未获取到后台数据：${data.pgy_errors.join("；")}`);
+          const pgyNotes = data.pgy_note_metrics || {};
+          if ((data.pgy_errors || []).length) log(`蒲公英补充完成，但有 ${data.pgy_errors.length} 项数据未获取到后台数据：${data.pgy_errors.join("；")}`);
           log(`蒲公英主页判断：有主页 ${data.pgy_found_count || 0} 个，无主页 ${data.pgy_not_found_count || 0} 个，待人工确认 ${data.pgy_review_count || 0} 个。`);
+          if (pgyNotes.requested_count) {
+            log(`蒲公英单篇数据：命中 ${pgyNotes.matched_count || 0}/${pgyNotes.requested_count} 篇${pgyNotes.fallback_note_count ? `，${pgyNotes.fallback_note_count} 篇已回退到达人级汇总` : ""}${pgyNotes.status !== "ok" ? `，状态：${pgyNotes.status}${pgyNotes.error ? `（${pgyNotes.error}）` : ""}` : ""}`);
+          }
           if (sync.status === "ok") {
-            setAccountMonitorStatus(`已同步 ${data.row_count || 0} 条记录至账号内容监测表（新增 ${sync.created || 0}，更新 ${sync.updated || 0}）`);
+            const fallbackCount = pgyNotes.fallback_note_count || 0;
+            setAccountMonitorStatus(
+              `已同步 ${data.row_count || 0} 条记录至账号内容监测表（新增 ${sync.created || 0}，更新 ${sync.updated || 0}）` +
+              (fallbackCount ? `；注意：${fallbackCount} 篇曝光/阅读量回退到达人级汇总，请检查蒲公英登录态` : "")
+            );
           } else {
             setAccountMonitorStatus(`已生成 ${data.row_count || 0} 条记录；请先在项目大盘绑定账号内容监测表`);
           }
