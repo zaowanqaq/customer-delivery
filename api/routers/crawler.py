@@ -3610,10 +3610,22 @@ def _merge_pgy_note_data(row: Dict[str, Any], pgy_note: Dict[str, Any] | None) -
         "exposure_count",
         "read_count",
     }
+    table_aliases = {
+        "title": ["标题", "笔记标题"],
+        "note_url": ["笔记链接", "发布笔记链接", "发布链接"],
+        "liked_count": ["点赞", "点赞量", "点赞数"],
+        "collected_count": ["收藏", "收藏量", "收藏数"],
+        "comment_count": ["评论", "评论量", "评论数"],
+        "share_count": ["转发量", "分享量", "分享数"],
+        "exposure_count": ["曝光量"],
+        "read_count": ["阅读量"],
+    }
     for key in override_fields:
         value = pgy_note.get(key)
         if value not in (None, "", []):
             merged[key] = value
+            for alias in table_aliases.get(key, []):
+                merged[alias] = value
     for key, value in pgy_note.items():
         if key.startswith("pgy_") and value not in (None, "", []):
             merged[key] = value

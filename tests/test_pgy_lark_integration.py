@@ -358,6 +358,42 @@ async def test_pgy_note_fetch_uses_headless_saved_profile_without_cdp(monkeypatc
     assert result["matched_count"] == 1
 
 
+def test_account_monitor_detail_note_overrides_base_table_values():
+    source = {
+        "note_id": "note-1",
+        "author_user_id": "creator-a",
+        "author_nickname": "杨洋洋在澳洲",
+        "liked_count": 10,
+        "collected_count": 2,
+    }
+    summary = {
+        "nickname": "杨洋洋在澳洲",
+        "red_id": "caiyuyang",
+        "target_metrics": {"exposure_count": 52731, "read_count": 5491, "liked_count": 999},
+        "detail_note_rows": {
+            "note-1": {
+                "note_id": "note-1",
+                "title": "来无锡记得来这家店吃烤肉+火锅，一次吃到爽",
+                "read_count": 121,
+                "liked_count": 36,
+                "collected_count": 14,
+                "pgy_note_source": "蒲公英达人详情笔记列表",
+            }
+        },
+    }
+    lookup = {"status": "有蒲公英主页", "evidence": "查询到结果"}
+
+    row = crawler._account_monitor_pgy_row(source, summary, lookup)
+    row = crawler._merge_pgy_note_data(row, summary["detail_note_rows"]["note-1"])
+    fields = [field["name"] for field in crawler._account_content_monitor_fields()]
+    mapped = dict(zip(fields, crawler._row_to_table_values(row, fields, "notes")))
+
+    assert mapped["阅读量"] == 121
+    assert mapped["点赞"] == 36
+    assert mapped["收藏"] == 14
+    assert mapped["笔记标题"] == "来无锡记得来这家店吃烤肉+火锅，一次吃到爽"
+
+
 def test_collect_detail_api_response_captures_note_list_rows():
     class Request:
         post_data = ""
