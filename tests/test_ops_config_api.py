@@ -6,6 +6,7 @@ import urllib.error
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from api.main import OPS_CONFIG_DEFAULT, PROJECT_BOUND_FIELDS, OpsConfigPayload
 from api.routers import crawler

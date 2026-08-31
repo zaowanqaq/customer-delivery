@@ -1010,10 +1010,62 @@ def extract_kols_from_payload(payload: dict) -> list[dict]:
     return candidates
 
 
+def _iter_payload_records(value: object, depth: int = 0) -> list[dict]:
+    """Yield dict records from common PGY list payload shapes."""
+    if depth > 5:
+        return []
+    if isinstance(value, list):
+        records: list[dict] = []
+        for item in value:
+            records.extend(_iter_payload_records(item, depth + 1))
+        return records
+    if not isinstance(value, dict):
+        return []
+    records = [value]
+    for key in ("data", "list", "records", "items", "rows", "notes", "noteList", "results", "voList", "content"):
+        if key in value:
+            records.extend(_iter_payload_records(value[key], depth + 1))
+    return records
+
+
+def normalize_pgy_detail_note_row(note_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Map a blogger-detail note-list record to single-note metrics."""
+    actual_note_id = str(
+        item.get("noteId") or item.get("note_id") or item.get("id") or note_id or ""
+    ).strip()
+    if not actual_note_id:
+        return {}
+    kol_info = item.get("kolInfo") or item.get("bloggerInfo") or item.get("kol") or {}
+    if not isinstance(kol_info, dict):
+        kol_info = {}
+    metric_map = {
+        "impNum": "exposure_count",
+        "readNum": "read_count",
+        "likeNum": "liked_count",
+        "favNum": "collected_count",
+        "cmtNum": "comment_count",
+        "shareNum": "share_count",
+        "engageNum": "pgy_engage_count",
+        "followCnt": "pgy_follow_count",
+        "readUvNum": "pgy_read_uv",
+    }
+    result: dict[str, Any] = {
+        "note_id": actual_note_id,
+        "note_url": str(item.get("noteUrl") or item.get("note_url") or item.get("url") or "").strip(),
+        "title": str(item.get("title") or item.get("noteTitle") or item.get("name") or "").strip(),
+        "author_nickname": str(kol_info.get("name") or kol_info.get("nickname") or item.get("nickname") or "").strip(),
+        "publish_date": str(item.get("publishTime") or item.get("publishDate") or item.get("notePublishTime") or "").strip(),
+        "pgy_note_source": "蒲公英达人详情笔记列表",
+    }
+    for source_key, target_key in metric_map.items():
+        value = item.get(source_key)
+        if value not in (None, ""):
+            result[target_key] = parse_pgy_metric_number(value)
+    return {key: value for key, value in result.items() if value not in (None, "", [])}
+
+
 def collect_detail_api_response(api_data: dict, response) -> None:
     key = classify_api_response(response)
-    if not key:
-        return
     try:
         payload = response.json()
     except Exception:
@@ -1024,7 +1076,24 @@ def collect_detail_api_response(api_data: dict, response) -> None:
         if new_count >= existing_count:
             api_data[key] = payload
         return
-    api_data[key] = payload
+    if key:
+        api_data[key] = payload
+
+    url_path = urlparse(response.url).path.lower()
+    note_list_markers = ("/note", "notelist", "note_list", "blogger_note", "notes", "content")
+    if key or "/api/" not in response.url.lower() or not any(marker in url_path for marker in note_list_markers):
+        return
+    for item in _iter_payload_records(payload):
+        if not isinstance(item, dict):
+            continue
+        note_id = str(item.get("noteId") or item.get("note_id") or item.get("id") or "").strip()
+        if not note_id:
+            continue
+        if not any(item.get(metric) is not None for metric in ("impNum", "readNum", "likeNum", "favNum")):
+            continue
+        normalized = normalize_pgy_detail_note_row(note_id, item)
+        if normalized:
+            api_data.setdefault("detail_note_rows", {})[note_id] = normalized
 
 
 def normalize_kol_row(rank: int, kol: dict) -> dict:
@@ -1283,6 +1352,7 @@ def write_api_outputs(nickname: str, user_id: str, api_data: dict, detail_text: 
         "raw_api": str(raw_path),
         "blogger_detail": blogger_detail,
         "target_metrics": target_metrics,
+        "detail_note_rows": dict(api_data.get("detail_note_rows") or {}),
         "propagation_performance": {
             "data_summary": extract_api_payload(api_data.get("data_summary") or {}),
             "core_data": extract_api_payload(api_data.get("core_data") or {}),

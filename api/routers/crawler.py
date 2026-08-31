@@ -2406,7 +2406,15 @@ async def _build_account_monitor_report(
                     pgy_lookups.get(_account_monitor_creator_key(row)),
                 )
                 note_key = str(row.get("note_id") or row.get("笔记ID") or row.get("id") or "").strip()
-                merged = _merge_pgy_note_data(merged, pgy_note_data.get(note_key))
+                creator_summary = summaries.get(_account_monitor_creator_key(row)) or {}
+                detail_note_rows = creator_summary.get("detail_note_rows") or {}
+                pgy_note = pgy_note_data.get(note_key) or detail_note_rows.get(note_key)
+                merged = _merge_pgy_note_data(merged, pgy_note)
+                if pgy_note:
+                    pgy_note_metrics["matched_count"] = max(
+                        int(pgy_note_metrics.get("matched_count") or 0),
+                        len(pgy_note_data) + len(detail_note_rows),
+                    )
                 report_rows.append(merged)
             else:
                 report_rows.append(_account_monitor_public_row(row))

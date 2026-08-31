@@ -358,6 +358,42 @@ async def test_pgy_note_fetch_uses_headless_saved_profile_without_cdp(monkeypatc
     assert result["matched_count"] == 1
 
 
+def test_collect_detail_api_response_captures_note_list_rows():
+    class Request:
+        post_data = ""
+
+    class Response:
+        url = "https://pgy.xiaohongshu.com/api/solar/kol/blogger/note/list?userId=user-1"
+        request = Request()
+
+        def json(self):
+            return {
+                "code": 0,
+                "data": {
+                    "noteList": [
+                        {
+                            "noteId": "note-1",
+                            "title": "笔记一",
+                            "readNum": "815",
+                            "likeNum": "120",
+                            "favNum": "64",
+                        },
+                        {"id": "not-a-note", "name": "忽略无指标记录"},
+                    ]
+                },
+            }
+
+    api_data = {}
+    pgy_automation.collect_detail_api_response(api_data, Response())
+
+    rows = api_data["detail_note_rows"]
+    assert set(rows) == {"note-1"}
+    assert rows["note-1"]["read_count"] == 815
+    assert rows["note-1"]["liked_count"] == 120
+    assert rows["note-1"]["collected_count"] == 64
+    assert rows["note-1"]["pgy_note_source"] == "蒲公英达人详情笔记列表"
+
+
 def test_pgy_no_result_uses_page_text_markers():
     assert pgy_automation.has_no_kol_result("搜索完成，暂无结果")
     assert pgy_automation.has_no_kol_result("暂未找到相关博主")
